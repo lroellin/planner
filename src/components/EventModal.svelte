@@ -1,7 +1,7 @@
 <script lang="ts">
   import { nanoid } from 'nanoid';
   import { getState, updateEvent, removeEvent, setState } from '../state/store.svelte';
-  import { snapToSlot, timeDiffMinutes, addMinutesToTime } from '../utils/timeUtils';
+  import { snapToSlot, timeDiffMinutes, addMinutesToTime, DAY_NAMES } from '../utils/timeUtils';
   import type { ID } from '../types';
 
   interface Props {
@@ -23,13 +23,11 @@
   let showSplit: boolean = $state(false);
   let splitTime: string = $state('');
 
-  const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-
   // Initialize locals when modal opens
   $effect(() => {
     if (!ev) return;
     localTeacherIds = ev.teacherIds;
-    localRoomId = ev.roomId === null && ev.teacherIds === null ? 'inherit' : ev.roomId;
+    localRoomId = ev.roomId === null ? 'inherit' : ev.roomId;
     localStartTime = ev.startTime;
     localEndTime = ev.endTime;
     // default split time to midpoint

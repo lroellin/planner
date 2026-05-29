@@ -8,8 +8,10 @@
   import adaptivePlugin from '@fullcalendar/adaptive';
   import { nanoid } from 'nanoid';
   import { getState, addEvent, updateEvent } from '../state/store.svelte';
-  import { groupsToResources, buildFCEvents } from '../utils/timeUtils';
-  import { pad, extractDayIndex } from '../utils/timeUtils';
+  import {
+    groupsToResources, buildFCEvents, extractDayIndex,
+    formatTime, effectiveTeacherIds, effectiveRoomId,
+  } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import type { ID } from '../types';
 
@@ -38,8 +40,8 @@
 
     updateEvent(eventId, {
       dayIndex: extractDayIndex(newStart),
-      startTime: `${pad(newStart.getHours())}:${pad(newStart.getMinutes())}`,
-      endTime: `${pad(newEnd.getHours())}:${pad(newEnd.getMinutes())}`,
+      startTime: formatTime(newStart),
+      endTime: formatTime(newEnd),
       ...(resource ? { groupId: resource.id } : {}),
     });
   }
@@ -51,8 +53,8 @@
 
     updateEvent(eventId, {
       dayIndex: extractDayIndex(newStart),
-      startTime: `${pad(newStart.getHours())}:${pad(newStart.getMinutes())}`,
-      endTime: `${pad(newEnd.getHours())}:${pad(newEnd.getMinutes())}`,
+      startTime: formatTime(newStart),
+      endTime: formatTime(newEnd),
     });
   }
 
@@ -78,8 +80,8 @@
       subjectId,
       groupId: resource.id,
       dayIndex: extractDayIndex(start),
-      startTime: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
-      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+      startTime: formatTime(start),
+      endTime: formatTime(end),
       teacherIds: null,
       roomId: null,
     });
@@ -111,8 +113,8 @@
       subjectId,
       groupId,
       dayIndex: extractDayIndex(date),
-      startTime: `${pad(date.getHours())}:${pad(date.getMinutes())}`,
-      endTime: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
+      startTime: formatTime(date),
+      endTime: formatTime(end),
       teacherIds: null,
       roomId: null,
     });
@@ -158,14 +160,13 @@
         const subject = ev ? state.subjects.find(s => s.id === ev.subjectId) : null;
 
         const hasConflict = (ev?.conflicts?.length ?? 0) > 0;
-        const effectiveTeacherIds = ev?.teacherIds ?? subject?.defaultTeacherIds ?? [];
-        const effectiveRoomId = ev?.roomId ?? subject?.defaultRoomId ?? null;
+        const roomId = effectiveRoomId(ev, subject);
 
-        const teachers = effectiveTeacherIds
+        const teachers = effectiveTeacherIds(ev, subject)
           .map(tid => state.teachers.find(t => t.id === tid))
           .filter(Boolean);
-        const room = effectiveRoomId
-          ? state.rooms.find(r => r.id === effectiveRoomId)
+        const room = roomId
+          ? state.rooms.find(r => r.id === roomId)
           : null;
 
         const conflictBadge = hasConflict
@@ -225,28 +226,20 @@
     style="left: {Math.min(placePending.x, window.innerWidth - 220)}px; top: {Math.min(placePending.y, window.innerHeight - 320)}px"
   >
     <div class="place-picker-header">Place lesson</div>
-    {#if getState().subjects.some(s => !s.isBreak)}
-      <div class="place-group-label">Lessons</div>
-      {#each getState().subjects.filter(s => !s.isBreak) as s (s.id)}
-        <button class="place-item" onclick={() => placePendingSubject(s.id)}
-          style="border-left: 3px solid {s.color}">
-          <span class="place-dot" style="background:{s.color}"></span>
-          {s.name}
-          <span class="place-dur">{s.defaultDurationMinutes}min</span>
-        </button>
-      {/each}
-    {/if}
-    {#if getState().subjects.some(s => s.isBreak)}
-      <div class="place-group-label">Breaks</div>
-      {#each getState().subjects.filter(s => s.isBreak) as s (s.id)}
-        <button class="place-item" onclick={() => placePendingSubject(s.id)}
-          style="border-left: 3px solid {s.color}">
-          <span class="place-dot" style="background:{s.color}"></span>
-          {s.name}
-          <span class="place-dur">{s.defaultDurationMinutes}min</span>
-        </button>
-      {/each}
-    {/if}
+    {#each [{ isBreak: false, label: 'Lessons' }, { isBreak: true, label: 'Breaks' }] as group (group.label)}
+      {@const items = getState().subjects.filter(s => s.isBreak === group.isBreak)}
+      {#if items.length > 0}
+        <div class="place-group-label">{group.label}</div>
+        {#each items as s (s.id)}
+          <button class="place-item" onclick={() => placePendingSubject(s.id)}
+            style="border-left: 3px solid {s.color}">
+            <span class="place-dot" style="background:{s.color}"></span>
+            {s.name}
+            <span class="place-dur">{s.defaultDurationMinutes}min</span>
+          </button>
+        {/each}
+      {/if}
+    {/each}
   </div>
 {/if}
 

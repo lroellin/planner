@@ -1,9 +1,38 @@
-import type { AppState, CalendarEvent, Group } from '../types';
+import type { AppState, CalendarEvent, Group, ID, Subject } from '../types';
 import type { EventInput } from '@fullcalendar/core';
 import type { ResourceInput } from '@fullcalendar/resource';
 
+// Weekday labels, 0=Mon … 4=Fri (matches CalendarEvent.dayIndex)
+export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
+
 export function pad(n: number): string {
   return String(n).padStart(2, '0');
+}
+
+// Local "YYYY-MM-DD" — avoids the UTC shift of Date.toISOString()
+export function formatDate(d: Date): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// Local "HH:MM" from a Date
+export function formatTime(d: Date): string {
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Resolve an event's effective teachers/room, falling back to the subject defaults.
+// null on the event means "inherit the subject default".
+export function effectiveTeacherIds(
+  ev: CalendarEvent | null | undefined,
+  subject: Subject | null | undefined,
+): ID[] {
+  return ev?.teacherIds ?? subject?.defaultTeacherIds ?? [];
+}
+
+export function effectiveRoomId(
+  ev: CalendarEvent | null | undefined,
+  subject: Subject | null | undefined,
+): ID | null {
+  return ev?.roomId ?? subject?.defaultRoomId ?? null;
 }
 
 export function toISOLocal(wkStartDate: string, dayIndex: number, time: string): string {

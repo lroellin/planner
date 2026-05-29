@@ -1,11 +1,8 @@
-import { nanoid } from "nanoid";
-import type { AppState, CalendarEvent } from "../types";
-import {
-  getActiveProjectId,
-  getProjectStateKey,
-  initProjects,
-} from "./projects";
-import { generateInitials } from "../utils/colorUtils";
+import { nanoid } from 'nanoid';
+import type { AppState, CalendarEvent } from '../types';
+import { getActiveProjectId, getProjectStateKey, initProjects } from './projects';
+import { generateInitials } from '../utils/colorUtils';
+import { formatDate } from '../utils/timeUtils';
 
 const CURRENT_VERSION = 2;
 
@@ -19,7 +16,7 @@ function nextMonday(): string {
   const day = d.getDay();
   const daysUntilMonday = day === 0 ? 1 : day === 1 ? 0 : 8 - day;
   d.setDate(d.getDate() + daysUntilMonday);
-  return d.toISOString().slice(0, 10);
+  return formatDate(d);
 }
 
 export function createDefaultState(): AppState {
@@ -30,26 +27,21 @@ export function createDefaultState(): AppState {
     version: CURRENT_VERSION,
     wkStartDate: nextMonday(),
     groups: [
-      { id: nanoid(), label: "G1", enabled: true, order: 0 },
-      { id: nanoid(), label: "G2", enabled: true, order: 1 },
-      { id: nanoid(), label: "G3", enabled: true, order: 2 },
+      { id: nanoid(), label: 'G1', enabled: true, order: 0 },
+      { id: nanoid(), label: 'G2', enabled: true, order: 1 },
+      { id: nanoid(), label: 'G3', enabled: true, order: 2 },
     ],
     teachers: [
-      { id: teacherId, name: "Teacher 1", shortName: "T1", color: "#4299e1" },
+      { id: teacherId, name: 'Teacher 1', shortName: 'T1', color: '#4299e1' },
     ],
     rooms: [
-      {
-        id: roomId,
-        name: "Room 1",
-        color: "#48bb78",
-        excludeFromConflictCheck: false,
-      },
+      { id: roomId, name: 'Room 1', color: '#48bb78', excludeFromConflictCheck: false },
     ],
     subjects: [
       {
         id: nanoid(),
-        name: "Mittagessen",
-        color: "#a0aec0",
+        name: 'Mittagessen',
+        color: '#a0aec0',
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 60,
@@ -57,8 +49,8 @@ export function createDefaultState(): AppState {
       },
       {
         id: nanoid(),
-        name: "Pause",
-        color: "#cbd5e0",
+        name: 'Pause',
+        color: '#cbd5e0',
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 15,
@@ -66,8 +58,8 @@ export function createDefaultState(): AppState {
       },
       {
         id: nanoid(),
-        name: "Karteneröffnung/-führung",
-        color: "#9f7aea",
+        name: 'Karteneröffnung/-führung',
+        color: '#9f7aea',
         defaultTeacherIds: [],
         defaultRoomId: roomId,
         defaultDurationMinutes: 90,
@@ -81,9 +73,7 @@ export function createDefaultState(): AppState {
 function stripConflicts(state: AppState): AppState {
   return {
     ...state,
-    events: state.events.map(
-      ({ conflicts: _omit, ...ev }) => ev as CalendarEvent,
-    ),
+    events: state.events.map(({ conflicts: _omit, ...ev }) => ev as CalendarEvent),
   };
 }
 
@@ -91,10 +81,7 @@ export function saveState(state: AppState): void {
   try {
     const id = getActiveProjectId();
     if (!id) return;
-    localStorage.setItem(
-      getProjectStateKey(id),
-      JSON.stringify(stripConflicts(state)),
-    );
+    localStorage.setItem(getProjectStateKey(id), JSON.stringify(stripConflicts(state)));
   } catch {
     // localStorage full or unavailable
   }
@@ -128,7 +115,7 @@ function migrateState(raw: AppState): AppState {
   // Backfill shortName for teachers loaded from storage without it
   return {
     ...raw,
-    teachers: raw.teachers.map((t) => ({
+    teachers: raw.teachers.map(t => ({
       ...t,
       shortName: t.shortName ?? generateInitials(t.name),
     })),

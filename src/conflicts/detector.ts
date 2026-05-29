@@ -1,4 +1,5 @@
 import type { AppState, CalendarEvent, ConflictRef, ConflictReport, ID } from '../types';
+import { effectiveTeacherIds, effectiveRoomId } from '../utils/timeUtils';
 
 // Arbitrary Monday as reference epoch for time comparisons
 const REFERENCE_MONDAY = new Date('2000-01-03T00:00:00').getTime();
@@ -35,18 +36,17 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     const endMs = toMs(ev.dayIndex, ev.endTime);
     const interval: Interval = { startMs, endMs, eventId: ev.id };
 
-    const effectiveTeacherIds = ev.teacherIds ?? subject.defaultTeacherIds;
-    for (const tid of effectiveTeacherIds) {
+    for (const tid of effectiveTeacherIds(ev, subject)) {
       if (!teacherIntervals.has(tid)) teacherIntervals.set(tid, []);
       teacherIntervals.get(tid)!.push(interval);
     }
 
-    const effectiveRoomId = ev.roomId ?? subject.defaultRoomId;
-    if (effectiveRoomId) {
-      const room = state.rooms.find(r => r.id === effectiveRoomId);
+    const roomId = effectiveRoomId(ev, subject);
+    if (roomId) {
+      const room = state.rooms.find(r => r.id === roomId);
       if (room && !room.excludeFromConflictCheck) {
-        if (!roomIntervals.has(effectiveRoomId)) roomIntervals.set(effectiveRoomId, []);
-        roomIntervals.get(effectiveRoomId)!.push(interval);
+        if (!roomIntervals.has(roomId)) roomIntervals.set(roomId, []);
+        roomIntervals.get(roomId)!.push(interval);
       }
     }
   }

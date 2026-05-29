@@ -4,7 +4,7 @@ import { saveState, loadState, loadStateForProject } from './persistence';
 import { pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo } from './undo';
 import { annotateEventsWithConflicts } from '../conflicts/detector';
 import { generateInitials } from '../utils/colorUtils';
-import { timeDiffMinutes, addMinutesToTime } from '../utils/timeUtils';
+import { timeDiffMinutes, addMinutesToTime, formatDate } from '../utils/timeUtils';
 import {
   listProjects, createProject as _createProject, deleteProject as _deleteProject,
   renameProject, setActiveProjectId, getActiveProjectId,
@@ -35,7 +35,7 @@ function syncProjectState(): void {
 
 export function getState(): AppState { return _state; }
 export function getProjects(): ProjectMeta[] { return _projects; }
-export function getActiveProjectId2(): string | null { return _activeProjectId; }
+export function getCurrentProjectId(): string | null { return _activeProjectId; }
 export function canUndo(): boolean { return _canUndoState; }
 export function canRedo(): boolean { return _canRedoState; }
 
@@ -251,7 +251,7 @@ function snapToMonday(dateStr: string): string {
   const dow = dt.getDay(); // 0=Sun, 1=Mon...
   const diff = dow === 0 ? -6 : 1 - dow; // shift back to Monday
   dt.setDate(dt.getDate() + diff);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  return formatDate(dt);
 }
 
 export function setWkStartDate(date: string): void {

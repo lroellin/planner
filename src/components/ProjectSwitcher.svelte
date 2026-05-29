@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    getProjects, getActiveProjectId2, switchProject,
+    getProjects, getCurrentProjectId, switchProject,
     createNewProject, renameCurrentProject, deleteProjectById,
   } from '../state/store.svelte';
 
@@ -11,7 +11,7 @@
   let newProjectName = $state('');
 
   const projects = $derived(getProjects());
-  const activeId = $derived(getActiveProjectId2());
+  const activeId = $derived(getCurrentProjectId());
   const activeProject = $derived(projects.find(p => p.id === activeId));
 
   function startRename(): void {

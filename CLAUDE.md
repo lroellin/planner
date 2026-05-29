@@ -43,11 +43,10 @@ Conflict: a conflict occurs when
 
 - hard conflicts:
   - n instances share the same teachers (teacher A is assigned for instance X and Y), don’t forget that there are N teachers!
-- soft conflicts  
-   - n instances share the same room, except if excluded  
-   - Exclusions might be for a room called “outside”, where it’s not a problem to share the space  
-  A conflict should always only be indicated, the change shouldn’t be rejected. If you  
-
+- soft conflicts
+  - n instances share the same room, except if excluded
+  - Exclusions might be for a room called “outside”, where it’s not a problem to share the space  
+    A conflict should always only be indicated, the change shouldn’t be rejected. If you
 
 Technical details:
 
@@ -55,3 +54,7 @@ Technical details:
 - write it in plain JS, not using a framework, unless there is a good reason for it
 - use an easy to use but quick build and auto reload system
 - use localStorage to store the state, so everything is still there on page reload. At a later stage, I might want to do a full webapp with a backend, but keep it simple for now.
+
+---
+
+Use `nvm` to get `node`

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getState, undo, redo, canUndo, canRedo, setWkStartDate } from '../state/store.svelte';
+  import { detectConflicts } from '../conflicts/detector';
   import ProjectSwitcher from './ProjectSwitcher.svelte';
 
   interface Props {
@@ -9,13 +10,7 @@
   let { configOpen = $bindable() }: Props = $props();
 
   const state = $derived(getState());
-  const conflictCount = $derived(
-    new Set(
-      state.events
-        .filter(ev => (ev.conflicts?.length ?? 0) > 0)
-        .flatMap(ev => ev.conflicts!.map(c => c.collidingEventIds.concat(ev.id).sort().join('|')))
-    ).size
-  );
+  const conflictCount = $derived(detectConflicts(state).length);
 
   function handleKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey)) return;
