@@ -270,8 +270,8 @@
   }
 
   .override-badge {
-    background: #ebf8ff;
-    color: #2b6cb0;
+    background: rgba(49, 130, 206, 0.12);
+    color: #3182ce;
     padding: 0.1rem 0.4rem;
     border-radius: 99px;
     font-size: 0.7rem;
@@ -337,8 +337,8 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: #fffff0;
-    border: 1px solid #f6e05e;
+    background: rgba(246, 224, 94, 0.12);
+    border: 1px solid rgba(246, 224, 94, 0.45);
     border-radius: 4px;
     padding: 0.5rem;
     font-size: 0.85rem;

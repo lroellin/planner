@@ -91,9 +91,15 @@
 
   .app-logo {
     font-weight: 800;
-    font-size: 1rem;
-    letter-spacing: 0.05em;
-    color: #3182ce;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+    background: #3182ce;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+    line-height: 1.5;
   }
 
   .date-label {

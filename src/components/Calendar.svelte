@@ -28,6 +28,10 @@
   interface PlacePending { date: Date; groupId: ID; x: number; y: number; }
   let placePending: PlacePending | null = $state(null);
 
+  const hasEvents = $derived(
+    getState().events.some(ev => getState().groups.find(g => g.id === ev.groupId)?.enabled)
+  );
+
   function handleEventClick(info: EventClickArg): void {
     selectedEventId = info.event.extendedProps['eventId'] as ID;
   }
@@ -127,6 +131,10 @@
       schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
       initialView: 'resourceTimeGridWeek',
       datesAboveResources: true,
+      // Order columns by our explicit `order` field. Without this, FC's default
+      // ('id,title') sorts by the random nanoid id — which reshuffles groups on
+      // every reload until a save pins the ids.
+      resourceOrder: 'order',
       firstDay: 1,
       weekends: false,
       locale: deLocale,
@@ -215,7 +223,15 @@
   });
 </script>
 
-<div bind:this={calendarEl} class="calendar-mount"></div>
+<div class="calendar-wrap">
+  <div bind:this={calendarEl} class="calendar-mount"></div>
+  {#if !hasEvents}
+    <div class="empty-hint" aria-hidden="true">
+      <div class="empty-icon">⟵</div>
+      <div>Drag a subject from the sidebar onto the calendar to schedule it</div>
+    </div>
+  {/if}
+</div>
 
 {#if placePending}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -244,9 +260,40 @@
 {/if}
 
 <style>
+  .calendar-wrap {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
   .calendar-mount {
     width: 100%;
     height: 100%;
+  }
+
+  .empty-hint {
+    position: absolute;
+    top: 55%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    text-align: center;
+    color: var(--pico-muted-color, #a0aec0);
+    font-size: 0.85rem;
+    padding: 1.25rem 2rem;
+    background: var(--pico-background-color, rgba(255,255,255,0.92));
+    border-radius: 10px;
+    border: 1.5px dashed var(--pico-muted-border-color, #e2e8f0);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 280px;
+  }
+
+  .empty-icon {
+    font-size: 1.4rem;
+    opacity: 0.4;
   }
 
   :global(.fc-event-main-inner) {
@@ -256,6 +303,8 @@
     padding: 2px 4px;
     overflow: hidden;
     height: 100%;
+    background: linear-gradient(150deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 55%);
+    border-radius: 2px;
   }
 
   :global(.fc-event-title-row) {

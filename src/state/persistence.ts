@@ -91,7 +91,7 @@ export function loadState(): AppState {
   try {
     const key = getStorageKey();
     const raw = localStorage.getItem(key);
-    if (!raw) return createDefaultState();
+    if (!raw) return seedDefaultState(key);
     return migrateState(JSON.parse(raw) as AppState);
   } catch {
     return createDefaultState();
@@ -100,12 +100,26 @@ export function loadState(): AppState {
 
 export function loadStateForProject(id: string): AppState {
   try {
-    const raw = localStorage.getItem(getProjectStateKey(id));
-    if (!raw) return createDefaultState();
+    const key = getProjectStateKey(id);
+    const raw = localStorage.getItem(key);
+    if (!raw) return seedDefaultState(key);
     return migrateState(JSON.parse(raw) as AppState);
   } catch {
     return createDefaultState();
   }
+}
+
+// Create the default state AND persist it immediately, so the seeded ids stay
+// stable across reloads. Without this, every refresh regenerates fresh nanoids
+// until the first save.
+function seedDefaultState(key: string): AppState {
+  const state = createDefaultState();
+  try {
+    localStorage.setItem(key, JSON.stringify(state));
+  } catch {
+    // localStorage full or unavailable — fall through with in-memory state
+  }
+  return state;
 }
 
 function migrateState(raw: AppState): AppState {

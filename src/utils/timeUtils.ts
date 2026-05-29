@@ -73,8 +73,8 @@ export function extractDayIndex(date: Date): number {
 export function groupsToResources(groups: Group[]): ResourceInput[] {
   return groups
     .filter(g => g.enabled)
-    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
-    .map((g, i) => ({ id: g.id, title: g.label, order: i }));
+    .sort((a, b) => a.order - b.order)
+    .map(g => ({ id: g.id, title: g.label, order: g.order }));
 }
 
 export function buildFCEvents(state: AppState): EventInput[] {

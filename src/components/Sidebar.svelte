@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { Draggable } from '@fullcalendar/interaction';
   import { getState } from '../state/store.svelte';
-  import { getContrastColor } from '../utils/colorUtils';
 
   let chipContainer: HTMLDivElement;
   let draggable: Draggable;
@@ -39,7 +38,7 @@
       <div
         class="subject-chip"
         data-subject-id={subject.id}
-        style="background:{subject.color}; color:{getContrastColor(subject.color)}"
+        style="border-left-color: {subject.color}"
       >
         {subject.name}
       </div>
@@ -53,7 +52,7 @@
         <div
           class="subject-chip"
           data-subject-id={subject.id}
-          style="background:{subject.color}; color:{getContrastColor(subject.color)}"
+          style="border-left-color: {subject.color}"
         >
           {subject.name}
         </div>
@@ -88,7 +87,7 @@
   }
 
   .subject-chip {
-    padding: 0.35rem 0.6rem;
+    padding: 0.32rem 0.6rem 0.32rem 0.65rem;
     border-radius: 4px;
     font-size: 0.82rem;
     font-weight: 500;
@@ -97,12 +96,17 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-    transition: box-shadow 0.15s;
+    background: var(--pico-card-background-color, #f8fafc);
+    color: inherit;
+    border: 1px solid var(--pico-muted-border-color, #e2e8f0);
+    border-left: 4px solid transparent;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+    transition: box-shadow 0.15s, background 0.1s;
   }
 
   .subject-chip:hover {
-    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    background: var(--pico-background-color, #fff);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
   }
 
   .subject-chip:active {
