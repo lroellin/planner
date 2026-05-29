@@ -3,6 +3,7 @@ export type ID = string;
 export interface Teacher {
   id: ID;
   name: string;
+  shortName: string;  // initials, e.g. "JD" for "John Doe"
   color: string;
 }
 

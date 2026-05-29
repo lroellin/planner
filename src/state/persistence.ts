@@ -1,23 +1,26 @@
 import { nanoid } from 'nanoid';
 import type { AppState, CalendarEvent } from '../types';
+import { getActiveProjectId, getProjectStateKey, initProjects } from './projects';
+import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
 
-const STORAGE_KEY = 'zivilschutz-planner-v1';
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
+
+export function getStorageKey(): string {
+  const id = initProjects();
+  return getProjectStateKey(id);
+}
 
 function nextMonday(): string {
   const d = new Date();
-  const day = d.getDay(); // 0=Sun
-  const daysUntilMonday = day === 0 ? 1 : 8 - day;
+  const day = d.getDay();
+  const daysUntilMonday = day === 0 ? 1 : day === 1 ? 0 : 8 - day;
   d.setDate(d.getDate() + daysUntilMonday);
   return d.toISOString().slice(0, 10);
 }
 
-function createDefaultState(): AppState {
+export function createDefaultState(): AppState {
   const teacherId = nanoid();
   const roomId = nanoid();
-  const subjectId1 = nanoid();
-  const subjectId2 = nanoid();
-  const subjectId3 = nanoid();
 
   return {
     version: CURRENT_VERSION,
@@ -28,14 +31,14 @@ function createDefaultState(): AppState {
       { id: nanoid(), label: 'G3', enabled: true, order: 2 },
     ],
     teachers: [
-      { id: teacherId, name: 'Teacher 1', color: '#4299e1' },
+      { id: teacherId, name: 'Teacher 1', shortName: 'T1', color: '#4299e1' },
     ],
     rooms: [
       { id: roomId, name: 'Room 1', color: '#48bb78', excludeFromConflictCheck: false },
     ],
     subjects: [
       {
-        id: subjectId1,
+        id: nanoid(),
         name: 'Lunch Break',
         color: '#f6ad55',
         defaultTeacherIds: [],
@@ -44,7 +47,7 @@ function createDefaultState(): AppState {
         isBreak: true,
       },
       {
-        id: subjectId2,
+        id: nanoid(),
         name: 'Short Break',
         color: '#fc8181',
         defaultTeacherIds: [],
@@ -53,7 +56,7 @@ function createDefaultState(): AppState {
         isBreak: true,
       },
       {
-        id: subjectId3,
+        id: nanoid(),
         name: 'Sample Lesson',
         color: '#9f7aea',
         defaultTeacherIds: [teacherId],
@@ -75,28 +78,45 @@ function stripConflicts(state: AppState): AppState {
 
 export function saveState(state: AppState): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stripConflicts(state)));
+    const id = getActiveProjectId();
+    if (!id) return;
+    localStorage.setItem(getProjectStateKey(id), JSON.stringify(stripConflicts(state)));
   } catch {
-    // localStorage full or unavailable — silently ignore
+    // localStorage full or unavailable
   }
 }
 
 export function loadState(): AppState {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const key = getStorageKey();
+    const raw = localStorage.getItem(key);
     if (!raw) return createDefaultState();
-    const parsed = JSON.parse(raw) as AppState;
-    return migrateState(parsed);
+    return migrateState(JSON.parse(raw) as AppState);
   } catch {
     return createDefaultState();
   }
 }
 
-function migrateState(state: AppState): AppState {
-  // Future migrations go here, keyed by state.version
-  if (!state.version || state.version < CURRENT_VERSION) {
-    // Unknown old format — reset to defaults
+export function loadStateForProject(id: string): AppState {
+  try {
+    const raw = localStorage.getItem(getProjectStateKey(id));
+    if (!raw) return createDefaultState();
+    return migrateState(JSON.parse(raw) as AppState);
+  } catch {
     return createDefaultState();
   }
-  return state;
+}
+
+function migrateState(raw: AppState): AppState {
+  if (!raw.version || raw.version < CURRENT_VERSION) {
+    return createDefaultState();
+  }
+  // Backfill shortName for teachers loaded from storage without it
+  return {
+    ...raw,
+    teachers: raw.teachers.map(t => ({
+      ...t,
+      shortName: t.shortName ?? generateInitials(t.name),
+    })),
+  };
 }

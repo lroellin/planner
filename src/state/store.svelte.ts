@@ -1,18 +1,46 @@
 import { nanoid } from 'nanoid';
 import type { AppState, CalendarEvent, Teacher, Room, Subject, Group, ID } from '../types';
-import { saveState, loadState } from './persistence';
-import { pushUndo, undoState, redoState, canUndo, canRedo } from './undo';
+import { saveState, loadState, loadStateForProject } from './persistence';
+import { pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo } from './undo';
 import { annotateEventsWithConflicts } from '../conflicts/detector';
+import { generateInitials } from '../utils/colorUtils';
+import {
+  listProjects, createProject as _createProject, deleteProject as _deleteProject,
+  renameProject, setActiveProjectId, getActiveProjectId,
+  type ProjectMeta,
+} from './projects';
+
+// ─── Core reactive state ──────────────────────────────────────────────────────
 
 let _state = $state<AppState>(loadState());
+let _projects = $state<ProjectMeta[]>(listProjects());
+let _activeProjectId = $state<string | null>(getActiveProjectId());
 
-export function getState(): AppState {
-  return _state;
+// Reactive undo state — plain booleans synced after every mutation
+let _canUndoState = $state(false);
+let _canRedoState = $state(false);
+
+function syncUndoState(): void {
+  _canUndoState = _canUndo();
+  _canRedoState = _canRedo();
 }
 
+function syncProjectState(): void {
+  _projects = listProjects();
+  _activeProjectId = getActiveProjectId();
+}
+
+// ─── Getters ──────────────────────────────────────────────────────────────────
+
+export function getState(): AppState { return _state; }
+export function getProjects(): ProjectMeta[] { return _projects; }
+export function getActiveProjectId2(): string | null { return _activeProjectId; }
+export function canUndo(): boolean { return _canUndoState; }
+export function canRedo(): boolean { return _canRedoState; }
+
+// ─── State mutations ──────────────────────────────────────────────────────────
+
 function snapshot(): AppState {
-  // $state.snapshot strips the Svelte reactive proxy, returning a plain object
-  // that structuredClone (used in undo.ts) can safely clone.
   return $state.snapshot(_state) as AppState;
 }
 
@@ -21,6 +49,7 @@ export function setState(next: AppState, recordUndo = true): void {
   const annotated = annotateEventsWithConflicts(next);
   saveState(annotated);
   _state = annotated;
+  syncUndoState();
 }
 
 export function undo(): void {
@@ -30,6 +59,7 @@ export function undo(): void {
     saveState(annotated);
     _state = annotated;
   }
+  syncUndoState();
 }
 
 export function redo(): void {
@@ -39,9 +69,42 @@ export function redo(): void {
     saveState(annotated);
     _state = annotated;
   }
+  syncUndoState();
 }
 
-export { canUndo, canRedo };
+// ─── Project management ───────────────────────────────────────────────────────
+
+export function switchProject(id: ID): void {
+  setActiveProjectId(id);
+  clearUndo();
+  syncProjectState();
+  _state = annotateEventsWithConflicts(loadStateForProject(id));
+  syncUndoState();
+}
+
+export function createNewProject(name: string): void {
+  const project = _createProject(name);
+  syncProjectState();
+  switchProject(project.id);
+}
+
+export function renameCurrentProject(name: string): void {
+  const id = getActiveProjectId();
+  if (id) {
+    renameProject(id, name);
+    syncProjectState();
+  }
+}
+
+export function deleteProjectById(id: ID): void {
+  if (listProjects().length <= 1) return;
+  _deleteProject(id);
+  syncProjectState();
+  if (getActiveProjectId() === id || _activeProjectId === id) {
+    const remaining = listProjects();
+    if (remaining[0]) switchProject(remaining[0].id);
+  }
+}
 
 // ─── Event mutations ──────────────────────────────────────────────────────────
 
@@ -62,8 +125,8 @@ export function removeEvent(id: ID): void {
 
 // ─── Teacher mutations ────────────────────────────────────────────────────────
 
-export function addTeacher(name: string, color: string): void {
-  const teacher: Teacher = { id: nanoid(), name, color };
+export function addTeacher(name: string, shortName: string, color: string): void {
+  const teacher: Teacher = { id: nanoid(), name, shortName, color };
   setState({ ..._state, teachers: [..._state.teachers, teacher] });
 }
 
@@ -121,8 +184,7 @@ export function removeRoom(id: ID): void {
 // ─── Subject mutations ────────────────────────────────────────────────────────
 
 export function addSubject(s: Omit<Subject, 'id'>): void {
-  const subject: Subject = { id: nanoid(), ...s };
-  setState({ ..._state, subjects: [..._state.subjects, subject] });
+  setState({ ..._state, subjects: [..._state.subjects, { id: nanoid(), ...s }] });
 }
 
 export function updateSubject(id: ID, patch: Partial<Omit<Subject, 'id'>>): void {
@@ -144,8 +206,7 @@ export function removeSubject(id: ID): void {
 
 export function addGroup(label: string): void {
   const maxOrder = _state.groups.reduce((m, g) => Math.max(m, g.order), -1);
-  const group: Group = { id: nanoid(), label, enabled: true, order: maxOrder + 1 };
-  setState({ ..._state, groups: [..._state.groups, group] });
+  setState({ ..._state, groups: [..._state.groups, { id: nanoid(), label, enabled: true, order: maxOrder + 1 }] });
 }
 
 export function updateGroup(id: ID, patch: Partial<Omit<Group, 'id'>>): void {

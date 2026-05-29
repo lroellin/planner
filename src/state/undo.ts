@@ -29,3 +29,8 @@ export function redoState(current: AppState): AppState | null {
 
 export function canUndo(): boolean { return past.length > 0; }
 export function canRedo(): boolean { return future.length > 0; }
+
+export function clearUndo(): void {
+  past = [];
+  future = [];
+}

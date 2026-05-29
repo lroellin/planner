@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { nanoid } from 'nanoid';
   import {
     getState,
     addTeacher, updateTeacher, removeTeacher,
@@ -7,56 +6,84 @@
     addSubject, updateSubject, removeSubject,
     addGroup, updateGroup, removeGroup,
   } from '../state/store.svelte';
+  import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
   import type { ID } from '../types';
 
-  interface Props {
-    onclose: () => void;
-  }
-
+  interface Props { onclose: () => void; }
   let { onclose }: Props = $props();
 
   type Tab = 'groups' | 'teachers' | 'rooms' | 'subjects';
   let activeTab = $state<Tab>('groups');
-
   const state = $derived(getState());
 
-  // ─── Groups ──────────────────────────────────────────────────────────────────
-  let newGroupLabel = $state('');
+  // ─── Next group label ─────────────────────────────────────────────────────────
+  function nextGroupLabel(): string {
+    const labels = state.groups.map(g => g.label);
+    let i = 1;
+    while (labels.includes(`G${i}`)) i++;
+    return `G${i}`;
+  }
 
-  function addNewGroup(): void {
+  // ─── Groups ───────────────────────────────────────────────────────────────────
+  let newGroupLabel = $state('');
+  $effect(() => { if (activeTab === 'groups') newGroupLabel = nextGroupLabel(); });
+
+  function submitGroup(e?: Event): void {
+    e?.preventDefault();
     const label = newGroupLabel.trim();
     if (!label) return;
     addGroup(label);
-    newGroupLabel = '';
+    newGroupLabel = nextGroupLabel();
   }
 
-  // ─── Teachers ────────────────────────────────────────────────────────────────
+  // ─── Teachers ─────────────────────────────────────────────────────────────────
   let newTeacherName = $state('');
+  let newTeacherShortName = $state('');
   let newTeacherColor = $state('#4299e1');
+  let shortNameManuallyEdited = $state(false);
 
-  function addNewTeacher(): void {
+  $effect(() => {
+    if (activeTab === 'teachers')
+      newTeacherColor = generateDistinctColor(state.teachers.map(t => t.color));
+  });
+
+  function onTeacherNameInput(name: string): void {
+    newTeacherName = name;
+    if (!shortNameManuallyEdited) newTeacherShortName = generateInitials(name);
+  }
+
+  function submitTeacher(e?: Event): void {
+    e?.preventDefault();
     const name = newTeacherName.trim();
     if (!name) return;
-    addTeacher(name, newTeacherColor);
+    addTeacher(name, newTeacherShortName || generateInitials(name), newTeacherColor);
     newTeacherName = '';
-    newTeacherColor = '#4299e1';
+    newTeacherShortName = '';
+    shortNameManuallyEdited = false;
+    newTeacherColor = generateDistinctColor(getState().teachers.map(t => t.color));
   }
 
-  // ─── Rooms ───────────────────────────────────────────────────────────────────
+  // ─── Rooms ────────────────────────────────────────────────────────────────────
   let newRoomName = $state('');
   let newRoomColor = $state('#48bb78');
   let newRoomExclude = $state(false);
 
-  function addNewRoom(): void {
+  $effect(() => {
+    if (activeTab === 'rooms')
+      newRoomColor = generateDistinctColor(state.rooms.map(r => r.color));
+  });
+
+  function submitRoom(e?: Event): void {
+    e?.preventDefault();
     const name = newRoomName.trim();
     if (!name) return;
     addRoom(name, newRoomColor, newRoomExclude);
     newRoomName = '';
-    newRoomColor = '#48bb78';
+    newRoomColor = generateDistinctColor(getState().rooms.map(r => r.color));
     newRoomExclude = false;
   }
 
-  // ─── Subjects ────────────────────────────────────────────────────────────────
+  // ─── Subjects ─────────────────────────────────────────────────────────────────
   let newSubjectName = $state('');
   let newSubjectColor = $state('#9f7aea');
   let newSubjectDuration = $state(60);
@@ -64,19 +91,24 @@
   let newSubjectTeacherIds = $state<ID[]>([]);
   let newSubjectRoomId = $state<ID | null>(null);
 
-  function addNewSubject(): void {
+  $effect(() => {
+    if (activeTab === 'subjects')
+      newSubjectColor = generateDistinctColor(state.subjects.map(s => s.color));
+  });
+
+  function submitSubject(e?: Event): void {
+    e?.preventDefault();
     const name = newSubjectName.trim();
     if (!name) return;
     addSubject({
-      name,
-      color: newSubjectColor,
+      name, color: newSubjectColor,
       defaultTeacherIds: newSubjectTeacherIds,
       defaultRoomId: newSubjectRoomId,
       defaultDurationMinutes: newSubjectDuration,
       isBreak: newSubjectIsBreak,
     });
     newSubjectName = '';
-    newSubjectColor = '#9f7aea';
+    newSubjectColor = generateDistinctColor(getState().subjects.map(s => s.color));
     newSubjectDuration = 60;
     newSubjectIsBreak = false;
     newSubjectTeacherIds = [];
@@ -90,284 +122,502 @@
   }
 
   let dialogEl: HTMLDialogElement;
-  $effect(() => {
-    if (dialogEl) dialogEl.showModal();
-  });
+  $effect(() => { if (dialogEl) dialogEl.showModal(); });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
 <dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}>
-  <article class="config-article">
-    <header>
-      <h4 style="margin:0">Configuration</h4>
-    </header>
+  <div class="panel">
 
-    <nav class="tab-nav">
-      {#each (['groups', 'teachers', 'rooms', 'subjects'] as Tab[]) as tab}
-        <button
-          class:active={activeTab === tab}
-          onclick={() => activeTab = tab}
-        >{tab.charAt(0).toUpperCase() + tab.slice(1)}</button>
+    <div class="panel-header">
+      <h4>Configuration</h4>
+      <button class="close-btn" onclick={onclose} aria-label="Close">✕</button>
+    </div>
+
+    <nav class="tabs">
+      {#each (['groups','teachers','rooms','subjects'] as Tab[]) as tab}
+        <button class:active={activeTab === tab} onclick={() => activeTab = tab}>
+          {tab.charAt(0).toUpperCase() + tab.slice(1)}
+        </button>
       {/each}
     </nav>
 
-    <div class="tab-content">
+    <div class="body">
+
+      <!-- ════ GROUPS ════════════════════════════════════════ -->
       {#if activeTab === 'groups'}
-        <table class="config-table">
-          <thead><tr><th>Label</th><th>Enabled</th><th></th></tr></thead>
-          <tbody>
-            {#each [...state.groups].sort((a, b) => a.label.localeCompare(b.label)) as group (group.id)}
-              <tr class:disabled={!group.enabled}>
-                <td>
-                  <input
-                    type="text"
-                    value={group.label}
-                    onchange={(e) => updateGroup(group.id, { label: (e.currentTarget as HTMLInputElement).value })}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={group.enabled}
-                    onchange={(e) => updateGroup(group.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                </td>
-                <td>
-                  <button class="danger-sm" onclick={() => removeGroup(group.id)}>✕</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <div class="add-row">
-          <input type="text" placeholder="G4" bind:value={newGroupLabel} />
-          <button onclick={addNewGroup}>Add group</button>
-        </div>
 
+        {#if state.groups.length > 0}
+          <section>
+            <h5 class="section-title">Groups ({state.groups.length})</h5>
+            <ul class="item-list">
+              {#each [...state.groups].sort((a, b) => a.label.localeCompare(b.label)) as g (g.id)}
+                <li class="row" class:row-muted={!g.enabled}>
+                  <label class="toggle" title={g.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}>
+                    <input type="checkbox" checked={g.enabled}
+                      onchange={(e) => updateGroup(g.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
+                    />
+                    <span class="toggle-track"></span>
+                  </label>
+                  <input class="field-input field-short" type="text" value={g.label}
+                    onchange={(e) => updateGroup(g.id, { label: (e.currentTarget as HTMLInputElement).value })}
+                  />
+                  <button class="btn-danger" onclick={() => removeGroup(g.id)} aria-label="Delete">✕</button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          <hr class="divider" />
+        {/if}
+
+        <section>
+          <h5 class="section-title">Add group</h5>
+          <form class="add-form" onsubmit={submitGroup}>
+            <input class="field-input field-short" type="text" bind:value={newGroupLabel}
+              placeholder="G4" aria-label="Group label" />
+            <button type="submit" class="btn-primary">Add group</button>
+          </form>
+        </section>
+
+      <!-- ════ TEACHERS ════════════════════════════════════ -->
       {:else if activeTab === 'teachers'}
-        <table class="config-table">
-          <thead><tr><th>Name</th><th>Color</th><th></th></tr></thead>
-          <tbody>
-            {#each state.teachers as teacher (teacher.id)}
-              <tr>
-                <td>
-                  <input
-                    type="text"
-                    value={teacher.name}
-                    onchange={(e) => updateTeacher(teacher.id, { name: (e.currentTarget as HTMLInputElement).value })}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="color"
-                    value={teacher.color}
-                    oninput={(e) => updateTeacher(teacher.id, { color: (e.currentTarget as HTMLInputElement).value })}
-                  />
-                </td>
-                <td>
-                  <button class="danger-sm" onclick={() => removeTeacher(teacher.id)}>✕</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <div class="add-row">
-          <input type="text" placeholder="Teacher name" bind:value={newTeacherName} />
-          <input type="color" bind:value={newTeacherColor} />
-          <button onclick={addNewTeacher}>Add teacher</button>
-        </div>
 
+        {#if state.teachers.length > 0}
+          <section>
+            <h5 class="section-title">Teachers ({state.teachers.length})</h5>
+            <ul class="item-list">
+              {#each state.teachers as t (t.id)}
+                <li class="row">
+                  <label class="swatch" style="background:{t.color}" title="Change color">
+                    <input type="color" value={t.color}
+                      oninput={(e) => updateTeacher(t.id, { color: (e.currentTarget as HTMLInputElement).value })}
+                      class="hidden-input"
+                    />
+                  </label>
+                  <input class="field-input" type="text" value={t.name}
+                    onchange={(e) => updateTeacher(t.id, { name: (e.currentTarget as HTMLInputElement).value })}
+                    placeholder="Full name"
+                  />
+                  <input class="field-input field-short" type="text" value={t.shortName}
+                    onchange={(e) => updateTeacher(t.id, { shortName: (e.currentTarget as HTMLInputElement).value })}
+                    placeholder="Initials"
+                    title="Short name shown on calendar"
+                  />
+                  <button class="btn-danger" onclick={() => removeTeacher(t.id)} aria-label="Delete">✕</button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          <hr class="divider" />
+        {/if}
+
+        <section>
+          <h5 class="section-title">Add teacher</h5>
+          <form class="add-form add-form-col" onsubmit={submitTeacher}>
+            <div class="add-row">
+              <label class="swatch" style="background:{newTeacherColor}" title="Pick color">
+                <input type="color" bind:value={newTeacherColor} class="hidden-input" />
+              </label>
+              <input class="field-input" type="text" value={newTeacherName}
+                oninput={(e) => onTeacherNameInput((e.currentTarget as HTMLInputElement).value)}
+                placeholder="Full name" aria-label="Name"
+              />
+              <input class="field-input field-short" type="text" bind:value={newTeacherShortName}
+                oninput={() => shortNameManuallyEdited = true}
+                placeholder="Initials" title="Short name (auto-generated from name)"
+              />
+            </div>
+            <div class="add-actions">
+              <button type="submit" class="btn-primary">Add teacher</button>
+            </div>
+          </form>
+        </section>
+
+      <!-- ════ ROOMS ══════════════════════════════════════ -->
       {:else if activeTab === 'rooms'}
-        <table class="config-table">
-          <thead><tr><th>Name</th><th>Color</th><th>Excl. conflicts</th><th></th></tr></thead>
-          <tbody>
-            {#each state.rooms as room (room.id)}
-              <tr>
-                <td>
-                  <input
-                    type="text"
-                    value={room.name}
-                    onchange={(e) => updateRoom(room.id, { name: (e.currentTarget as HTMLInputElement).value })}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="color"
-                    value={room.color}
-                    oninput={(e) => updateRoom(room.id, { color: (e.currentTarget as HTMLInputElement).value })}
-                  />
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={room.excludeFromConflictCheck}
-                    onchange={(e) => updateRoom(room.id, { excludeFromConflictCheck: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                </td>
-                <td>
-                  <button class="danger-sm" onclick={() => removeRoom(room.id)}>✕</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <div class="add-row">
-          <input type="text" placeholder="Room name" bind:value={newRoomName} />
-          <input type="color" bind:value={newRoomColor} />
-          <label class="inline-check"><input type="checkbox" bind:checked={newRoomExclude} /> Excl.</label>
-          <button onclick={addNewRoom}>Add room</button>
-        </div>
 
+        {#if state.rooms.length > 0}
+          <section>
+            <h5 class="section-title">Rooms ({state.rooms.length})</h5>
+            <ul class="item-list">
+              {#each state.rooms as r (r.id)}
+                <li class="row">
+                  <label class="swatch" style="background:{r.color}" title="Change color">
+                    <input type="color" value={r.color}
+                      oninput={(e) => updateRoom(r.id, { color: (e.currentTarget as HTMLInputElement).value })}
+                      class="hidden-input"
+                    />
+                  </label>
+                  <input class="field-input" type="text" value={r.name}
+                    onchange={(e) => updateRoom(r.id, { name: (e.currentTarget as HTMLInputElement).value })}
+                    placeholder="Name"
+                  />
+                  <label class="check-inline" title="Skip conflict detection for this room">
+                    <input type="checkbox" checked={r.excludeFromConflictCheck}
+                      onchange={(e) => updateRoom(r.id, { excludeFromConflictCheck: (e.currentTarget as HTMLInputElement).checked })}
+                    />
+                    No conflict
+                  </label>
+                  <button class="btn-danger" onclick={() => removeRoom(r.id)} aria-label="Delete">✕</button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          <hr class="divider" />
+        {/if}
+
+        <section>
+          <h5 class="section-title">Add room</h5>
+          <form class="add-form" onsubmit={submitRoom}>
+            <label class="swatch" style="background:{newRoomColor}" title="Pick color">
+              <input type="color" bind:value={newRoomColor} class="hidden-input" />
+            </label>
+            <input class="field-input" type="text" bind:value={newRoomName}
+              placeholder="Name" aria-label="Room name"
+            />
+            <label class="check-inline">
+              <input type="checkbox" bind:checked={newRoomExclude} />
+              No conflict
+            </label>
+            <button type="submit" class="btn-primary">Add room</button>
+          </form>
+        </section>
+
+      <!-- ════ SUBJECTS ════════════════════════════════════ -->
       {:else if activeTab === 'subjects'}
-        <table class="config-table">
-          <thead><tr><th>Name</th><th>Color</th><th>Duration</th><th>Break?</th><th></th></tr></thead>
-          <tbody>
-            {#each state.subjects as subject (subject.id)}
-              <tr>
-                <td>
-                  <input
-                    type="text"
-                    value={subject.name}
-                    onchange={(e) => updateSubject(subject.id, { name: (e.currentTarget as HTMLInputElement).value })}
+
+        {#if state.subjects.length > 0}
+          <section>
+            <h5 class="section-title">Subjects ({state.subjects.length})</h5>
+            <ul class="item-list">
+              {#each state.subjects as s (s.id)}
+                <li class="row">
+                  <label class="swatch" style="background:{s.color}" title="Change color">
+                    <input type="color" value={s.color}
+                      oninput={(e) => updateSubject(s.id, { color: (e.currentTarget as HTMLInputElement).value })}
+                      class="hidden-input"
+                    />
+                  </label>
+                  <input class="field-input" type="text" value={s.name}
+                    onchange={(e) => updateSubject(s.id, { name: (e.currentTarget as HTMLInputElement).value })}
+                    placeholder="Name"
                   />
-                </td>
-                <td>
-                  <input
-                    type="color"
-                    value={subject.color}
-                    oninput={(e) => updateSubject(subject.id, { color: (e.currentTarget as HTMLInputElement).value })}
+                  <input class="field-input field-num" type="number" value={s.defaultDurationMinutes}
+                    min="15" step="15"
+                    onchange={(e) => updateSubject(s.id, { defaultDurationMinutes: Number((e.currentTarget as HTMLInputElement).value) })}
+                    title="Duration (minutes)"
                   />
-                </td>
-                <td>
-                  <input
-                    type="number"
-                    value={subject.defaultDurationMinutes}
-                    min="15"
-                    step="15"
-                    style="width:70px"
-                    onchange={(e) => updateSubject(subject.id, { defaultDurationMinutes: Number((e.currentTarget as HTMLInputElement).value) })}
-                  />min
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    checked={subject.isBreak}
-                    onchange={(e) => updateSubject(subject.id, { isBreak: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                </td>
-                <td>
-                  <button class="danger-sm" onclick={() => removeSubject(subject.id)}>✕</button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <div class="add-row">
-          <input type="text" placeholder="Subject name" bind:value={newSubjectName} />
-          <input type="color" bind:value={newSubjectColor} />
-          <input type="number" bind:value={newSubjectDuration} min="15" step="15" style="width:70px" />min
-          <label class="inline-check"><input type="checkbox" bind:checked={newSubjectIsBreak} /> Break</label>
-          <button onclick={addNewSubject}>Add</button>
-        </div>
+                  <span class="unit">min</span>
+                  <label class="check-inline" title="Mark as a break (shown separately in palette)">
+                    <input type="checkbox" checked={s.isBreak}
+                      onchange={(e) => updateSubject(s.id, { isBreak: (e.currentTarget as HTMLInputElement).checked })}
+                    />
+                    Break
+                  </label>
+                  <button class="btn-danger" onclick={() => removeSubject(s.id)} aria-label="Delete">✕</button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+          <hr class="divider" />
+        {/if}
+
+        <section>
+          <h5 class="section-title">Add subject</h5>
+          <form class="add-form add-form-col" onsubmit={submitSubject}>
+            <div class="add-row">
+              <label class="swatch" style="background:{newSubjectColor}" title="Pick color">
+                <input type="color" bind:value={newSubjectColor} class="hidden-input" />
+              </label>
+              <input class="field-input" type="text" bind:value={newSubjectName}
+                placeholder="Subject name" aria-label="Subject name"
+              />
+              <input class="field-input field-num" type="number" bind:value={newSubjectDuration}
+                min="15" step="15" title="Duration (minutes)"
+              />
+              <span class="unit">min</span>
+              <label class="check-inline">
+                <input type="checkbox" bind:checked={newSubjectIsBreak} />
+                Break
+              </label>
+            </div>
+            {#if state.teachers.length > 0}
+              <div class="sub-row">
+                <span class="sub-label">Default teachers:</span>
+                <div class="check-group">
+                  {#each state.teachers as t (t.id)}
+                    <label class="check-inline">
+                      <input type="checkbox"
+                        checked={newSubjectTeacherIds.includes(t.id)}
+                        onchange={() => toggleNewSubjectTeacher(t.id)}
+                      />
+                      <span class="mini-swatch" style="background:{t.color}"></span>
+                      {t.name}
+                    </label>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            {#if state.rooms.length > 0}
+              <div class="sub-row">
+                <span class="sub-label">Default room:</span>
+                <select class="field-select" bind:value={newSubjectRoomId}>
+                  <option value={null}>None</option>
+                  {#each state.rooms as r (r.id)}
+                    <option value={r.id}>{r.name}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+            <div class="add-actions">
+              <button type="submit" class="btn-primary">Add subject</button>
+            </div>
+          </form>
+        </section>
+
       {/if}
     </div>
 
-    <footer>
-      <button onclick={onclose}>Close</button>
-    </footer>
-  </article>
+  </div>
 </dialog>
 
 <style>
   dialog {
-    max-width: 640px;
+    max-width: 560px;
     width: 95vw;
-    border-radius: 8px;
+    border-radius: 10px;
     border: none;
     padding: 0;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.22);
+    background: var(--pico-background-color, #fff);
+    color: var(--pico-color, inherit);
   }
 
-  dialog::backdrop {
-    background: rgba(0,0,0,0.4);
-  }
+  dialog::backdrop { background: rgba(0,0,0,0.45); }
 
-  .config-article {
-    padding: 1.25rem;
+  .panel {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    max-height: 80vh;
+    max-height: 82vh;
   }
 
-  header {
-    border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
-    padding-bottom: 0.75rem;
-  }
-
-  .tab-nav {
+  /* ── Header ─────────────────────────────────────────────── */
+  .panel-header {
     display: flex;
-    gap: 0.25rem;
-    border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
-    padding-bottom: 0;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem 0.85rem;
+    border-bottom: 1px solid var(--pico-muted-border-color, #e2e8f0);
   }
 
-  .tab-nav button {
+  h4 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+
+  .close-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    opacity: 0.35;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    color: inherit;
+    line-height: 1;
+  }
+  .close-btn:hover { opacity: 1; background: rgba(229,62,62,0.08); color: #e53e3e; }
+
+  /* ── Tabs ───────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color, #e2e8f0);
+  }
+
+  .tabs button {
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 0.3rem 0.75rem;
+    padding: 0.55rem 0.8rem;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: 0.84rem;
     color: inherit;
-    opacity: 0.6;
+    opacity: 0.5;
+    font-weight: 500;
     margin-bottom: -1px;
+    transition: opacity 0.15s;
   }
 
-  .tab-nav button.active {
-    border-bottom-color: #3182ce;
-    opacity: 1;
-    font-weight: 600;
-    color: #3182ce;
-  }
+  .tabs button:hover { opacity: 0.8; }
+  .tabs button.active { border-bottom-color: #3182ce; opacity: 1; font-weight: 700; color: #3182ce; }
 
-  .tab-content {
-    overflow-y: auto;
+  /* ── Body ───────────────────────────────────────────────── */
+  .body {
     flex: 1;
+    overflow-y: auto;
+    padding: 1rem 1.25rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0;
   }
 
-  .config-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
+  section { display: flex; flex-direction: column; gap: 0.6rem; }
+
+  .section-title {
+    margin: 0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--pico-muted-color, #718096);
   }
 
-  .config-table th {
-    text-align: left;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    opacity: 0.6;
-    border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
+  .divider {
+    border: none;
+    border-top: 1px solid var(--pico-muted-border-color, #e2e8f0);
+    margin: 1rem 0;
   }
 
-  .config-table td {
-    padding: 0.25rem 0.5rem;
-    vertical-align: middle;
+  /* ── Item list ──────────────────────────────────────────── */
+  .item-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
-  .config-table tr.disabled {
-    opacity: 0.4;
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: 6px;
   }
 
-  .config-table input[type="text"],
-  .config-table input[type="number"] {
-    font-size: 0.85rem;
-    padding: 0.15rem 0.4rem;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
+  .row:hover { background: rgba(0,0,0,0.03); }
+  .row-muted { opacity: 0.45; }
+
+  /* ── Color swatch ───────────────────────────────────────── */
+  .swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    flex-shrink: 0;
+    cursor: pointer;
+    border: 1px solid rgba(0,0,0,0.12);
+    position: relative;
+    display: flex;
+  }
+
+  .hidden-input {
+    opacity: 0;
+    position: absolute;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+  }
+
+  /* ── Inputs ─────────────────────────────────────────────── */
+  .field-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.88rem;
+    padding: 0.28rem 0.55rem;
+    border: 1px solid var(--pico-muted-border-color, #cbd5e0);
+    border-radius: 5px;
+    background: var(--pico-form-element-background-color, #fff);
+    color: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+
+  .field-input:focus {
+    outline: none;
+    border-color: #3182ce;
+    box-shadow: 0 0 0 2px rgba(49,130,206,0.18);
+  }
+
+  .field-short { max-width: 72px; flex: 0 0 72px; }
+  .field-num   { max-width: 64px; flex: 0 0 64px; text-align: right; }
+
+  .unit { font-size: 0.78rem; opacity: 0.5; flex-shrink: 0; }
+
+  /* ── Checkboxes ─────────────────────────────────────────── */
+  .check-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.83rem;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .mini-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  /* ── Toggle switch ──────────────────────────────────────── */
+  .toggle { display: flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+  .toggle input { display: none; }
+
+  .toggle-track {
+    width: 32px;
+    height: 17px;
+    border-radius: 99px;
+    background: #cbd5e0;
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+
+  .toggle input:checked + .toggle-track { background: #3182ce; }
+  .toggle input:checked + .toggle-track::after { transform: translateX(15px); }
+
+  /* ── Delete button ──────────────────────────────────────── */
+  .btn-danger {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: #fc8181;
+    font-size: 0.8rem;
+    padding: 0.2rem 0.35rem;
     border-radius: 4px;
-    width: 100%;
+    flex-shrink: 0;
+    opacity: 0.5;
+    line-height: 1;
+    transition: opacity 0.15s, color 0.15s;
+  }
+
+  .btn-danger:hover { opacity: 1; color: #e53e3e; }
+
+  /* ── Add form ───────────────────────────────────────────── */
+  .add-form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .add-form-col {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .add-row {
@@ -375,52 +625,58 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
-    padding: 0.5rem;
-    background: rgba(0,0,0,0.02);
-    border-radius: 4px;
-    font-size: 0.85rem;
   }
 
-  .add-row input[type="text"],
-  .add-row input[type="number"] {
-    flex: 1;
-    min-width: 100px;
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    border-radius: 4px;
-    font-size: 0.85rem;
-  }
-
-  .inline-check {
+  .sub-row {
     display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    font-size: 0.82rem;
-    cursor: pointer;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.84rem;
+    padding-left: 0.25rem;
   }
 
-  button {
-    font-size: 0.82rem;
-    padding: 0.3rem 0.75rem;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    background: #3182ce;
-    color: white;
+  .sub-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--pico-muted-color, #718096);
+    white-space: nowrap;
+    padding-top: 0.2rem;
+    min-width: 110px;
   }
 
-  button.danger-sm {
-    background: transparent;
-    color: #e53e3e;
-    border-color: #e53e3e;
-    padding: 0.1rem 0.4rem;
-    font-size: 0.75rem;
+  .check-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  footer {
-    border-top: 1px solid var(--pico-muted-border-color, #e0e0e0);
-    padding-top: 0.75rem;
+  .add-actions {
     display: flex;
     justify-content: flex-end;
+    margin-top: 0.25rem;
   }
+
+  .field-select {
+    font-size: 0.84rem;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--pico-muted-border-color, #cbd5e0);
+    border-radius: 5px;
+    background: var(--pico-form-element-background-color, #fff);
+    color: inherit;
+  }
+
+  .btn-primary {
+    background: #3182ce;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 0.35rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+
+  .btn-primary:hover { background: #2b6cb0; }
 </style>

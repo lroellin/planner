@@ -8,6 +8,7 @@
   import { getState, addEvent, updateEvent } from '../state/store.svelte';
   import { groupsToResources, buildFCEvents } from '../utils/timeUtils';
   import { pad, extractDayIndex } from '../utils/timeUtils';
+  import { getContrastColor } from '../utils/colorUtils';
   import type { ID } from '../types';
 
   interface Props {
@@ -118,22 +119,24 @@
           ? state.rooms.find(r => r.id === effectiveRoomId)
           : null;
 
-        const dotsHtml = teachers
-          .map(t => `<span class="teacher-dot" style="background:${t!.color}" title="${t!.name}"></span>`)
-          .join('');
+        const teacherHtml = teachers.length > 0
+          ? `<div class="fc-event-teacher">${
+              teachers.map(t =>
+                `<span class="teacher-chip" style="background:${t!.color};color:${getContrastColor(t!.color)}">${t!.shortName || t!.name.slice(0, 3)}</span>`
+              ).join('')
+            }</div>`
+          : '';
 
         const roomHtml = room
-          ? `<span class="room-label" style="border-color:${room.color}">${room.name}</span>`
+          ? `<div class="fc-event-room"><span class="room-dot" style="background:${room.color}"></span>${room.name}</div>`
           : '';
 
         return {
           html: `
             <div class="fc-event-main-inner">
               <div class="fc-event-title">${arg.event.title}</div>
-              <div class="fc-event-meta">
-                ${dotsHtml}
-                ${roomHtml}
-              </div>
+              ${teacherHtml}
+              ${roomHtml}
             </div>
           `,
         };
@@ -180,29 +183,45 @@
     text-overflow: ellipsis;
   }
 
-  :global(.fc-event-meta) {
+  :global(.fc-event-teacher) {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 2px;
+    margin-top: 1px;
     flex-wrap: wrap;
   }
 
-  :global(.teacher-dot) {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    border: 1px solid rgba(255,255,255,0.5);
+  :global(.teacher-chip) {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 3px;
+    border-radius: 3px;
+    font-size: 0.68em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    line-height: 1.5;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.25);
   }
 
-  :global(.room-label) {
-    font-size: 0.65em;
-    border: 1px solid;
-    border-radius: 2px;
-    padding: 0 3px;
+  :global(.fc-event-room) {
+    font-size: 0.68em;
+    opacity: 0.85;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 60px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 1px;
+  }
+
+  :global(.room-dot) {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+    border: 1px solid rgba(255,255,255,0.4);
   }
 </style>

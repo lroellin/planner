@@ -22,7 +22,7 @@
           <div class="conflict-events">
             {#each events as ev, i}
               {#if ev}
-                <span>{subjects[i]?.name ?? '?'} (G{state.groups.find(g => g.id === ev.groupId)?.label ?? '?'} {['Mon','Tue','Wed','Thu','Fri'][ev.dayIndex] ?? ''} {ev.startTime})</span>
+                <span>{subjects[i]?.name ?? '?'} ({state.groups.find(g => g.id === ev.groupId)?.label ?? '?'} {['Mon','Tue','Wed','Thu','Fri'][ev.dayIndex] ?? ''} {ev.startTime})</span>
               {/if}
             {/each}
           </div>

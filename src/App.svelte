@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import Toolbar from './components/Toolbar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Calendar from './components/Calendar.svelte';
@@ -8,6 +9,14 @@
 
   let configOpen = $state(false);
   let selectedEventId = $state<string | null>(null);
+
+  onMount(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = (dark: boolean) =>
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    apply(mq.matches);
+    mq.addEventListener('change', e => apply(e.matches));
+  });
 </script>
 
 <div class="app-layout">
