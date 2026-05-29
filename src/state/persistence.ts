@@ -1,7 +1,11 @@
-import { nanoid } from 'nanoid';
-import type { AppState, CalendarEvent } from '../types';
-import { getActiveProjectId, getProjectStateKey, initProjects } from './projects';
-import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
+import { nanoid } from "nanoid";
+import type { AppState, CalendarEvent } from "../types";
+import {
+  getActiveProjectId,
+  getProjectStateKey,
+  initProjects,
+} from "./projects";
+import { generateInitials } from "../utils/colorUtils";
 
 const CURRENT_VERSION = 2;
 
@@ -26,21 +30,26 @@ export function createDefaultState(): AppState {
     version: CURRENT_VERSION,
     wkStartDate: nextMonday(),
     groups: [
-      { id: nanoid(), label: 'G1', enabled: true, order: 0 },
-      { id: nanoid(), label: 'G2', enabled: true, order: 1 },
-      { id: nanoid(), label: 'G3', enabled: true, order: 2 },
+      { id: nanoid(), label: "G1", enabled: true, order: 0 },
+      { id: nanoid(), label: "G2", enabled: true, order: 1 },
+      { id: nanoid(), label: "G3", enabled: true, order: 2 },
     ],
     teachers: [
-      { id: teacherId, name: 'Teacher 1', shortName: 'T1', color: '#4299e1' },
+      { id: teacherId, name: "Teacher 1", shortName: "T1", color: "#4299e1" },
     ],
     rooms: [
-      { id: roomId, name: 'Room 1', color: '#48bb78', excludeFromConflictCheck: false },
+      {
+        id: roomId,
+        name: "Room 1",
+        color: "#48bb78",
+        excludeFromConflictCheck: false,
+      },
     ],
     subjects: [
       {
         id: nanoid(),
-        name: 'Lunch Break',
-        color: '#f6ad55',
+        name: "Mittagessen",
+        color: "#a0aec0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 60,
@@ -48,8 +57,8 @@ export function createDefaultState(): AppState {
       },
       {
         id: nanoid(),
-        name: 'Short Break',
-        color: '#fc8181',
+        name: "Pause",
+        color: "#cbd5e0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 15,
@@ -57,9 +66,9 @@ export function createDefaultState(): AppState {
       },
       {
         id: nanoid(),
-        name: 'Sample Lesson',
-        color: '#9f7aea',
-        defaultTeacherIds: [teacherId],
+        name: "Karteneröffnung/-führung",
+        color: "#9f7aea",
+        defaultTeacherIds: [],
         defaultRoomId: roomId,
         defaultDurationMinutes: 90,
         isBreak: false,
@@ -72,7 +81,9 @@ export function createDefaultState(): AppState {
 function stripConflicts(state: AppState): AppState {
   return {
     ...state,
-    events: state.events.map(({ conflicts: _omit, ...ev }) => ev as CalendarEvent),
+    events: state.events.map(
+      ({ conflicts: _omit, ...ev }) => ev as CalendarEvent,
+    ),
   };
 }
 
@@ -80,7 +91,10 @@ export function saveState(state: AppState): void {
   try {
     const id = getActiveProjectId();
     if (!id) return;
-    localStorage.setItem(getProjectStateKey(id), JSON.stringify(stripConflicts(state)));
+    localStorage.setItem(
+      getProjectStateKey(id),
+      JSON.stringify(stripConflicts(state)),
+    );
   } catch {
     // localStorage full or unavailable
   }
@@ -114,7 +128,7 @@ function migrateState(raw: AppState): AppState {
   // Backfill shortName for teachers loaded from storage without it
   return {
     ...raw,
-    teachers: raw.teachers.map(t => ({
+    teachers: raw.teachers.map((t) => ({
       ...t,
       shortName: t.shortName ?? generateInitials(t.name),
     })),

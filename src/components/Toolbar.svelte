@@ -60,6 +60,7 @@
     {#if conflictCount > 0}
       <span class="conflict-badge">{conflictCount} conflict{conflictCount !== 1 ? 's' : ''}</span>
     {/if}
+    <button class="icon-btn" onclick={() => window.print()} title="Print / Save as PDF">⎙</button>
     <button class="config-btn" onclick={() => (configOpen = true)}>⚙ Config</button>
   </div>
 </div>
@@ -75,15 +76,15 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    flex: 0 0 auto;
+    flex: 1;
+    min-width: 0;
   }
 
   .toolbar-center {
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    flex: 1;
-    justify-content: center;
+    flex: 0 0 auto;
   }
 
   .toolbar-right {

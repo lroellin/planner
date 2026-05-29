@@ -25,6 +25,9 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   const roomIntervals = new Map<ID, Interval[]>();
 
   for (const ev of state.events) {
+    const group = state.groups.find(g => g.id === ev.groupId);
+    if (!group?.enabled) continue;
+
     const subject = state.subjects.find(s => s.id === ev.subjectId);
     if (!subject) continue;
 

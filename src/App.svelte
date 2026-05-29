@@ -111,4 +111,29 @@
     height: 100%;
     font-family: inherit;
   }
+
+  /* ── Print: A4 landscape, minimal margins ──────────────────────────────────── */
+  @media print {
+    @page {
+      size: A4 landscape;
+      margin: 5mm;
+    }
+
+    /* Hide everything except the calendar */
+    .toolbar-wrapper,
+    .sidebar-wrapper,
+    .conflict-wrapper {
+      display: none !important;
+    }
+
+    .app-layout,
+    .main-area {
+      display: block !important;
+      height: auto !important;
+    }
+
+    .calendar-wrapper {
+      width: 100% !important;
+    }
+  }
 </style>

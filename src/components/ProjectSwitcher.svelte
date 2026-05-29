@@ -100,6 +100,8 @@
     position: relative;
     display: flex;
     align-items: center;
+    flex: 1;
+    min-width: 0;
   }
 
   .project-btn {
@@ -114,7 +116,9 @@
     font-size: 0.88rem;
     font-weight: 600;
     color: inherit;
-    max-width: 180px;
+    flex: 1;
+    min-width: 0;
+    max-width: 400px;
   }
 
   .project-name {
@@ -135,8 +139,12 @@
     padding: 0.2rem 0.5rem;
     border: 1px solid #3182ce;
     border-radius: 6px;
-    width: 160px;
+    min-width: 220px;
+    max-width: 340px;
+    width: 30vw;
     outline: none;
+    background: var(--pico-background-color, #fff);
+    color: inherit;
   }
 
   .backdrop {

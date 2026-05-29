@@ -16,12 +16,12 @@
   const subject = $derived(ev ? state.subjects.find(s => s.id === ev.subjectId) : null);
 
   // Local editable copies
-  let localTeacherIds = $state<ID[] | null>(null);
-  let localRoomId = $state<ID | null | 'inherit'>('inherit');
-  let localStartTime = $state('');
-  let localEndTime = $state('');
-  let showSplit = $state(false);
-  let splitTime = $state('');
+  let localTeacherIds: ID[] | null = $state(null);
+  let localRoomId: ID | null | 'inherit' = $state('inherit');
+  let localStartTime: string = $state('');
+  let localEndTime: string = $state('');
+  let showSplit: boolean = $state(false);
+  let splitTime: string = $state('');
 
   const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 

@@ -13,7 +13,7 @@
   let { onclose }: Props = $props();
 
   type Tab = 'groups' | 'teachers' | 'rooms' | 'subjects';
-  let activeTab = $state<Tab>('groups');
+  let activeTab: Tab = $state('groups');
   const state = $derived(getState());
 
   // ─── Next group label ─────────────────────────────────────────────────────────
@@ -88,8 +88,10 @@
   let newSubjectColor = $state('#9f7aea');
   let newSubjectDuration = $state(60);
   let newSubjectIsBreak = $state(false);
-  let newSubjectTeacherIds = $state<ID[]>([]);
-  let newSubjectRoomId = $state<ID | null>(null);
+  let newSubjectTeacherIds: ID[] = $state([]);
+  let newSubjectRoomId: ID | null = $state(null);
+  // Track which existing subject rows are expanded to show teacher/room editor
+  let expandedSubjectIds: Set<ID> = $state(new Set());
 
   $effect(() => {
     if (activeTab === 'subjects')
@@ -150,16 +152,20 @@
         {#if state.groups.length > 0}
           <section>
             <h5 class="section-title">Groups ({state.groups.length})</h5>
+            <div class="group-list-header">
+              <span class="col-active">Active</span>
+              <span class="col-label">Label</span>
+            </div>
             <ul class="item-list">
-              {#each [...state.groups].sort((a, b) => a.label.localeCompare(b.label)) as g (g.id)}
+              {#each [...state.groups].sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })) as g (g.id)}
                 <li class="row" class:row-muted={!g.enabled}>
-                  <label class="toggle" title={g.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}>
+                  <label class="toggle" title={g.enabled ? 'Shown on calendar — click to hide' : 'Hidden from calendar — click to show'}>
                     <input type="checkbox" checked={g.enabled}
                       onchange={(e) => updateGroup(g.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
                     />
                     <span class="toggle-track"></span>
                   </label>
-                  <input class="field-input field-short" type="text" value={g.label}
+                  <input class="field-input" type="text" value={g.label}
                     onchange={(e) => updateGroup(g.id, { label: (e.currentTarget as HTMLInputElement).value })}
                   />
                   <button class="btn-danger" onclick={() => removeGroup(g.id)} aria-label="Delete">✕</button>
@@ -291,30 +297,87 @@
             <h5 class="section-title">Subjects ({state.subjects.length})</h5>
             <ul class="item-list">
               {#each state.subjects as s (s.id)}
-                <li class="row">
-                  <label class="swatch" style="background:{s.color}" title="Change color">
-                    <input type="color" value={s.color}
-                      oninput={(e) => updateSubject(s.id, { color: (e.currentTarget as HTMLInputElement).value })}
-                      class="hidden-input"
+                {@const expanded = expandedSubjectIds.has(s.id)}
+                <li class="subject-item">
+                  <div class="row">
+                    <label class="swatch" style="background:{s.color}" title="Change color">
+                      <input type="color" value={s.color}
+                        oninput={(e) => updateSubject(s.id, { color: (e.currentTarget as HTMLInputElement).value })}
+                        class="hidden-input"
+                      />
+                    </label>
+                    <input class="field-input" type="text" value={s.name}
+                      onchange={(e) => updateSubject(s.id, { name: (e.currentTarget as HTMLInputElement).value })}
+                      placeholder="Name"
                     />
-                  </label>
-                  <input class="field-input" type="text" value={s.name}
-                    onchange={(e) => updateSubject(s.id, { name: (e.currentTarget as HTMLInputElement).value })}
-                    placeholder="Name"
-                  />
-                  <input class="field-input field-num" type="number" value={s.defaultDurationMinutes}
-                    min="15" step="15"
-                    onchange={(e) => updateSubject(s.id, { defaultDurationMinutes: Number((e.currentTarget as HTMLInputElement).value) })}
-                    title="Duration (minutes)"
-                  />
-                  <span class="unit">min</span>
-                  <label class="check-inline" title="Mark as a break (shown separately in palette)">
-                    <input type="checkbox" checked={s.isBreak}
-                      onchange={(e) => updateSubject(s.id, { isBreak: (e.currentTarget as HTMLInputElement).checked })}
+                    <input class="field-input field-num" type="number" value={s.defaultDurationMinutes}
+                      min="15" step="15"
+                      onchange={(e) => updateSubject(s.id, { defaultDurationMinutes: Number((e.currentTarget as HTMLInputElement).value) })}
+                      title="Duration (minutes)"
                     />
-                    Break
-                  </label>
-                  <button class="btn-danger" onclick={() => removeSubject(s.id)} aria-label="Delete">✕</button>
+                    <span class="unit">min</span>
+                    <label class="check-inline" title="Mark as a break">
+                      <input type="checkbox" checked={s.isBreak}
+                        onchange={(e) => updateSubject(s.id, { isBreak: (e.currentTarget as HTMLInputElement).checked })}
+                      />
+                      Break
+                    </label>
+                    <button
+                      class="expand-btn"
+                      onclick={() => {
+                        const next = new Set(expandedSubjectIds);
+                        expanded ? next.delete(s.id) : next.add(s.id);
+                        expandedSubjectIds = next;
+                      }}
+                      title={expanded ? 'Collapse' : 'Edit teachers & room'}
+                    >{expanded ? '▲' : '▼'}</button>
+                    <button class="btn-danger" onclick={() => removeSubject(s.id)} aria-label="Delete">✕</button>
+                  </div>
+
+                  {#if expanded}
+                    <div class="subject-details">
+                      {#if state.teachers.length > 0}
+                        <div class="detail-row">
+                          <span class="sub-label">Teachers:</span>
+                          <div class="check-col">
+                            {#each state.teachers as t (t.id)}
+                              <label class="check-inline">
+                                <input type="checkbox"
+                                  checked={s.defaultTeacherIds.includes(t.id)}
+                                  onchange={(e) => {
+                                    const checked = (e.currentTarget as HTMLInputElement).checked;
+                                    const ids = checked
+                                      ? [...s.defaultTeacherIds, t.id]
+                                      : s.defaultTeacherIds.filter(id => id !== t.id);
+                                    updateSubject(s.id, { defaultTeacherIds: ids });
+                                  }}
+                                />
+                                <span class="mini-swatch" style="background:{t.color}"></span>
+                                {t.name}
+                              </label>
+                            {/each}
+                          </div>
+                        </div>
+                      {/if}
+                      {#if state.rooms.length > 0}
+                        <div class="detail-row">
+                          <span class="sub-label">Default room:</span>
+                          <select class="field-select"
+                            value={s.defaultRoomId ?? ''}
+                            onchange={(e) => {
+                              const v = (e.currentTarget as HTMLSelectElement).value;
+                              updateSubject(s.id, { defaultRoomId: v === '' ? null : v });
+                            }}
+                          >
+                            <option value="">None</option>
+                            {#each state.rooms as r (r.id)}
+                              <option value={r.id}>{r.name}</option>
+                            {/each}
+                          </select>
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -344,7 +407,7 @@
             {#if state.teachers.length > 0}
               <div class="sub-row">
                 <span class="sub-label">Default teachers:</span>
-                <div class="check-group">
+                <div class="check-col">
                   {#each state.teachers as t (t.id)}
                     <label class="check-inline">
                       <input type="checkbox"
@@ -560,6 +623,35 @@
     flex-shrink: 0;
   }
 
+  /* ── Group list column headers ─────────────────────────────────────────────── */
+  .group-list-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 0.4rem;
+    margin-bottom: 2px;
+  }
+
+  .col-active {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pico-muted-color, #718096);
+    width: 40px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    text-align: center;
+  }
+
+  .col-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--pico-muted-color, #718096);
+  }
+
   /* ── Toggle switch ──────────────────────────────────────── */
   .toggle { display: flex; align-items: center; cursor: pointer; flex-shrink: 0; }
   .toggle input { display: none; }
@@ -644,10 +736,51 @@
     min-width: 110px;
   }
 
-  .check-group {
+  .check-col {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+
+  /* subject expand/collapse */
+  .subject-item {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .expand-btn {
+    background: none;
+    border: 1px solid var(--pico-muted-border-color, #e2e8f0);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.65rem;
+    padding: 0.15rem 0.35rem;
+    color: inherit;
+    opacity: 0.5;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .expand-btn:hover { opacity: 1; }
+
+  .subject-details {
+    margin: 0 0 0.35rem 2.5rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px solid var(--pico-muted-border-color, #e2e8f0);
+    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+
+  .detail-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .detail-row .sub-label {
+    min-width: 100px;
+    padding-top: 0.15rem;
   }
 
   .add-actions {

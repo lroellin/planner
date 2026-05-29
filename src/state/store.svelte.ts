@@ -4,6 +4,7 @@ import { saveState, loadState, loadStateForProject } from './persistence';
 import { pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo } from './undo';
 import { annotateEventsWithConflicts } from '../conflicts/detector';
 import { generateInitials } from '../utils/colorUtils';
+import { timeDiffMinutes, addMinutesToTime } from '../utils/timeUtils';
 import {
   listProjects, createProject as _createProject, deleteProject as _deleteProject,
   renameProject, setActiveProjectId, getActiveProjectId,
@@ -12,13 +13,13 @@ import {
 
 // ─── Core reactive state ──────────────────────────────────────────────────────
 
-let _state = $state<AppState>(loadState());
-let _projects = $state<ProjectMeta[]>(listProjects());
-let _activeProjectId = $state<string | null>(getActiveProjectId());
+let _state: AppState = $state(loadState());
+let _projects: ProjectMeta[] = $state(listProjects());
+let _activeProjectId: string | null = $state(getActiveProjectId());
 
 // Reactive undo state — plain booleans synced after every mutation
-let _canUndoState = $state(false);
-let _canRedoState = $state(false);
+let _canUndoState: boolean = $state(false);
+let _canRedoState: boolean = $state(false);
 
 function syncUndoState(): void {
   _canUndoState = _canUndo();
@@ -188,9 +189,28 @@ export function addSubject(s: Omit<Subject, 'id'>): void {
 }
 
 export function updateSubject(id: ID, patch: Partial<Omit<Subject, 'id'>>): void {
+  const oldSubject = _state.subjects.find(s => s.id === id);
+  let events = _state.events;
+
+  // When default duration changes, cascade to events whose duration still matches the old default
+  if (
+    oldSubject &&
+    patch.defaultDurationMinutes !== undefined &&
+    patch.defaultDurationMinutes !== oldSubject.defaultDurationMinutes
+  ) {
+    const oldDur = oldSubject.defaultDurationMinutes;
+    const newDur = patch.defaultDurationMinutes;
+    events = events.map(ev => {
+      if (ev.subjectId !== id) return ev;
+      if (timeDiffMinutes(ev.startTime, ev.endTime) !== oldDur) return ev; // manually overridden
+      return { ...ev, endTime: addMinutesToTime(ev.startTime, newDur) };
+    });
+  }
+
   setState({
     ..._state,
     subjects: _state.subjects.map(s => s.id === id ? { ...s, ...patch } : s),
+    events,
   });
 }
 
@@ -224,6 +244,16 @@ export function removeGroup(id: ID): void {
   });
 }
 
+function snapToMonday(dateStr: string): string {
+  // Parse as local date (split to avoid UTC offset issues)
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y!, m! - 1, d!);
+  const dow = dt.getDay(); // 0=Sun, 1=Mon...
+  const diff = dow === 0 ? -6 : 1 - dow; // shift back to Monday
+  dt.setDate(dt.getDate() + diff);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
 export function setWkStartDate(date: string): void {
-  setState({ ..._state, wkStartDate: date }, true);
+  setState({ ..._state, wkStartDate: snapToMonday(date) }, true);
 }

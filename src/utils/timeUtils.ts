@@ -44,8 +44,8 @@ export function extractDayIndex(date: Date): number {
 export function groupsToResources(groups: Group[]): ResourceInput[] {
   return groups
     .filter(g => g.enabled)
-    .sort((a, b) => a.label.localeCompare(b.label))
-    .map(g => ({ id: g.id, title: g.label }));
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+    .map((g, i) => ({ id: g.id, title: g.label, order: i }));
 }
 
 export function buildFCEvents(state: AppState): EventInput[] {
@@ -68,6 +68,7 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState): EventInput {
     borderColor: hasConflict ? '#e53e3e' : color,
     textColor: '#ffffff',
     title: subject?.name ?? '?',
+    classNames: hasConflict ? ['fc-event-conflict'] : [],
     extendedProps: { eventId: ev.id },
   };
 }
