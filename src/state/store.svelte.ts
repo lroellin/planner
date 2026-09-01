@@ -1,23 +1,15 @@
 import { nanoid } from 'nanoid';
-import type { AppState, CalendarEvent, Teacher, Room, Subject, Group, ID } from '../types';
-import { saveState, loadState, loadStateForProject } from './persistence';
+import type { AppState, CalendarEvent, Teacher, Room, Subject, Group, Phase, ID } from '../types';
+import { saveState, loadState } from './persistence';
 import { pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo } from './undo';
+import { createDefaultState } from './persistence';
 import { annotateEventsWithConflicts } from '../conflicts/detector';
-import { generateInitials } from '../utils/colorUtils';
 import { timeDiffMinutes, addMinutesToTime, formatDate } from '../utils/timeUtils';
-import {
-  listProjects, createProject as _createProject, deleteProject as _deleteProject,
-  renameProject, setActiveProjectId, getActiveProjectId,
-  type ProjectMeta,
-} from './projects';
 
 // ─── Core reactive state ──────────────────────────────────────────────────────
 
-let _state: AppState = $state(loadState());
-let _projects: ProjectMeta[] = $state(listProjects());
-let _activeProjectId: string | null = $state(getActiveProjectId());
+let _state: AppState = $state(annotateEventsWithConflicts(loadState()));
 
-// Reactive undo state — plain booleans synced after every mutation
 let _canUndoState: boolean = $state(false);
 let _canRedoState: boolean = $state(false);
 
@@ -26,16 +18,9 @@ function syncUndoState(): void {
   _canRedoState = _canRedo();
 }
 
-function syncProjectState(): void {
-  _projects = listProjects();
-  _activeProjectId = getActiveProjectId();
-}
-
 // ─── Getters ──────────────────────────────────────────────────────────────────
 
 export function getState(): AppState { return _state; }
-export function getProjects(): ProjectMeta[] { return _projects; }
-export function getCurrentProjectId(): string | null { return _activeProjectId; }
 export function canUndo(): boolean { return _canUndoState; }
 export function canRedo(): boolean { return _canRedoState; }
 
@@ -71,40 +56,6 @@ export function redo(): void {
     _state = annotated;
   }
   syncUndoState();
-}
-
-// ─── Project management ───────────────────────────────────────────────────────
-
-export function switchProject(id: ID): void {
-  setActiveProjectId(id);
-  clearUndo();
-  syncProjectState();
-  _state = annotateEventsWithConflicts(loadStateForProject(id));
-  syncUndoState();
-}
-
-export function createNewProject(name: string): void {
-  const project = _createProject(name);
-  syncProjectState();
-  switchProject(project.id);
-}
-
-export function renameCurrentProject(name: string): void {
-  const id = getActiveProjectId();
-  if (id) {
-    renameProject(id, name);
-    syncProjectState();
-  }
-}
-
-export function deleteProjectById(id: ID): void {
-  if (listProjects().length <= 1) return;
-  _deleteProject(id);
-  syncProjectState();
-  if (getActiveProjectId() === id || _activeProjectId === id) {
-    const remaining = listProjects();
-    if (remaining[0]) switchProject(remaining[0].id);
-  }
 }
 
 // ─── Event mutations ──────────────────────────────────────────────────────────
@@ -148,7 +99,9 @@ export function removeTeacher(id: ID): void {
     })),
     events: _state.events.map(ev => ({
       ...ev,
-      teacherIds: ev.teacherIds ? ev.teacherIds.filter(tid => tid !== id) : null,
+      teacherIds: ev.teacherIds === 'inherit'
+        ? 'inherit'
+        : ev.teacherIds.filter(tid => tid !== id),
     })),
   });
 }
@@ -177,7 +130,7 @@ export function removeRoom(id: ID): void {
     })),
     events: _state.events.map(ev => ({
       ...ev,
-      roomId: ev.roomId === id ? null : ev.roomId,
+      roomId: ev.roomId === id ? 'inherit' : ev.roomId,
     })),
   });
 }
@@ -237,23 +190,68 @@ export function updateGroup(id: ID, patch: Partial<Omit<Group, 'id'>>): void {
 }
 
 export function removeGroup(id: ID): void {
+  const events = _state.events
+    .map(ev => {
+      if (!Array.isArray(ev.groupId)) return ev;
+      return { ...ev, groupId: ev.groupId.filter(gid => gid !== id) };
+    })
+    .filter(ev => {
+      if (Array.isArray(ev.groupId)) return ev.groupId.length > 0;
+      return ev.groupId !== id;
+    });
   setState({
     ..._state,
     groups: _state.groups.filter(g => g.id !== id),
-    events: _state.events.filter(ev => ev.groupId !== id),
+    phases: _state.phases.map(p => ({ ...p, groupIds: p.groupIds.filter(gid => gid !== id) })),
+    events,
   });
 }
 
-function snapToMonday(dateStr: string): string {
-  // Parse as local date (split to avoid UTC offset issues)
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const dt = new Date(y!, m! - 1, d!);
-  const dow = dt.getDay(); // 0=Sun, 1=Mon...
-  const diff = dow === 0 ? -6 : 1 - dow; // shift back to Monday
-  dt.setDate(dt.getDate() + diff);
+// ─── Phase mutations ──────────────────────────────────────────────────────────
+
+export function addPhase(label: string, startDay: number, endDay: number, groupIds: ID[]): void {
+  setState({
+    ..._state,
+    phases: [..._state.phases, { id: nanoid(), label, startDay, endDay, groupIds }],
+  });
+}
+
+export function updatePhase(id: ID, patch: Partial<Omit<Phase, 'id'>>): void {
+  setState({
+    ..._state,
+    phases: _state.phases.map(p => p.id === id ? { ...p, ...patch } : p),
+  });
+}
+
+export function removePhase(id: ID): void {
+  setState({ ..._state, phases: _state.phases.filter(p => p.id !== id) });
+}
+
+// null for anything that isn't a real calendar date. A date input hands back ""
+// when cleared, and Number("") is 0, so an unguarded parse used to store
+// "NaN-NaN-NaN" — which makes every event's date unparseable and blanks the grid.
+function snapToMonday(dateStr: string): string | null {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!parts) return null;
+  const [y, m, d] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+  const dt = new Date(y, m - 1, d);
+  dt.setFullYear(y); // years 0–99 would otherwise be remapped into the 1900s
+  if (Number.isNaN(dt.getTime()) || dt.getMonth() !== m - 1) return null;
+  const dow = dt.getDay();
+  dt.setDate(dt.getDate() + (dow === 0 ? -6 : 1 - dow));
   return formatDate(dt);
 }
 
+export function resetToDefaults(): void {
+  clearUndo();
+  const fresh = createDefaultState();
+  saveState(fresh);
+  _state = annotateEventsWithConflicts(fresh);
+  syncUndoState();
+}
+
 export function setWkStartDate(date: string): void {
-  setState({ ..._state, wkStartDate: snapToMonday(date) }, true);
+  const monday = snapToMonday(date);
+  if (!monday || monday === _state.wkStartDate) return;
+  setState({ ..._state, wkStartDate: monday }, true);
 }

@@ -1,155 +1,162 @@
 <script lang="ts">
-  import { getState, undo, redo, canUndo, canRedo, setWkStartDate } from '../state/store.svelte';
-  import { detectConflicts } from '../conflicts/detector';
-  import ProjectSwitcher from './ProjectSwitcher.svelte';
+  import {
+    getState,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    setWkStartDate,
+  } from "../state/store.svelte";
+  import { formatDate } from "../utils/timeUtils";
+  import { detectConflicts } from "../conflicts/detector";
+  import type { EventFilter } from "../types";
 
   interface Props {
     configOpen: boolean;
+    reportOpen: boolean;
+    filter: EventFilter | null;
   }
 
-  let { configOpen = $bindable() }: Props = $props();
+  let { configOpen = $bindable(), reportOpen = $bindable(), filter = $bindable() }: Props = $props();
 
-  const state = $derived(getState());
-  const conflictCount = $derived(detectConflicts(state).length);
+  const appState = $derived(getState());
+  const conflictCount = $derived(detectConflicts(appState).length);
+
+  // "teacher:abc" ⇄ { kind, id }; "" means no filter
+  const filterValue = $derived(filter ? `${filter.kind}:${filter.id}` : "");
+
+  const filterLabel = $derived.by(() => {
+    const f = filter;
+    if (!f) return null;
+    if (f.kind === 'teacher') return appState.teachers.find(t => t.id === f.id)?.name ?? null;
+    if (f.kind === 'room') return appState.rooms.find(r => r.id === f.id)?.name ?? null;
+    return appState.groups.find(g => g.id === f.id)?.label ?? null;
+  });
+
+  function applyFilter(raw: string): void {
+    if (!raw) {
+      filter = null;
+      return;
+    }
+    const [kind, ...rest] = raw.split(':');
+    filter = { kind: kind as EventFilter['kind'], id: rest.join(':') };
+  }
+
+  function shiftWeek(delta: number): void {
+    // Parse as local date to avoid UTC-offset shifting the day
+    const [y, m, day] = appState.wkStartDate.split('-').map(Number);
+    const d = new Date(y!, m! - 1, day!);
+    d.setDate(d.getDate() + delta * 7);
+    setWkStartDate(formatDate(d));
+  }
+
+  // Ctrl+Z belongs to the focused field while text is being edited — taking it
+  // for app-level undo there would revert the whole schedule instead of a typo.
+  function isEditing(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el?.tagName) return false;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable;
+  }
 
   function handleKeydown(e: KeyboardEvent): void {
     if (!(e.ctrlKey || e.metaKey)) return;
-    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
-    if (e.key === 'z' && e.shiftKey)  { e.preventDefault(); redo(); }
-    if (e.key === 'y')                 { e.preventDefault(); redo(); }
+    if (isEditing(e.target)) return;
+    if (e.key === "z" && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+    }
+    if (e.key === "z" && e.shiftKey) {
+      e.preventDefault();
+      redo();
+    }
+    if (e.key === "y") {
+      e.preventDefault();
+      redo();
+    }
   }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="toolbar">
-  <div class="toolbar-left">
-    <span class="app-logo">WK</span>
-    <ProjectSwitcher />
+<div class="navbar bg-base-100 min-h-12 px-3 gap-2">
+  <div class="navbar-start gap-2 min-w-0 flex-1">
+    <span class="badge badge-primary font-bold text-xs tracking-wider shrink-0">WK</span>
+
+    <select
+      class="select select-bordered select-sm text-xs max-w-44"
+      value={filterValue}
+      onchange={(e) => applyFilter((e.currentTarget as HTMLSelectElement).value)}
+      title="Show only events involving…"
+    >
+      <option value="">All events</option>
+      <optgroup label="Teachers">
+        {#each appState.teachers as t (t.id)}
+          <option value="teacher:{t.id}">{t.name}</option>
+        {/each}
+      </optgroup>
+      <optgroup label="Rooms">
+        {#each appState.rooms as r (r.id)}
+          <option value="room:{r.id}">{r.name}</option>
+        {/each}
+      </optgroup>
+      <optgroup label="Groups">
+        {#each appState.groups.filter(g => g.enabled) as g (g.id)}
+          <option value="group:{g.id}">{g.label}</option>
+        {/each}
+      </optgroup>
+    </select>
+
+    {#if filter && filterLabel}
+      <button class="badge badge-warning gap-1 shrink-0" onclick={() => (filter = null)} title="Clear filter">
+        {filterLabel} ✕
+      </button>
+    {/if}
   </div>
 
-  <div class="toolbar-center">
-    <label for="wk-date" class="date-label">Week:</label>
-    <input
-      id="wk-date"
-      type="date"
-      value={state.wkStartDate}
-      oninput={(e) => setWkStartDate((e.currentTarget as HTMLInputElement).value)}
-    />
+  <div class="navbar-center">
+    <div class="flex items-center gap-1">
+      <button class="btn btn-ghost btn-sm btn-square" onclick={() => shiftWeek(-1)} title="Previous week">‹</button>
+      <label class="flex items-center gap-2">
+        <span class="text-xs text-base-content/50 font-medium">Week</span>
+        <input
+          type="date"
+          class="input input-bordered input-sm text-sm"
+          value={appState.wkStartDate}
+          onchange={(e) => setWkStartDate((e.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+      <button class="btn btn-ghost btn-sm btn-square" onclick={() => shiftWeek(1)} title="Next week">›</button>
+    </div>
   </div>
 
-  <div class="toolbar-right">
+  <div class="navbar-end gap-1">
     <button
-      class="icon-btn"
+      class="btn btn-ghost btn-sm"
       disabled={!canUndo()}
       onclick={undo}
       title="Undo (Ctrl+Z)"
     >↩ Undo</button>
     <button
-      class="icon-btn"
+      class="btn btn-ghost btn-sm"
       disabled={!canRedo()}
       onclick={redo}
       title="Redo (Ctrl+Shift+Z)"
     >↪ Redo</button>
 
     {#if conflictCount > 0}
-      <span class="conflict-badge">{conflictCount} conflict{conflictCount !== 1 ? 's' : ''}</span>
+      <span class="badge badge-error gap-1">
+        ⚠ {conflictCount} conflict{conflictCount !== 1 ? "s" : ""}
+      </span>
     {/if}
-    <button class="icon-btn" onclick={() => window.print()} title="Print / Save as PDF">⎙</button>
-    <button class="config-btn" onclick={() => (configOpen = true)}>⚙ Config</button>
+
+    <button class="btn btn-ghost btn-sm" onclick={() => (reportOpen = true)} title="Coverage & teacher plans">
+      ▤ Reports
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick={() => window.print()} title="Print schedule">
+      ⎙ Print
+    </button>
+    <button class="btn btn-primary btn-sm" onclick={() => (configOpen = true)}>
+      ⚙ Config
+    </button>
   </div>
 </div>
-
-<style>
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .toolbar-center {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex: 0 0 auto;
-  }
-
-  .toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex: 0 0 auto;
-  }
-
-  .app-logo {
-    font-weight: 800;
-    font-size: 0.78rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #fff;
-    background: #3182ce;
-    padding: 0.2rem 0.5rem;
-    border-radius: 4px;
-    flex-shrink: 0;
-    line-height: 1.5;
-  }
-
-  .date-label {
-    font-size: 0.82rem;
-    opacity: 0.6;
-    margin: 0;
-    white-space: nowrap;
-  }
-
-  input[type="date"] {
-    font-size: 0.85rem;
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    border-radius: 4px;
-    height: auto;
-    background: inherit;
-    color: inherit;
-  }
-
-  button {
-    font-size: 0.82rem;
-    padding: 0.25rem 0.6rem;
-    cursor: pointer;
-    border-radius: 4px;
-  }
-
-  .icon-btn {
-    background: transparent;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    color: inherit;
-  }
-
-  .icon-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  .config-btn {
-    background: #3182ce;
-    border: 1px solid transparent;
-    color: white;
-  }
-
-  .conflict-badge {
-    background: #e53e3e;
-    color: white;
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 99px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-</style>

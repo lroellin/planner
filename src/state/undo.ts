@@ -24,6 +24,7 @@ export function undoState(current: AppState): AppState | null {
 export function redoState(current: AppState): AppState | null {
   if (future.length === 0) return null;
   past.push(deepClone(current));
+  if (past.length > MAX_DEPTH) past.shift();
   return future.pop()!;
 }
 

@@ -7,19 +7,21 @@
   import type { EventResizeDoneArg } from '@fullcalendar/interaction';
   import adaptivePlugin from '@fullcalendar/adaptive';
   import { nanoid } from 'nanoid';
-  import { getState, addEvent, updateEvent } from '../state/store.svelte';
+  import { getState, addEvent, updateEvent, setState } from '../state/store.svelte';
   import {
-    groupsToResources, buildFCEvents, extractDayIndex,
-    formatTime, effectiveTeacherIds, effectiveRoomId,
+    groupsToResources, buildFCEvents, extractDayIndex, phaseGroups, phaseDayCount, dayDate,
+    formatTime, type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
-  import type { ID } from '../types';
+  import type { EventFilter, ID, Phase } from '../types';
 
   interface Props {
     selectedEventId: string | null;
+    phase: Phase;
+    filter?: EventFilter | null;
   }
 
-  let { selectedEventId = $bindable() }: Props = $props();
+  let { selectedEventId = $bindable(), phase, filter = null }: Props = $props();
 
   let calendarEl: HTMLDivElement;
   let calendar: Calendar;
@@ -28,9 +30,20 @@
   interface PlacePending { date: Date; groupId: ID; x: number; y: number; }
   let placePending: PlacePending | null = $state(null);
 
-  const hasEvents = $derived(
-    getState().events.some(ev => getState().groups.find(g => g.id === ev.groupId)?.enabled)
-  );
+  // FC labels body columns with fc-day-mon/tue/… but leaves resource header cells
+  // (G1/G2/G3) with only `fc-col-header-cell fc-resource`. Both carry data-date,
+  // so the first column of each day is tagged here for the CSS to hook onto.
+  function tagDayBoundaries(): void {
+    if (!calendarEl) return;
+    for (const sel of ['.fc-col-header-cell.fc-resource', '.fc-timegrid-col.fc-resource']) {
+      let prevDate: string | null = null;
+      for (const el of calendarEl.querySelectorAll<HTMLElement>(sel)) {
+        const date = el.getAttribute('data-date');
+        el.classList.toggle('wk-day-start', prevDate !== null && date !== prevDate);
+        prevDate = date;
+      }
+    }
+  }
 
   function handleEventClick(info: EventClickArg): void {
     selectedEventId = info.event.extendedProps['eventId'] as ID;
@@ -40,14 +53,22 @@
     const eventId = info.event.extendedProps['eventId'] as ID;
     const newStart = info.event.start!;
     const newEnd = info.event.end!;
-    const resource = info.event.getResources()[0];
 
-    updateEvent(eventId, {
+    const storedEv = getState().events.find(e => e.id === eventId);
+    const isMulti = storedEv && Array.isArray(storedEv.groupId);
+
+    const patch: Parameters<typeof updateEvent>[1] = {
       dayIndex: extractDayIndex(newStart),
       startTime: formatTime(newStart),
       endTime: formatTime(newEnd),
-      ...(resource ? { groupId: resource.id } : {}),
-    });
+    };
+
+    if (!isMulti) {
+      const resource = info.event.getResources()[0];
+      if (resource) patch.groupId = resource.id;
+    }
+
+    updateEvent(eventId, patch);
   }
 
   function handleEventResize(info: EventResizeDoneArg): void {
@@ -63,32 +84,69 @@
   }
 
   function handleEventReceive(info: EventReceiveArg): void {
+    const movedId = info.event.extendedProps['eventId'] as ID | undefined;
     const subjectId = info.event.extendedProps['subjectId'] as ID | undefined;
     const resource = info.event.getResources()[0];
+    const start = info.event.start!;
+    const end = info.event.end;
 
-    // Always remove FC's auto-created event — we manage events via store
+    // Always remove FC's auto-created event — we own event creation via store
     info.event.remove();
 
-    if (!subjectId || !resource) return;
+    // An existing event dragged in from another phase's calendar. FC has already
+    // dropped it from the source view, so the store must be updated or the event
+    // would vanish until the next reload.
+    if (movedId) {
+      const state = getState();
+      const stored = state.events.find(e => e.id === movedId);
+      if (!stored) return;
+      updateEvent(movedId, {
+        dayIndex: extractDayIndex(start),
+        startTime: formatTime(start),
+        endTime: end ? formatTime(end) : stored.endTime,
+        groupId: Array.isArray(stored.groupId)
+          ? phaseGroups(state, phase).map(g => g.id)
+          : resource?.id ?? stored.groupId,
+      });
+      return;
+    }
+
+    if (!subjectId) return;
 
     const state = getState();
     const subject = state.subjects.find(s => s.id === subjectId);
     if (!subject) return;
 
-    const start = info.event.start!;
     const endMs = start.getTime() + subject.defaultDurationMinutes * 60_000;
-    const end = new Date(endMs);
+    const dayIndex = extractDayIndex(start);
+    const startTime = formatTime(start);
+    const endTime = formatTime(new Date(endMs));
 
-    addEvent({
-      id: nanoid(),
-      subjectId,
-      groupId: resource.id,
-      dayIndex: extractDayIndex(start),
-      startTime: formatTime(start),
-      endTime: formatTime(end),
-      teacherIds: null,
-      roomId: null,
-    });
+    if (subject.isMultiGroup) {
+      const enabledGroupIds = phaseGroups(state, phase).map(g => g.id);
+      addEvent({
+        id: nanoid(),
+        subjectId,
+        groupId: enabledGroupIds,
+        dayIndex,
+        startTime,
+        endTime,
+        teacherIds: 'inherit',
+        roomId: 'inherit',
+      });
+    } else {
+      if (!resource) return;
+      addEvent({
+        id: nanoid(),
+        subjectId,
+        groupId: resource.id,
+        dayIndex,
+        startTime,
+        endTime,
+        teacherIds: 'inherit',
+        roomId: 'inherit',
+      });
+    }
   }
 
   function handleDateClick(info: DateClickArg): void {
@@ -110,18 +168,34 @@
     if (!subject) { placePending = null; return; }
 
     const endMs = date.getTime() + subject.defaultDurationMinutes * 60_000;
-    const end = new Date(endMs);
+    const dayIndex = extractDayIndex(date);
+    const startTime = formatTime(date);
+    const endTime = formatTime(new Date(endMs));
 
-    addEvent({
-      id: nanoid(),
-      subjectId,
-      groupId,
-      dayIndex: extractDayIndex(date),
-      startTime: formatTime(date),
-      endTime: formatTime(end),
-      teacherIds: null,
-      roomId: null,
-    });
+    if (subject.isMultiGroup) {
+      const enabledGroupIds = phaseGroups(state, phase).map(g => g.id);
+      addEvent({
+        id: nanoid(),
+        subjectId,
+        groupId: enabledGroupIds,
+        dayIndex,
+        startTime,
+        endTime,
+        teacherIds: 'inherit',
+        roomId: 'inherit',
+      });
+    } else {
+      addEvent({
+        id: nanoid(),
+        subjectId,
+        groupId,
+        dayIndex,
+        startTime,
+        endTime,
+        teacherIds: 'inherit',
+        roomId: 'inherit',
+      });
+    }
     placePending = null;
   }
 
@@ -129,7 +203,10 @@
     calendar = new Calendar(calendarEl, {
       plugins: [resourceTimeGridPlugin, interactionPlugin, adaptivePlugin],
       schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
-      initialView: 'resourceTimeGridWeek',
+      // Generic resourceTimeGrid (not …Week) so each phase can span its own
+      // number of days rather than the whole Mon–Fri week.
+      initialView: 'resourceTimeGrid',
+      duration: { days: phaseDayCount(phase) },
       datesAboveResources: true,
       // Order columns by our explicit `order` field. Without this, FC's default
       // ('id,title') sorts by the random nanoid id — which reshuffles groups on
@@ -140,6 +217,8 @@
       locale: deLocale,
       allDaySlot: false,
       nowIndicator: true,
+      // Shades 07:00–08:00 and 17:00–19:00 as the fringes of the training day
+      businessHours: { daysOfWeek: [1, 2, 3, 4, 5], startTime: '08:00', endTime: '17:00' },
       slotMinTime: '07:00:00',
       slotMaxTime: '19:00:00',
       slotDuration: '00:15:00',
@@ -150,54 +229,67 @@
       editable: true,
       droppable: true,
       headerToolbar: false,
-      initialDate: getState().wkStartDate,
-      height: '100%',
-      resources: (_fetchInfo: unknown, successCallback: (r: unknown[]) => void) => {
-        successCallback(groupsToResources(getState().groups));
+      initialDate: dayDate(getState().wkStartDate, phase.startDay),
+      // Natural height: the phases share one scroller in App.svelte, which keeps
+      // their time rows locked together without syncing two scroll positions.
+      height: 'auto',
+      stickyHeaderDates: true,
+      resources(_info, successCallback) {
+        successCallback(groupsToResources(getState().groups, phase.groupIds));
       },
-      events: buildFCEvents(getState()),
+      events(_info, successCallback) {
+        successCallback(buildFCEvents(getState(), filter, phase));
+      },
       eventClick: handleEventClick,
       eventDrop: handleEventDrop,
       eventResize: handleEventResize,
       eventReceive: handleEventReceive,
+      // FC pulls the event out of this view the moment it is dropped on another
+      // phase. Re-reading the store puts back whatever is actually true, so a
+      // drop the target refuses can't leave a hole here.
+      eventLeave() { calendar.refetchEvents(); },
       dateClick: handleDateClick,
+      datesSet: tagDayBoundaries,
+      viewDidMount: tagDayBoundaries,
       eventContent(arg) {
-        const state = getState();
-        const eventId = arg.event.extendedProps['eventId'] as ID;
-        const ev = state.events.find(e => e.id === eventId);
-        const subject = ev ? state.subjects.find(s => s.id === ev.subjectId) : null;
+        const teachers = arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined;
+        const room = arg.event.extendedProps['room'] as FCEventRoom | null | undefined;
+        const hasConflict = (arg.event.extendedProps['hasConflict'] as boolean | undefined) ?? false;
 
-        const hasConflict = (ev?.conflicts?.length ?? 0) > 0;
-        const roomId = effectiveRoomId(ev, subject);
-
-        const teachers = effectiveTeacherIds(ev, subject)
-          .map(tid => state.teachers.find(t => t.id === tid))
-          .filter(Boolean);
-        const room = roomId
-          ? state.rooms.find(r => r.id === roomId)
-          : null;
+        // During sidebar drag, the mirror event only has { subjectId } — render title-only preview
+        if (teachers === undefined) {
+          return {
+            html: `<div class="fc-event-body"><div class="fc-event-title-row"><div class="fc-event-title">${arg.event.title}</div></div></div>`,
+          };
+        }
 
         const conflictBadge = hasConflict
           ? '<span class="fc-conflict-badge" title="Conflict">!</span>'
           : '';
 
+        const overrides = (arg.event.extendedProps['overrides'] as string[] | undefined) ?? [];
+        const overrideBadge = overrides.length > 0
+          ? `<span class="fc-override-badge" title="Differs from the subject default: ${overrides.join(', ')}">✎</span>`
+          : '';
+
         const teacherHtml = teachers.length > 0
-          ? `<div class="fc-event-teacher">${
+          ? `<div class="fc-event-teachers">${
               teachers.map(t =>
-                `<span class="teacher-chip" style="background:${t!.color};color:${getContrastColor(t!.color)}">${t!.shortName || t!.name.slice(0, 3)}</span>`
+                `<span class="fc-teacher-av" style="background:${t.color};color:${getContrastColor(t.color)}" title="${t.name}">${t.shortName}</span>`
               ).join('')
             }</div>`
           : '';
 
         const roomHtml = room
-          ? `<div class="fc-event-room"><span class="room-dot" style="background:${room.color}"></span>${room.name}</div>`
+          ? `<div class="fc-event-room"><span class="fc-room-tag" style="background:${room.color}"></span><span class="fc-room-name">${room.name}</span></div>`
           : '';
 
         return {
           html: `
-            <div class="fc-event-main-inner">
+            <div class="fc-event-body">
               <div class="fc-event-title-row">
-                <span class="fc-event-title">${arg.event.title}</span>
+                <div class="fc-event-title">${arg.event.title}</div>
+                ${overrideBadge}
                 ${conflictBadge}
               </div>
               ${teacherHtml}
@@ -209,28 +301,33 @@
     });
     calendar.render();
 
-    return () => calendar.destroy();
+    // FC only recalculates on window resize, so collapsing a side panel would
+    // otherwise leave the grid at its old width.
+    const ro = new ResizeObserver(() => calendar.updateSize());
+    ro.observe(calendarEl);
+
+    return () => { ro.disconnect(); calendar.destroy(); };
   });
 
   // Reactively push state changes into FC
   $effect(() => {
     const s = getState();
+    filter; // tracked so changing the filter re-runs the event source below
     if (!calendar) return;
+    calendar.setOption('duration', { days: phaseDayCount(phase) });
     calendar.refetchResources();
-    calendar.removeAllEvents();
-    calendar.addEventSource(buildFCEvents(s));
-    calendar.gotoDate(s.wkStartDate);
+    // refetchEvents() re-calls the function event source above, which reads
+    // getState() fresh — no source teardown/rebuild needed.
+    calendar.refetchEvents();
+    calendar.gotoDate(dayDate(s.wkStartDate, phase.startDay));
+    // Columns are rebuilt synchronously by the refetch above, but the class tags
+    // are re-applied after paint so enabling/disabling a group can't leave stale ones.
+    requestAnimationFrame(tagDayBoundaries);
   });
 </script>
 
 <div class="calendar-wrap">
   <div bind:this={calendarEl} class="calendar-mount"></div>
-  {#if !hasEvents}
-    <div class="empty-hint" aria-hidden="true">
-      <div class="empty-icon">⟵</div>
-      <div>Drag a subject from the sidebar onto the calendar to schedule it</div>
-    </div>
-  {/if}
 </div>
 
 {#if placePending}
@@ -238,7 +335,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="place-backdrop" onclick={() => placePending = null}></div>
   <div
-    class="place-picker"
+    class="place-picker bg-base-100 border border-base-300 shadow-xl"
     style="left: {Math.min(placePending.x, window.innerWidth - 220)}px; top: {Math.min(placePending.y, window.innerHeight - 320)}px"
   >
     <div class="place-picker-header">Place lesson</div>
@@ -247,10 +344,11 @@
       {#if items.length > 0}
         <div class="place-group-label">{group.label}</div>
         {#each items as s (s.id)}
-          <button class="place-item" onclick={() => placePendingSubject(s.id)}
+          <button class="place-item hover:bg-base-200" onclick={() => placePendingSubject(s.id)}
             style="border-left: 3px solid {s.color}">
             <span class="place-dot" style="background:{s.color}"></span>
             {s.name}
+            {#if s.isMultiGroup}<span style="opacity:0.4;font-size:0.7rem" title="All groups">⊞</span>{/if}
             <span class="place-dur">{s.defaultDurationMinutes}min</span>
           </button>
         {/each}
@@ -263,63 +361,36 @@
   .calendar-wrap {
     position: relative;
     width: 100%;
-    height: 100%;
   }
 
   .calendar-mount {
     width: 100%;
+  }
+
+  /* ── Event card body ─────────────────────────────────────────────────────── */
+  :global(.fc-event-body) {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 3px 5px 3px;
     height: 100%;
-  }
-
-  .empty-hint {
-    position: absolute;
-    top: 55%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    text-align: center;
-    color: var(--pico-muted-color, #a0aec0);
-    font-size: 0.85rem;
-    padding: 1.25rem 2rem;
-    background: var(--pico-background-color, rgba(255,255,255,0.92));
-    border-radius: 10px;
-    border: 1.5px dashed var(--pico-muted-border-color, #e2e8f0);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    max-width: 280px;
-  }
-
-  .empty-icon {
-    font-size: 1.4rem;
-    opacity: 0.4;
-  }
-
-  :global(.fc-event-main-inner) {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 2px 4px;
     overflow: hidden;
-    height: 100%;
-    background: linear-gradient(150deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0) 55%);
-    border-radius: 2px;
+    background: linear-gradient(150deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0) 60%);
   }
 
   :global(.fc-event-title-row) {
     display: flex;
     align-items: flex-start;
     gap: 3px;
-    min-width: 0;
   }
 
+  /* Full title — wraps rather than truncates */
   :global(.fc-event-title) {
-    font-weight: 600;
+    font-weight: 700;
     font-size: 0.8em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.3;
+    word-break: break-word;
+    overflow-wrap: anywhere;
     flex: 1;
     min-width: 0;
   }
@@ -328,12 +399,23 @@
     flex-shrink: 0;
     background: #e53e3e;
     color: #fff;
-    font-size: 0.65em;
+    font-size: 0.6em;
     font-weight: 900;
     border-radius: 3px;
-    padding: 0 3px;
-    line-height: 1.5;
-    letter-spacing: 0;
+    padding: 1px 3px;
+    line-height: 1.4;
+    margin-top: 1px;
+  }
+
+  :global(.fc-override-badge) {
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.28);
+    color: #fff;
+    font-size: 0.62em;
+    border-radius: 3px;
+    padding: 1px 3px;
+    line-height: 1.4;
+    margin-top: 1px;
   }
 
   :global(.fc-event-conflict) {
@@ -341,46 +423,52 @@
     box-shadow: inset 0 0 0 2px rgba(229, 62, 62, 0.35) !important;
   }
 
-  :global(.fc-event-teacher) {
+  /* ── Teacher avatars (circles = people) ──────────────────────────────────── */
+  :global(.fc-event-teachers) {
     display: flex;
-    align-items: center;
-    gap: 2px;
-    margin-top: 1px;
+    gap: 3px;
     flex-wrap: wrap;
+    align-items: center;
   }
 
-  :global(.teacher-chip) {
+  :global(.fc-teacher-av) {
     display: inline-flex;
     align-items: center;
-    padding: 0 3px;
-    border-radius: 3px;
-    font-size: 0.68em;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    line-height: 1.5;
+    justify-content: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    font-size: 0.56em;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    border: 1.5px solid rgba(255, 255, 255, 0.35);
     flex-shrink: 0;
-    border: 1px solid rgba(255,255,255,0.25);
+    line-height: 1;
   }
 
+  /* ── Room tag (rectangle = place) ────────────────────────────────────────── */
   :global(.fc-event-room) {
-    font-size: 0.68em;
-    opacity: 0.85;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7em;
+    opacity: 0.88;
+    overflow: hidden;
+  }
+
+  :global(.fc-room-tag) {
+    /* Rounded rectangle, not a circle — distinguishes places from people */
+    width: 10px;
+    height: 7px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+  }
+
+  :global(.fc-room-name) {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    margin-top: 1px;
-  }
-
-  :global(.room-dot) {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-    border: 1px solid rgba(255,255,255,0.4);
   }
 
   /* ── Resize handle ───────────────────────────────────────────────────────── */
@@ -402,31 +490,35 @@
     background: rgba(255, 255, 255, 0.55);
   }
 
-  /* ── Day alternation: Tuesday and Thursday ────────────────────────────────── */
-  :global([data-theme="light"] .fc-col-header-cell.fc-day-tue),
-  :global([data-theme="light"] .fc-col-header-cell.fc-day-thu) {
-    background: rgba(0, 0, 0, 0.04) !important;
+  /* ── Vertical separation: faint between groups, bold between days ──────────── */
+  /* Group columns inside one day recede… */
+  :global(.fc-timegrid-col.fc-resource),
+  :global(.fc-col-header-cell.fc-resource) {
+    border-left: 1px solid var(--wk-line-faint);
+    border-right: 0;
   }
-  :global([data-theme="light"] .fc-timegrid-col.fc-day-tue),
-  :global([data-theme="light"] .fc-timegrid-col.fc-day-thu) {
-    background: rgba(0, 0, 0, 0.025) !important;
-  }
-  :global([data-theme="dark"] .fc-col-header-cell.fc-day-tue),
-  :global([data-theme="dark"] .fc-col-header-cell.fc-day-thu) {
-    background: rgba(255, 255, 255, 0.07) !important;
-  }
-  :global([data-theme="dark"] .fc-timegrid-col.fc-day-tue),
-  :global([data-theme="dark"] .fc-timegrid-col.fc-day-thu) {
-    background: rgba(255, 255, 255, 0.04) !important;
+  /* …so the day boundary reads as the primary structure. `.wk-day-start` is
+     applied from tagDayBoundaries() — FC gives resource header cells no
+     fc-day-* class, so this boundary cannot be expressed in CSS alone. */
+  :global(.fc-timegrid-col.wk-day-start),
+  :global(.fc-col-header-cell.wk-day-start),
+  :global(.fc-col-header-cell.fc-day + .fc-col-header-cell.fc-day) {
+    border-left: 2px solid var(--wk-line-strong);
   }
 
-  /* Day boundary left border */
-  :global(.fc-col-header-cell.fc-day-mon),
-  :global(.fc-col-header-cell.fc-day-tue),
-  :global(.fc-col-header-cell.fc-day-wed),
-  :global(.fc-col-header-cell.fc-day-thu),
-  :global(.fc-col-header-cell.fc-day-fri) {
-    border-left: 2px solid var(--fc-border-color, #ddd) !important;
+  /* ── Horizontal time lines, three levels deep ──────────────────────────────── */
+  /* FC zeroes the slot border-bottom and draws lines via each cell's border-top.
+     Quarter hours keep FC's own faint dotted default; these two rules add the
+     hour and half-hour emphasis on top of it. Both need two classes to outrank
+     FC's `.fc-theme-standard td`. */
+  :global(.fc-timegrid-slot-lane:not(.fc-timegrid-slot-minor)),
+  :global(.fc-timegrid-slot-label:not(.fc-timegrid-slot-minor)) {
+    border-top: 1px solid var(--wk-line-strong);
+  }
+  /* Every odd row is :00 or :30, since slotDuration is a fixed 15min and
+     slotMinTime a whole hour. */
+  :global(.fc-timegrid-slots tr:nth-child(odd) .fc-timegrid-slot-minor) {
+    border-top: 1px solid var(--wk-line);
   }
 
   /* ── Drag mirror: ensure it renders above everything ─────────────────────── */
@@ -447,10 +539,7 @@
     z-index: 1001;
     min-width: 200px;
     max-width: 240px;
-    background: var(--pico-background-color, #fff);
-    border: 1px solid var(--pico-muted-border-color, #ddd);
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+    border-radius: 10px;
     padding: 6px 0 8px;
     display: flex;
     flex-direction: column;
@@ -459,13 +548,13 @@
   }
 
   .place-picker-header {
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--pico-muted-color, #718096);
+    color: color-mix(in oklab, var(--color-base-content) 40%, transparent);
     padding: 2px 12px 6px;
-    border-bottom: 1px solid var(--pico-muted-border-color, #eee);
+    border-bottom: 1px solid var(--wk-line);
     margin-bottom: 4px;
   }
 
@@ -474,7 +563,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--pico-muted-color, #aaa);
+    color: color-mix(in oklab, var(--color-base-content) 35%, transparent);
     padding: 4px 12px 2px;
   }
 
@@ -495,7 +584,7 @@
   }
 
   .place-item:hover {
-    background: rgba(0, 0, 0, 0.06);
+    background: var(--wk-surface-alt);
   }
 
   .place-dot {

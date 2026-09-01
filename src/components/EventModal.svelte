@@ -1,7 +1,7 @@
 <script lang="ts">
   import { nanoid } from 'nanoid';
-  import { getState, updateEvent, removeEvent, setState } from '../state/store.svelte';
-  import { snapToSlot, timeDiffMinutes, addMinutesToTime, DAY_NAMES } from '../utils/timeUtils';
+  import { getState, addEvent, updateEvent, removeEvent, setState } from '../state/store.svelte';
+  import { snapToSlot, timeDiffMinutes, addMinutesToTime, DAY_NAMES, phaseGroups } from '../utils/timeUtils';
   import type { ID } from '../types';
 
   interface Props {
@@ -11,32 +11,54 @@
 
   let { eventId, onclose }: Props = $props();
 
-  const state = $derived(getState());
-  const ev = $derived(state.events.find(e => e.id === eventId));
-  const subject = $derived(ev ? state.subjects.find(s => s.id === ev.subjectId) : null);
+  const appState = $derived(getState());
+  const ev = $derived(appState.events.find(e => e.id === eventId));
+  const subject = $derived(ev ? appState.subjects.find(s => s.id === ev.subjectId) : null);
 
-  // Local editable copies
-  let localTeacherIds: ID[] | null = $state(null);
+  // Local editable copies. Times are not edited here — start/end are changed by
+  // dragging and resizing the event directly on the calendar.
+  let localTeacherIds: ID[] | 'inherit' = $state('inherit');
   let localRoomId: ID | null | 'inherit' = $state('inherit');
-  let localStartTime: string = $state('');
-  let localEndTime: string = $state('');
+  let localDuration: number = $state(60);
   let showSplit: boolean = $state(false);
   let splitTime: string = $state('');
+  // Day/lane are edited here rather than by dragging: each phase is its own
+  // calendar instance, and FullCalendar cannot drag an event between two.
+  let localDayIndex: number = $state(0);
+  let localGroupId: ID = $state('');
 
-  // Initialize locals when modal opens
+  const isMultiGroup = $derived(ev ? Array.isArray(ev.groupId) : false);
+
+  // The chosen day decides the phase, and the phase decides which lanes exist.
+  // Offering all groups regardless of day is what let a move land the event
+  // outside every phase, where no calendar draws it.
+  const targetPhase = $derived(
+    appState.phases.find(p => localDayIndex >= p.startDay && localDayIndex <= p.endDay) ?? null,
+  );
+  const laneOptions = $derived(targetPhase ? phaseGroups(appState, targetPhase) : []);
+  // Falls back to the first lane of the new phase when the current one isn't in it.
+  const targetGroupId = $derived(
+    laneOptions.some(g => g.id === localGroupId) ? localGroupId : laneOptions[0]?.id ?? '',
+  );
+
   $effect(() => {
     if (!ev) return;
     localTeacherIds = ev.teacherIds;
-    localRoomId = ev.roomId === null ? 'inherit' : ev.roomId;
-    localStartTime = ev.startTime;
-    localEndTime = ev.endTime;
-    // default split time to midpoint
+    localRoomId = ev.roomId;
+    localDayIndex = ev.dayIndex;
+    localGroupId = Array.isArray(ev.groupId) ? '' : ev.groupId;
     const totalMin = timeDiffMinutes(ev.startTime, ev.endTime);
+    localDuration = totalMin;
     splitTime = snapToSlot(addMinutesToTime(ev.startTime, Math.round(totalMin / 2)));
   });
 
+  const defaultDuration = $derived(subject?.defaultDurationMinutes ?? 60);
+  const durationOverridden = $derived(localDuration !== defaultDuration);
+  const previewEnd = $derived(ev ? addMinutesToTime(ev.startTime, Math.max(15, localDuration)) : '');
+
   function effectiveTeacherIds(): ID[] {
-    return localTeacherIds ?? subject?.defaultTeacherIds ?? [];
+    if (localTeacherIds === 'inherit') return subject?.defaultTeacherIds ?? [];
+    return localTeacherIds;
   }
 
   function effectiveRoomId(): ID | null {
@@ -45,12 +67,27 @@
   }
 
   function save(): void {
+    if (!ev) return;
+    // A multi-group event re-expands to whatever lanes the target phase draws,
+    // otherwise moving it across phases would leave it on the old phase's lanes.
+    const groupId = isMultiGroup
+      ? (targetPhase ? laneOptions.map(g => g.id) : ev.groupId)
+      : targetGroupId || ev.groupId;
+
     updateEvent(eventId, {
       teacherIds: localTeacherIds,
-      roomId: localRoomId === 'inherit' ? null : localRoomId,
-      startTime: localStartTime,
-      endTime: localEndTime,
+      roomId: localRoomId,
+      endTime: addMinutesToTime(ev.startTime, Math.max(15, localDuration)),
+      dayIndex: localDayIndex,
+      groupId,
     });
+    onclose();
+  }
+
+  function duplicateEvent(): void {
+    if (!ev) return;
+    const { conflicts: _, ...copy } = ev;
+    addEvent({ ...copy, id: nanoid() });
     onclose();
   }
 
@@ -68,8 +105,8 @@
     const part2 = { ...ev, id: nanoid(), startTime: snapped, conflicts: undefined };
 
     setState({
-      ...state,
-      events: state.events
+      ...appState,
+      events: appState.events
         .filter(e => e.id !== eventId)
         .concat([part1, part2]),
     });
@@ -83,13 +120,9 @@
       : [...current, tid];
   }
 
-  function resetTeachers(): void { localTeacherIds = null; }
+  function resetTeachers(): void { localTeacherIds = 'inherit'; }
   function resetRoom(): void { localRoomId = 'inherit'; }
-  function resetTimes(): void {
-    if (!ev) return;
-    localStartTime = ev.startTime;
-    localEndTime = ev.endTime;
-  }
+  function resetDuration(): void { localDuration = defaultDuration; }
 
   let dialogEl: HTMLDialogElement;
   $effect(() => {
@@ -98,48 +131,99 @@
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-<dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}>
-  <article>
+<dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
+  class="modal">
+  <div class="modal-box max-w-md p-0 overflow-hidden">
     {#if ev && subject}
-      <header>
-        <h4 style="margin:0">{subject.name}</h4>
-        <small>{DAY_NAMES[ev.dayIndex] ?? ''} · {ev.startTime}–{ev.endTime}</small>
-      </header>
+      <!-- Subject color accent bar -->
+      <div style="height: 4px; background: {subject.color};"></div>
+      <!-- Header -->
+      <div class="flex items-start justify-between px-5 pt-4 pb-4 border-b border-base-200">
+        <div>
+          <h3 class="text-base font-bold">{subject.name}</h3>
+          <p class="text-sm text-base-content/50 mt-0.5">{DAY_NAMES[ev.dayIndex] ?? ''} · {ev.startTime}–{ev.endTime}</p>
+        </div>
+        <button class="btn btn-ghost btn-sm btn-circle" onclick={onclose}>✕</button>
+      </div>
 
-      <div class="form-section">
-        <div class="field-row">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label>Teachers</label>
-          <div class="field-controls">
-            <div class="multi-check">
-              {#each state.teachers as t (t.id)}
-                <label class="check-label">
+      <!-- Body -->
+      <div class="px-5 py-4 flex flex-col gap-4">
+
+        <!-- Placement -->
+        <div class="flex gap-3">
+          <span class="text-sm font-semibold w-16 shrink-0 pt-0.5">Placement</span>
+          <div class="flex items-center gap-2 flex-1">
+            <select class="select select-bordered select-sm flex-1" bind:value={localDayIndex}>
+              {#each DAY_NAMES as name, i (name)}
+                <option value={i}>{name}</option>
+              {/each}
+            </select>
+            {#if isMultiGroup}
+              <span class="text-sm text-base-content/50 flex-1">all lanes</span>
+            {:else}
+              <select
+                class="select select-bordered select-sm flex-1"
+                value={targetGroupId}
+                disabled={laneOptions.length === 0}
+                onchange={(e) => (localGroupId = (e.currentTarget as HTMLSelectElement).value)}
+              >
+                {#each laneOptions as g (g.id)}
+                  <option value={g.id}>{g.label}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+        </div>
+
+        {#if targetPhase === null}
+          <p class="text-xs text-warning -mt-2 pl-[4.75rem]">
+            No phase covers {DAY_NAMES[localDayIndex]} — the event would not appear on any calendar.
+          </p>
+        {:else if laneOptions.length === 0}
+          <p class="text-xs text-warning -mt-2 pl-[4.75rem]">
+            {targetPhase.label} has no active lanes — the event would not appear on any calendar.
+          </p>
+        {:else}
+          <p class="text-xs text-base-content/40 -mt-2 pl-[4.75rem]">
+            {targetPhase.label}{#if isMultiGroup} · {laneOptions.map(g => g.label).join(', ')}{/if}
+          </p>
+        {/if}
+
+        <!-- Teachers -->
+        <div class="flex gap-3">
+          <span class="text-sm font-semibold w-16 shrink-0 pt-0.5">Teachers</span>
+          <div class="flex flex-col gap-1.5 flex-1">
+            <div class="flex flex-col gap-1">
+              {#each appState.teachers as t (t.id)}
+                <label class="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
+                    class="checkbox checkbox-primary checkbox-sm"
                     checked={effectiveTeacherIds().includes(t.id)}
                     onchange={() => toggleTeacher(t.id)}
                   />
-                  <span class="color-dot" style="background:{t.color}"></span>
-                  {t.name}
+                  <span class="inline-block w-2.5 h-2.5 rounded-full shrink-0" style="background:{t.color}"></span>
+                  <span class="text-sm">{t.name}</span>
                 </label>
               {/each}
             </div>
-            <div class="field-meta">
-              {#if localTeacherIds !== null}
-                <span class="override-badge">overridden</span>
-                <button class="reset-btn" onclick={resetTeachers}>↩ reset</button>
+            <div class="flex items-center gap-2">
+              {#if localTeacherIds !== 'inherit'}
+                <span class="badge badge-primary badge-sm badge-outline">overridden</span>
+                <button class="btn btn-ghost btn-xs text-primary" onclick={resetTeachers}>↩ reset</button>
               {:else}
-                <span class="default-badge">default</span>
+                <span class="text-xs text-base-content/40">default</span>
               {/if}
             </div>
           </div>
         </div>
 
-        <div class="field-row">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label>Room</label>
-          <div class="field-controls">
+        <!-- Room -->
+        <div class="flex gap-3">
+          <span class="text-sm font-semibold w-16 shrink-0 pt-1.5">Room</span>
+          <div class="flex flex-col gap-1.5 flex-1">
             <select
+              class="select select-bordered select-sm w-full"
               value={effectiveRoomId() ?? ''}
               onchange={(e) => {
                 const v = (e.currentTarget as HTMLSelectElement).value;
@@ -147,232 +231,85 @@
               }}
             >
               <option value="">None</option>
-              {#each state.rooms as r (r.id)}
+              {#each appState.rooms as r (r.id)}
                 <option value={r.id}>{r.name}</option>
               {/each}
             </select>
-            <div class="field-meta">
+            <div class="flex items-center gap-2">
               {#if localRoomId !== 'inherit'}
-                <span class="override-badge">overridden</span>
-                <button class="reset-btn" onclick={resetRoom}>↩ reset</button>
+                <span class="badge badge-primary badge-sm badge-outline">overridden</span>
+                <button class="btn btn-ghost btn-xs text-primary" onclick={resetRoom}>↩ reset</button>
               {:else}
-                <span class="default-badge">default</span>
+                <span class="text-xs text-base-content/40">default</span>
               {/if}
             </div>
           </div>
         </div>
 
-        <div class="field-row">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label>Time</label>
-          <div class="field-controls">
-            <div class="time-row">
-              <input type="time" bind:value={localStartTime} step="900" />
-              <span>–</span>
-              <input type="time" bind:value={localEndTime} step="900" />
+        <!-- Duration -->
+        <div class="flex gap-3">
+          <span class="text-sm font-semibold w-16 shrink-0 pt-1.5">Duration</span>
+          <div class="flex flex-col gap-1.5 flex-1">
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                min="15"
+                step="15"
+                class="input input-bordered input-sm w-24"
+                value={localDuration}
+                oninput={(e) => {
+                  const n = Number((e.currentTarget as HTMLInputElement).value);
+                  if (Number.isFinite(n) && n > 0) localDuration = n;
+                }}
+              />
+              <span class="text-sm text-base-content/50">min · ends {previewEnd}</span>
             </div>
-            <div class="field-meta">
-              {#if localStartTime !== ev.startTime || localEndTime !== ev.endTime}
-                <span class="override-badge">changed</span>
-                <button class="reset-btn" onclick={resetTimes}>↩ reset</button>
+            <div class="flex items-center gap-2">
+              {#if durationOverridden}
+                <span class="badge badge-primary badge-sm badge-outline">overridden</span>
+                <button class="btn btn-ghost btn-xs text-primary" onclick={resetDuration}>
+                  ↩ reset to {defaultDuration} min
+                </button>
+              {:else}
+                <span class="text-xs text-base-content/40">default</span>
               {/if}
             </div>
           </div>
         </div>
+
+        <!-- Split -->
+        {#if showSplit}
+          <div class="flex items-center gap-2 bg-warning/10 border border-warning/30 rounded-lg px-3 py-2">
+            <span class="text-sm font-medium shrink-0">Split at:</span>
+            <input type="time" bind:value={splitTime} step="900" class="input input-bordered input-sm flex-1" />
+            <button class="btn btn-sm btn-primary" onclick={doSplit}>Confirm</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => showSplit = false}>Cancel</button>
+          </div>
+        {/if}
       </div>
 
-      {#if showSplit}
-        <div class="split-section">
-          <!-- svelte-ignore a11y_label_has_associated_control -->
-          <label>Split at:</label>
-          <input type="time" bind:value={splitTime} step="900" />
-          <button onclick={doSplit}>Confirm split</button>
-          <button class="secondary" onclick={() => showSplit = false}>Cancel</button>
-        </div>
-      {/if}
-
-      <footer>
-        <div class="footer-left">
-          <button class="danger" onclick={deleteEvent}>Delete</button>
+      <!-- Footer -->
+      <div class="flex items-center justify-between px-5 pb-5 border-t border-base-200 pt-4">
+        <div class="flex gap-2">
+          <button class="btn btn-error btn-sm" onclick={deleteEvent}>Delete</button>
           {#if !showSplit}
-            <button class="secondary" onclick={() => showSplit = true}>Split</button>
+            <button class="btn btn-ghost btn-sm" onclick={() => showSplit = true}>Split</button>
+            <button class="btn btn-ghost btn-sm" onclick={duplicateEvent}>Duplicate</button>
           {/if}
         </div>
-        <div class="footer-right">
-          <button class="secondary" onclick={onclose}>Cancel</button>
-          <button onclick={save}>Save</button>
+        <div class="flex gap-2">
+          <button class="btn btn-ghost btn-sm" onclick={onclose}>Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick={save}>Save</button>
         </div>
-      </footer>
+      </div>
     {:else}
-      <p>Event not found.</p>
+      <div class="p-6 text-sm text-base-content/50">Event not found.</div>
     {/if}
-  </article>
+  </div>
 </dialog>
 
 <style>
-  dialog {
-    max-width: 480px;
-    width: 90vw;
-    border-radius: 8px;
-    border: none;
-    padding: 0;
-  }
-
   dialog::backdrop {
-    background: rgba(0,0,0,0.4);
-  }
-
-  article {
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
-  header {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
-    padding-bottom: 0.75rem;
-  }
-
-  .form-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .field-row {
-    display: grid;
-    grid-template-columns: 80px 1fr;
-    gap: 0.5rem;
-    align-items: start;
-  }
-
-  label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    padding-top: 0.2rem;
-  }
-
-  .field-controls {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .field-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: 0.75rem;
-  }
-
-  .override-badge {
-    background: rgba(49, 130, 206, 0.12);
-    color: #3182ce;
-    padding: 0.1rem 0.4rem;
-    border-radius: 99px;
-    font-size: 0.7rem;
-  }
-
-  .default-badge {
-    color: #aaa;
-  }
-
-  .reset-btn {
-    background: none;
-    border: none;
-    color: #4299e1;
-    cursor: pointer;
-    padding: 0;
-    font-size: 0.75rem;
-    text-decoration: underline;
-  }
-
-  .multi-check {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-
-  .check-label {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-weight: normal;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-
-  .color-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-  }
-
-  .time-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  input[type="time"] {
-    font-size: 0.85rem;
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    border-radius: 4px;
-  }
-
-  select {
-    font-size: 0.85rem;
-    padding: 0.2rem 0.4rem;
-    border: 1px solid var(--pico-muted-border-color, #ccc);
-    border-radius: 4px;
-  }
-
-  .split-section {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: rgba(246, 224, 94, 0.12);
-    border: 1px solid rgba(246, 224, 94, 0.45);
-    border-radius: 4px;
-    padding: 0.5rem;
-    font-size: 0.85rem;
-  }
-
-  footer {
-    display: flex;
-    justify-content: space-between;
-    border-top: 1px solid var(--pico-muted-border-color, #e0e0e0);
-    padding-top: 0.75rem;
-  }
-
-  .footer-left, .footer-right {
-    display: flex;
-    gap: 0.4rem;
-  }
-
-  button {
-    font-size: 0.82rem;
-    padding: 0.3rem 0.75rem;
-    border-radius: 4px;
-    cursor: pointer;
-    border: 1px solid transparent;
-    background: #3182ce;
-    color: white;
-  }
-
-  button.secondary {
-    background: transparent;
-    border-color: var(--pico-muted-border-color, #ccc);
-    color: inherit;
-  }
-
-  button.danger {
-    background: #e53e3e;
+    background: rgba(0, 0, 0, 0.4);
   }
 </style>

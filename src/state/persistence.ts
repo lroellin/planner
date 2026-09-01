@@ -1,15 +1,9 @@
 import { nanoid } from 'nanoid';
 import type { AppState, CalendarEvent } from '../types';
-import { getActiveProjectId, getProjectStateKey, initProjects } from './projects';
-import { generateInitials } from '../utils/colorUtils';
 import { formatDate } from '../utils/timeUtils';
 
-const CURRENT_VERSION = 2;
-
-export function getStorageKey(): string {
-  const id = initProjects();
-  return getProjectStateKey(id);
-}
+const STATE_KEY = 'wk-planner-state';
+const CURRENT_VERSION = 4;
 
 function nextMonday(): string {
   const d = new Date();
@@ -22,14 +16,21 @@ function nextMonday(): string {
 export function createDefaultState(): AppState {
   const teacherId = nanoid();
   const roomId = nanoid();
+  const kaderId = nanoid();
+  const groupIds = [nanoid(), nanoid(), nanoid()];
 
   return {
     version: CURRENT_VERSION,
     wkStartDate: nextMonday(),
     groups: [
-      { id: nanoid(), label: 'G1', enabled: true, order: 0 },
-      { id: nanoid(), label: 'G2', enabled: true, order: 1 },
-      { id: nanoid(), label: 'G3', enabled: true, order: 2 },
+      { id: kaderId, label: 'K', enabled: true, order: 0 },
+      { id: groupIds[0]!, label: 'G1', enabled: true, order: 1 },
+      { id: groupIds[1]!, label: 'G2', enabled: true, order: 2 },
+      { id: groupIds[2]!, label: 'G3', enabled: true, order: 3 },
+    ],
+    phases: [
+      { id: nanoid(), label: 'Planungskurs', startDay: 0, endDay: 1, groupIds: [kaderId] },
+      { id: nanoid(), label: 'Gruppen', startDay: 2, endDay: 4, groupIds },
     ],
     teachers: [
       { id: teacherId, name: 'Teacher 1', shortName: 'T1', color: '#4299e1' },
@@ -46,6 +47,7 @@ export function createDefaultState(): AppState {
         defaultRoomId: null,
         defaultDurationMinutes: 60,
         isBreak: true,
+        isMultiGroup: true,
       },
       {
         id: nanoid(),
@@ -55,6 +57,7 @@ export function createDefaultState(): AppState {
         defaultRoomId: null,
         defaultDurationMinutes: 15,
         isBreak: true,
+        isMultiGroup: true,
       },
       {
         id: nanoid(),
@@ -64,6 +67,7 @@ export function createDefaultState(): AppState {
         defaultRoomId: roomId,
         defaultDurationMinutes: 90,
         isBreak: false,
+        isMultiGroup: false,
       },
     ],
     events: [],
@@ -79,9 +83,7 @@ function stripConflicts(state: AppState): AppState {
 
 export function saveState(state: AppState): void {
   try {
-    const id = getActiveProjectId();
-    if (!id) return;
-    localStorage.setItem(getProjectStateKey(id), JSON.stringify(stripConflicts(state)));
+    localStorage.setItem(STATE_KEY, JSON.stringify(stripConflicts(state)));
   } catch {
     // localStorage full or unavailable
   }
@@ -89,49 +91,35 @@ export function saveState(state: AppState): void {
 
 export function loadState(): AppState {
   try {
-    const key = getStorageKey();
-    const raw = localStorage.getItem(key);
-    if (!raw) return seedDefaultState(key);
-    return migrateState(JSON.parse(raw) as AppState);
+    const raw = localStorage.getItem(STATE_KEY);
+    if (!raw) return seedDefaultState();
+
+    const parsed = JSON.parse(raw) as AppState;
+
+    if (parsed.version !== CURRENT_VERSION) {
+      const confirmed = window.confirm(
+        `Saved data format is incompatible (stored: v${parsed.version ?? '?'}, current: v${CURRENT_VERSION}).\n\n` +
+        `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`
+      );
+      if (confirmed) {
+        return createDefaultState();
+      }
+      // User chose to keep old data — returned as-is, app may behave unexpectedly
+      return parsed;
+    }
+
+    return parsed;
   } catch {
     return createDefaultState();
   }
 }
 
-export function loadStateForProject(id: string): AppState {
-  try {
-    const key = getProjectStateKey(id);
-    const raw = localStorage.getItem(key);
-    if (!raw) return seedDefaultState(key);
-    return migrateState(JSON.parse(raw) as AppState);
-  } catch {
-    return createDefaultState();
-  }
-}
-
-// Create the default state AND persist it immediately, so the seeded ids stay
-// stable across reloads. Without this, every refresh regenerates fresh nanoids
-// until the first save.
-function seedDefaultState(key: string): AppState {
+function seedDefaultState(): AppState {
   const state = createDefaultState();
   try {
-    localStorage.setItem(key, JSON.stringify(state));
+    localStorage.setItem(STATE_KEY, JSON.stringify(state));
   } catch {
-    // localStorage full or unavailable — fall through with in-memory state
+    // localStorage full or unavailable
   }
   return state;
-}
-
-function migrateState(raw: AppState): AppState {
-  if (!raw.version || raw.version < CURRENT_VERSION) {
-    return createDefaultState();
-  }
-  // Backfill shortName for teachers loaded from storage without it
-  return {
-    ...raw,
-    teachers: raw.teachers.map(t => ({
-      ...t,
-      shortName: t.shortName ?? generateInitials(t.name),
-    })),
-  };
 }

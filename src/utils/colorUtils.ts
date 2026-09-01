@@ -8,12 +8,18 @@ export function generateInitials(name: string): string {
     .slice(0, 3);
 }
 
+// WCAG relative luminance. The naive gamma-free average rates saturated mid blues
+// as "light" and pairs them with black text, which is unreadable.
 export function getContrastColor(hex: string): '#000000' | '#ffffff' {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance > 0.5 ? '#000000' : '#ffffff';
+  const channel = (v: number): number => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const r = channel(parseInt(hex.slice(1, 3), 16));
+  const g = channel(parseInt(hex.slice(3, 5), 16));
+  const b = channel(parseInt(hex.slice(5, 7), 16));
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.45 ? '#000000' : '#ffffff';
 }
 
 function hexToHue(hex: string): number {

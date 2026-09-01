@@ -1,4 +1,4 @@
-import type { AppState, CalendarEvent, ConflictRef, ConflictReport, ID } from '../types';
+import type { AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, ID } from '../types';
 import { effectiveTeacherIds, effectiveRoomId } from '../utils/timeUtils';
 
 // Arbitrary Monday as reference epoch for time comparisons
@@ -24,10 +24,13 @@ interface Interval {
 export function detectConflicts(state: AppState): ConflictReport[] {
   const teacherIntervals = new Map<ID, Interval[]>();
   const roomIntervals = new Map<ID, Interval[]>();
+  const groupIntervals = new Map<ID, Interval[]>();
 
   for (const ev of state.events) {
-    const group = state.groups.find(g => g.id === ev.groupId);
-    if (!group?.enabled) continue;
+    const enabled = Array.isArray(ev.groupId)
+      ? ev.groupId.some(gid => state.groups.find(g => g.id === gid)?.enabled)
+      : state.groups.find(g => g.id === ev.groupId)?.enabled;
+    if (!enabled) continue;
 
     const subject = state.subjects.find(s => s.id === ev.subjectId);
     if (!subject) continue;
@@ -35,6 +38,16 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     const startMs = toMs(ev.dayIndex, ev.startTime);
     const endMs = toMs(ev.dayIndex, ev.endTime);
     const interval: Interval = { startMs, endMs, eventId: ev.id };
+
+    // A group cannot be in two places at once, so overlaps here are hard conflicts.
+    // Breaks count too: a lesson running through a group's lunch is a real clash.
+    // Multi-group events contribute one interval per group, so they never collide
+    // with themselves.
+    for (const gid of Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId]) {
+      if (!state.groups.find(g => g.id === gid)?.enabled) continue;
+      if (!groupIntervals.has(gid)) groupIntervals.set(gid, []);
+      groupIntervals.get(gid)!.push(interval);
+    }
 
     for (const tid of effectiveTeacherIds(ev, subject)) {
       if (!teacherIntervals.has(tid)) teacherIntervals.set(tid, []);
@@ -57,7 +70,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   function checkIntervals(
     resourceId: ID,
     intervals: Interval[],
-    kind: 'teacher' | 'room',
+    kind: ConflictKind,
     getName: (id: ID) => string,
   ): void {
     for (let i = 0; i < intervals.length; i++) {
@@ -89,6 +102,12 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   for (const [rid, intervals] of roomIntervals) {
     checkIntervals(rid, intervals, 'room', id =>
       state.rooms.find(r => r.id === id)?.name ?? id,
+    );
+  }
+
+  for (const [gid, intervals] of groupIntervals) {
+    checkIntervals(gid, intervals, 'group', id =>
+      state.groups.find(g => g.id === id)?.label ?? id,
     );
   }
 
