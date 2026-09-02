@@ -4,6 +4,7 @@
     DAY_NAMES, phaseForDay, phaseGroups, snapToSlot, addMinutesToTime, dayDateLabel,
   } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
+  import TimeField from './TimeField.svelte';
   import { ALL_GROUPS, type ID } from '../types';
 
   interface Props {
@@ -111,7 +112,7 @@
           <div class="field">
             <span class="field-name">Start</span>
             <div class="flex items-center gap-2 flex-1">
-              <input type="time" step="900" class="input input-bordered input-sm w-28" bind:value={startTime} />
+              <TimeField bind:value={startTime} ariaLabel="Start time" />
               <span class="hint wk-num">ends {previewEnd}</span>
             </div>
           </div>

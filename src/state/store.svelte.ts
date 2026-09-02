@@ -2,9 +2,9 @@ import { nanoid } from 'nanoid';
 import { ALL_GROUPS } from '../types';
 import type {
   AppState, CalendarEvent, ConflictReport, GroupSelector,
-  Teacher, Room, Subject, Group, Phase, ID,
+  Teacher, Room, Subject, Group, Phase, ID, TimeWindow,
 } from '../types';
-import { saveState, loadState, createDefaultState } from './persistence';
+import { saveState, loadState, createDefaultState, flushSave } from './persistence';
 import {
   pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo,
   peekUndoLabel, peekRedoLabel,
@@ -230,9 +230,10 @@ export function splitEvent(id: ID, atTime: string): void {
 
 // ─── Teacher mutations ────────────────────────────────────────────────────────
 
-export function addTeacher(name: string, shortName: string, color: string): void {
-  const teacher: Teacher = { id: nanoid(), name, shortName, color };
+export function addTeacher(name: string, shortName: string, color: string): ID {
+  const teacher: Teacher = { id: nanoid(), name, shortName, color, unavailable: [] };
   setState({ ..._state, teachers: [..._state.teachers, teacher] }, { label: `adding ${name}` });
+  return teacher.id;
 }
 
 export function updateTeacher(id: ID, patch: Partial<Omit<Teacher, 'id'>>, opts: MutateOptions = {}): void {
@@ -262,9 +263,10 @@ export function removeTeacher(id: ID): void {
 
 // ─── Room mutations ───────────────────────────────────────────────────────────
 
-export function addRoom(name: string, color: string, excludeFromConflictCheck: boolean): void {
-  const room: Room = { id: nanoid(), name, color, excludeFromConflictCheck };
+export function addRoom(name: string, color: string, excludeFromConflictCheck: boolean): ID {
+  const room: Room = { id: nanoid(), name, color, excludeFromConflictCheck, unavailable: [] };
   setState({ ..._state, rooms: [..._state.rooms, room] }, { label: `adding ${name}` });
+  return room.id;
 }
 
 export function updateRoom(id: ID, patch: Partial<Omit<Room, 'id'>>, opts: MutateOptions = {}): void {
@@ -292,11 +294,13 @@ export function removeRoom(id: ID): void {
 
 // ─── Subject mutations ────────────────────────────────────────────────────────
 
-export function addSubject(s: Omit<Subject, 'id'>): void {
+export function addSubject(s: Omit<Subject, 'id'>): ID {
+  const id = nanoid();
   setState(
-    { ..._state, subjects: [..._state.subjects, { id: nanoid(), ...s }] },
+    { ..._state, subjects: [..._state.subjects, { id, ...s }] },
     { label: `adding ${s.name}` },
   );
+  return id;
 }
 
 export function updateSubject(id: ID, patch: Partial<Omit<Subject, 'id'>>, opts: MutateOptions = {}): void {
@@ -443,6 +447,38 @@ function snapToMonday(dateStr: string): string | null {
   const dow = dt.getDay();
   dt.setDate(dt.getDate() + (dow === 0 ? -6 : 1 - dow));
   return formatDate(dt);
+}
+
+/**
+ * Unavailability windows live on the entity, so they go through the same patch
+ * path as a name or a colour. These wrappers exist to keep the array surgery —
+ * and the undo label — out of the config components.
+ */
+export function setTeacherUnavailable(id: ID, unavailable: TimeWindow[]): void {
+  updateTeacher(id, { unavailable }, { label: `editing ${_state.teachers.find(t => t.id === id)?.name ?? 'teacher'}'s absences` });
+}
+
+export function setRoomUnavailable(id: ID, unavailable: TimeWindow[]): void {
+  updateRoom(id, { unavailable }, { label: `editing ${_state.rooms.find(r => r.id === id)?.name ?? 'room'}'s blocked times` });
+}
+
+// ─── Plan-level mutations ─────────────────────────────────────────────────────
+
+export function setPlanName(name: string): void {
+  if (name === _state.name) return;
+  setState({ ..._state, name }, { label: 'renaming the plan', coalesceKey: 'plan-name' });
+}
+
+/**
+ * Replace everything with an imported plan. Undo history is dropped rather than
+ * kept: a stack whose entries describe a different week is worse than no stack,
+ * because the first Ctrl+Z would silently restore the plan the user just left.
+ */
+export function replacePlan(next: AppState): void {
+  clearUndo();
+  lastCoalesceKey = null;
+  commit(next);
+  flushSave();
 }
 
 export function resetToDefaults(): void {

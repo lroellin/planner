@@ -1,10 +1,23 @@
 export type ID = string;
 
+// A stretch of the week a resource is *not* there: the instructor who arrives
+// Tuesday noon, the Schutzraum booked on Thursday morning. An empty list means
+// "always available", so nothing has to be entered for the normal case.
+// All-day windows are stored as 00:00–24:00 (see utils/availability.ts).
+export interface TimeWindow {
+  id: ID;
+  days: number[];      // 0=Mon … 4=Fri
+  startTime: string;   // "HH:MM"
+  endTime: string;     // "HH:MM", may be "24:00"
+  note: string;
+}
+
 export interface Teacher {
   id: ID;
   name: string;
   shortName: string;  // initials, e.g. "JD" for "John Doe"
   color: string;
+  unavailable: TimeWindow[];
 }
 
 export interface Room {
@@ -12,6 +25,14 @@ export interface Room {
   name: string;
   color: string;
   excludeFromConflictCheck: boolean;
+  unavailable: TimeWindow[];
+}
+
+// What the subject is *about*, as opposed to how it is scheduled. Nested so it
+// can grow (material, handouts, references) without widening Subject itself.
+export interface SubjectContent {
+  goals: string[];   // learning objectives, one per line
+  notes: string;     // free text
 }
 
 export interface Subject {
@@ -27,6 +48,7 @@ export interface Subject {
   // placed. Setting it makes coverage exact for subjects that belong to one
   // phase only (a Kader lesson must not be judged against the group lanes).
   phaseId: ID | null;
+  content: SubjectContent;
 }
 
 export interface Group {
@@ -66,7 +88,20 @@ export interface CalendarEvent {
   conflicts?: ConflictRef[];
 }
 
-export type ConflictKind = 'teacher' | 'room' | 'group';
+// The three double-booking kinds, plus the two availability kinds: a resource
+// booked while it is marked away. Those involve a single event, not a pair.
+export type ConflictKind =
+  | 'teacher'
+  | 'room'
+  | 'group'
+  | 'teacher-absent'
+  | 'room-blocked';
+
+export const HARD_CONFLICT_KINDS: ConflictKind[] = ['teacher', 'group', 'teacher-absent'];
+
+export function isHardConflict(kind: ConflictKind): boolean {
+  return HARD_CONFLICT_KINDS.includes(kind);
+}
 
 // Which plan the report overlay is showing. Printing a WK means printing one of
 // these four documents, not one screenshot of the grid.
@@ -89,10 +124,14 @@ export interface ConflictReport {
   resourceId: ID;
   resourceName: string;
   involvedEventIds: ID[];
+  /** Why, when the resource name alone doesn't say it ("away Wed 12:00–24:00"). */
+  detail?: string;
 }
 
 export interface AppState {
   version: number;
+  /** Names the plan in the toolbar, the printed reports and the export file. */
+  name: string;
   wkStartDate: string;  // "YYYY-MM-DD", always a Monday
   teachers: Teacher[];
   rooms: Room[];

@@ -5,11 +5,19 @@
   interface Props {
     items: T[];
     selectedId: string | null;
-    adding: boolean;
     addLabel: string;
     emptyListText: string;
     onselect: (id: string) => void;
-    onadd: () => void;
+    /**
+     * Quick add: a name is all it takes. Everything else (colour, short name,
+     * conflict handling) starts on a default and is edited in the detail pane —
+     * a create form asking for those up front made adding six teachers a chore.
+     * When absent, the add row is a plain button (`onadd`) opening a full form.
+     */
+    onquickadd?: (name: string) => void;
+    onadd?: () => void;
+    adding?: boolean;
+    placeholder?: string;
     /** One row of the list — the caller decides what an entity looks like. */
     row: Snippet<[T]>;
     /** The right-hand pane: an add form, an edit form, or the empty state. */
@@ -17,8 +25,19 @@
   }
 
   let {
-    items, selectedId, adding, addLabel, emptyListText, onselect, onadd, row, detail,
+    items, selectedId, addLabel, emptyListText, onselect,
+    onquickadd, onadd, adding = false, placeholder = 'Name', row, detail,
   }: Props = $props();
+
+  let draftName = $state('');
+
+  function submit(e: Event): void {
+    e.preventDefault();
+    const name = draftName.trim();
+    if (!name || !onquickadd) return;
+    onquickadd(name);
+    draftName = '';
+  }
 </script>
 
 <div class="list-panel">
@@ -39,18 +58,41 @@
     {/if}
   </div>
   <div class="list-add-row">
-    <button
-      class="btn btn-sm w-full justify-start gap-1.5 font-medium"
-      class:btn-primary={adding}
-      class:btn-ghost={!adding}
-      onclick={onadd}
-    >
-      <Icon name="plus" size={13} />
-      {addLabel}
-    </button>
+    {#if onquickadd}
+      <form class="quick-add" onsubmit={submit}>
+        <input
+          class="input input-bordered input-sm flex-1 min-w-0"
+          type="text"
+          bind:value={draftName}
+          {placeholder}
+          aria-label={addLabel}
+        />
+        <button type="submit" class="btn btn-sm btn-primary px-2" disabled={!draftName.trim()} title={addLabel}>
+          <Icon name="plus" size={14} />
+        </button>
+      </form>
+    {:else}
+      <button
+        class="btn btn-sm w-full justify-start gap-1.5 font-medium"
+        class:btn-primary={adding}
+        class:btn-ghost={!adding}
+        onclick={onadd}
+      >
+        <Icon name="plus" size={13} />
+        {addLabel}
+      </button>
+    {/if}
   </div>
 </div>
 
 <div class="detail-panel">
   {@render detail()}
 </div>
+
+<style>
+  .quick-add {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+</style>

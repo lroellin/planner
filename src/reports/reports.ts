@@ -1,6 +1,7 @@
 import type { AppState, Group, ID, Phase, Room, Subject, Teacher } from '../types';
 import {
   effectiveTeacherIds, effectiveRoomId, eventInPhase, phaseGroups, eventGroupIds, timeDiffMinutes,
+  sortSubjects,
 } from '../utils/timeUtils';
 
 // ─── Coverage: has every group had every subject? ─────────────────────────────
@@ -59,7 +60,7 @@ export function buildCoverage(state: AppState): CoverageSection[] {
     const groupIds = phaseGroups(state, phase).map(g => g.id);
 
     // Breaks are placed ad hoc rather than "attended", so they are not part of coverage.
-    const rows: CoverageRow[] = state.subjects
+    const rows: CoverageRow[] = sortSubjects(state.subjects)
       .filter(s => !s.isBreak)
       .filter(s => subjectPhases(state, s.id).some(p => p.id === phase.id))
       .map(subject => {

@@ -117,7 +117,7 @@
     </div>
 
     <div class="report-body">
-      <div class="print-title">{TITLES[activeTab]}</div>
+      <div class="print-title">{TITLES[activeTab]} — {appState.name}</div>
 
       <!-- ══ COVERAGE ═══════════════════════════════════════════════════════ -->
       {#if activeTab === 'coverage'}

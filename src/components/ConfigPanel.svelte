@@ -4,11 +4,14 @@
     addGroup, updateGroup, removeGroup, moveGroupUp, moveGroupDown, moveGroupToIndex,
     eventCountForGroup,
     addPhase, updatePhase, removePhase, eventCountForPhase,
-    resetToDefaults,
+    addTeacher, addRoom,
+    setPlanName, replacePlan, resetToDefaults,
   } from '../state/store.svelte';
-  import { generateDistinctColor } from '../utils/colorUtils';
+  import { serializePlan, planFileName, parsePlan } from '../state/persistence';
+  import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
-  import { DAY_NAMES } from '../utils/timeUtils';
+  import { DAY_NAMES, sortSubjects } from '../utils/timeUtils';
+  import { describeWindow } from '../utils/availability';
   import MasterDetail from './config/MasterDetail.svelte';
   import TeacherDetail from './config/TeacherDetail.svelte';
   import RoomDetail from './config/RoomDetail.svelte';
@@ -19,13 +22,14 @@
   interface Props { onclose: () => void; }
   let { onclose }: Props = $props();
 
-  type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects';
+  type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'data';
   const TABS: { key: Tab; label: string }[] = [
     { key: 'groups', label: 'Groups' },
     { key: 'phases', label: 'Phases' },
     { key: 'teachers', label: 'Teachers' },
     { key: 'rooms', label: 'Rooms' },
     { key: 'subjects', label: 'Subjects' },
+    { key: 'data', label: 'Plan & data' },
   ];
   let activeTab: Tab = $state('groups');
 
@@ -54,24 +58,32 @@
     },
     subjects: {
       short: 'Subjects are the blocks you drag onto the calendar.',
-      long: 'Their defaults — teachers, room, duration — are copied to each placed event, where you can still override them individually.',
+      long: 'Their defaults — teachers, room, duration — are copied to each placed event, where you can still override them individually. Content (goals, notes) lives on the subject too.',
+    },
+    data: {
+      short: 'One plan, kept in this browser. A file is how it leaves and returns.',
+      long: 'Everything is stored in this browser\'s localStorage — clearing site data clears the plan. Export writes the whole plan to a JSON file; importing one replaces what is here. There is no plan library: the file is the archive.',
     },
   };
 
   let introOpen = $state(false);
-  let dangerOpen = $state(false);
 
   // ─── Master-detail selection ──────────────────────────────────────────────
   let selectedTeacherId: ID | null = $state(getState().teachers[0]?.id ?? null);
-  let addingTeacher = $state(false);
   let selectedRoomId: ID | null = $state(getState().rooms[0]?.id ?? null);
-  let addingRoom = $state(false);
   let selectedSubjectId: ID | null = $state(getState().subjects[0]?.id ?? null);
   let addingSubject = $state(false);
 
   const selectedTeacher = $derived(appState.teachers.find(t => t.id === selectedTeacherId) ?? null);
   const selectedRoom    = $derived(appState.rooms.find(r => r.id === selectedRoomId) ?? null);
   const selectedSubject = $derived(appState.subjects.find(s => s.id === selectedSubjectId) ?? null);
+
+  // Alphabetical everywhere, breaks kept apart: the stored order is insertion
+  // order, which stops being findable at about a dozen subjects.
+  const listedSubjects = $derived([
+    ...sortSubjects(appState.subjects.filter(s => !s.isBreak)),
+    ...sortSubjects(appState.subjects.filter(s => s.isBreak)),
+  ]);
 
   // A fresh entity opens on a colour that is far from the ones already in use.
   const nextTeacherColor = $derived(generateDistinctColor(appState.teachers.map(t => t.color)));
@@ -81,6 +93,17 @@
   /** After a delete, land on the entity that slid into the removed one's place. */
   function neighbourId(list: { id: ID }[], index: number): ID | null {
     return list[index]?.id ?? list.at(-1)?.id ?? null;
+  }
+
+  // Quick add: a name and Enter. The short name is derived and the colour is
+  // picked to sit far from the ones in use — both editable in the pane that
+  // opens right after, which is where they belong anyway.
+  function quickAddTeacher(name: string): void {
+    selectedTeacherId = addTeacher(name, generateInitials(name), nextTeacherColor);
+  }
+
+  function quickAddRoom(name: string): void {
+    selectedRoomId = addRoom(name, nextRoomColor, false);
   }
 
   // ─── Groups ───────────────────────────────────────────────────────────────
@@ -194,7 +217,48 @@
     }),
   );
 
-  // ─── Danger zone ──────────────────────────────────────────────────────────
+  // ─── Plan & data ──────────────────────────────────────────────────────────
+  let importError: string | null = $state(null);
+  let importFileEl: HTMLInputElement | undefined = $state();
+
+  function exportPlan(): void {
+    const state = getState();
+    const blob = new Blob([serializePlan(state)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = planFileName(state);
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleImportFile(file: File): Promise<void> {
+    importError = null;
+    const result = parsePlan(await file.text());
+    if (!result.ok) {
+      importError = result.error;
+      return;
+    }
+    const incoming = result.state;
+    const events = incoming.events.length;
+    if (!window.confirm(
+      `Load "${incoming.name}"?\n\n` +
+      `It has ${events} event${events === 1 ? '' : 's'} and starts ${incoming.wkStartDate}.\n\n` +
+      'This replaces the plan in this browser, and undo history is cleared. ' +
+      'Export the current plan first if you want to keep it.',
+    )) return;
+    replacePlan(incoming);
+    onclose();
+  }
+
+  function onImportChange(e: Event): void {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    // Reset so choosing the same file twice fires a change event both times.
+    input.value = '';
+    if (file) void handleImportFile(file);
+  }
+
   function handleClearAll(): void {
     if (!window.confirm(
       'Clear ALL data?\n\nThis permanently removes every event, group, teacher, room, and subject and resets to defaults.\n\nThis cannot be undone.'
@@ -417,31 +481,31 @@
         <MasterDetail
           items={appState.teachers}
           selectedId={selectedTeacherId}
-          adding={addingTeacher}
           addLabel="Add teacher"
+          placeholder="Name, then Enter"
           emptyListText="No teachers yet"
-          onselect={(id) => { selectedTeacherId = id; addingTeacher = false; }}
-          onadd={() => { addingTeacher = true; selectedTeacherId = null; }}
+          onselect={(id) => (selectedTeacherId = id)}
+          onquickadd={quickAddTeacher}
         >
           {#snippet row(t)}
             <span class="list-avatar" style="background:{t.color}">{teacherShort(t)}</span>
             <span class="truncate min-w-0 flex-1">{t.name}</span>
+            {#if t.unavailable.length > 0}
+              <span class="row-tag" title={t.unavailable.map(describeWindow).join(' · ')}>away</span>
+            {/if}
           {/snippet}
           {#snippet detail()}
-            {#if addingTeacher || selectedTeacher}
-              {#key selectedTeacher?.id ?? 'new'}
+            {#if selectedTeacher}
+              {#key selectedTeacher.id}
                 <TeacherDetail
-                  teacher={addingTeacher ? null : selectedTeacher}
-                  draftColor={nextTeacherColor}
-                  oncreated={(id) => { addingTeacher = false; selectedTeacherId = id; }}
-                  oncancel={() => { addingTeacher = false; selectedTeacherId = appState.teachers[0]?.id ?? null; }}
+                  teacher={selectedTeacher}
                   ondeleted={(i) => (selectedTeacherId = neighbourId(getState().teachers, i))}
                 />
               {/key}
             {:else}
               <div class="empty-detail">
                 <Icon name="users" size={26} />
-                <span>Select a teacher to edit, or add a new one.</span>
+                <span>Type a name below to add a teacher, then edit them here.</span>
               </div>
             {/if}
           {/snippet}
@@ -452,34 +516,34 @@
         <MasterDetail
           items={appState.rooms}
           selectedId={selectedRoomId}
-          adding={addingRoom}
           addLabel="Add room"
+          placeholder="Name, then Enter"
           emptyListText="No rooms yet"
-          onselect={(id) => { selectedRoomId = id; addingRoom = false; }}
-          onadd={() => { addingRoom = true; selectedRoomId = null; }}
+          onselect={(id) => (selectedRoomId = id)}
+          onquickadd={quickAddRoom}
         >
           {#snippet row(r)}
             <span class="w-2.5 h-full min-h-[1.4rem] rounded-sm shrink-0 self-stretch" style="background:{r.color}"></span>
             <span class="truncate min-w-0 flex-1">{r.name}</span>
+            {#if r.unavailable.length > 0}
+              <span class="row-tag" title={r.unavailable.map(describeWindow).join(' · ')}>blocked</span>
+            {/if}
             {#if r.excludeFromConflictCheck}
               <span class="row-tag">shared</span>
             {/if}
           {/snippet}
           {#snippet detail()}
-            {#if addingRoom || selectedRoom}
-              {#key selectedRoom?.id ?? 'new'}
+            {#if selectedRoom}
+              {#key selectedRoom.id}
                 <RoomDetail
-                  room={addingRoom ? null : selectedRoom}
-                  draftColor={nextRoomColor}
-                  oncreated={(id) => { addingRoom = false; selectedRoomId = id; }}
-                  oncancel={() => { addingRoom = false; selectedRoomId = appState.rooms[0]?.id ?? null; }}
+                  room={selectedRoom}
                   ondeleted={(i) => (selectedRoomId = neighbourId(getState().rooms, i))}
                 />
               {/key}
             {:else}
               <div class="empty-detail">
                 <Icon name="pin" size={26} />
-                <span>Select a room to edit, or add a new one.</span>
+                <span>Type a name below to add a room, then edit it here.</span>
               </div>
             {/if}
           {/snippet}
@@ -488,7 +552,7 @@
       <!-- ════ SUBJECTS ══════════════════════════════════════════════════════ -->
       {:else if activeTab === 'subjects'}
         <MasterDetail
-          items={appState.subjects}
+          items={listedSubjects}
           selectedId={selectedSubjectId}
           adding={addingSubject}
           addLabel="Add subject"
@@ -510,8 +574,8 @@
                   subject={addingSubject ? null : selectedSubject}
                   draftColor={nextSubjectColor}
                   oncreated={(id) => { addingSubject = false; selectedSubjectId = id; }}
-                  oncancel={() => { addingSubject = false; selectedSubjectId = appState.subjects[0]?.id ?? null; }}
-                  ondeleted={(i) => (selectedSubjectId = neighbourId(getState().subjects, i))}
+                  oncancel={() => { addingSubject = false; selectedSubjectId = listedSubjects[0]?.id ?? null; }}
+                  ondeleted={() => (selectedSubjectId = listedSubjects.find(s => s.id !== selectedSubjectId)?.id ?? null)}
                 />
               {/key}
             {:else}
@@ -522,26 +586,79 @@
             {/if}
           {/snippet}
         </MasterDetail>
+
+      <!-- ════ PLAN & DATA ═══════════════════════════════════════════════════ -->
+      {:else if activeTab === 'data'}
+        <div class="pane">
+          <div class="pane-scroll">
+            <div class="data-stack">
+
+              <section class="data-card">
+                <h4 class="section-title">Plan name</h4>
+                <p class="field-hint">
+                  Shown in the toolbar, on the printed plans, and used for the export file name.
+                </p>
+                <input
+                  class="input input-bordered input-sm w-80 max-w-full"
+                  type="text"
+                  value={appState.name}
+                  placeholder="e.g. WK 2026 Zug 3"
+                  aria-label="Plan name"
+                  onchange={(e) => setPlanName((e.currentTarget as HTMLInputElement).value.trim() || 'WK plan')}
+                />
+              </section>
+
+              <section class="data-card">
+                <h4 class="section-title">Plan file</h4>
+                <p class="field-hint">
+                  The plan lives in this browser only. A file is the backup, the way to move it to
+                  another machine, and the way to hand it to someone else.
+                </p>
+                <div class="data-actions">
+                  <button class="btn btn-sm btn-primary gap-1.5" onclick={exportPlan}>
+                    <Icon name="download" size={14} /> Export plan…
+                  </button>
+                  <button class="btn btn-sm gap-1.5" onclick={() => importFileEl?.click()}>
+                    <Icon name="upload" size={14} /> Import plan…
+                  </button>
+                  <input
+                    bind:this={importFileEl}
+                    type="file"
+                    accept="application/json,.json"
+                    class="hidden"
+                    onchange={onImportChange}
+                  />
+                </div>
+                <p class="field-hint">
+                  <span class="wk-num">{appState.events.length}</span> events ·
+                  <span class="wk-num">{appState.subjects.length}</span> subjects ·
+                  <span class="wk-num">{appState.teachers.length}</span> teachers ·
+                  <span class="wk-num">{appState.rooms.length}</span> rooms
+                </p>
+                {#if importError}
+                  <p class="warn-banner"><Icon name="alert" size={14} /> {importError}</p>
+                {/if}
+              </section>
+
+              <section class="data-card data-card-danger">
+                <h4 class="section-title">Danger zone</h4>
+                <div class="danger-body">
+                  <span class="danger-note">
+                    Removes every event, group, teacher, room and subject, and starts again from the
+                    defaults. Export first if there is anything worth keeping.
+                  </span>
+                  <button class="btn btn-sm btn-error gap-1.5" onclick={handleClearAll}>
+                    <Icon name="trash" size={13} /> Reset all data
+                  </button>
+                </div>
+              </section>
+
+            </div>
+          </div>
+        </div>
       {/if}
 
     </div>
-
-    <!-- Footer: the destructive action lives behind a disclosure, not one
-         mis-click away from Save. -->
-    <footer class="cfg-foot">
-      <button class="danger-toggle" onclick={() => (dangerOpen = !dangerOpen)}>
-        <Icon name={dangerOpen ? 'chevronDown' : 'chevronRight'} size={12} />
-        Danger zone
-      </button>
-      {#if dangerOpen}
-        <div class="danger-body">
-          <span class="danger-note">Removes all events, groups, teachers, rooms and subjects.</span>
-          <button class="btn btn-sm btn-error gap-1.5" onclick={handleClearAll}>
-            <Icon name="trash" size={13} /> Reset all data
-          </button>
-        </div>
-      {/if}
-    </footer>
 
   </div>
 </dialog>
@@ -863,42 +980,41 @@
     color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
   }
 
-  /* ── Footer ─────────────────────────────────────────────────────────────── */
-  .cfg-foot {
-    flex-shrink: 0;
-    padding: 0.5rem 1.25rem;
-    border-top: 1px solid var(--wk-line);
+  /* ── Plan & data ────────────────────────────────────────────────────────── */
+  .data-stack {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 1rem;
+    max-width: 46rem;
   }
 
-  .danger-toggle {
+  .data-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-md);
+    background: var(--wk-surface-alt);
+  }
+
+  .data-card-danger {
+    border-color: color-mix(in oklab, var(--color-error) 35%, transparent);
+    background: color-mix(in oklab, var(--color-error) 6%, transparent);
+  }
+
+  .data-actions {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    align-self: flex-start;
-    border: none;
-    background: none;
-    padding: 0;
-    font-size: var(--wk-fs-2xs);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--wk-text-faint);
-    cursor: pointer;
+    gap: 0.6rem;
+    flex-wrap: wrap;
   }
-  .danger-toggle:hover { color: var(--color-error); }
 
   .danger-body {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.6rem 0.75rem;
-    border: 1px solid color-mix(in oklab, var(--color-error) 35%, transparent);
-    border-radius: var(--wk-r-sm);
-    background: color-mix(in oklab, var(--color-error) 7%, transparent);
   }
 
   .danger-note {

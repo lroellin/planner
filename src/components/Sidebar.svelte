@@ -4,6 +4,7 @@
   import { getState } from '../state/store.svelte';
   import { spotlightSubject } from '../state/ui.svelte';
   import { coverageForSubject, missingLanesForSubject } from '../reports/reports';
+  import { sortSubjects } from '../utils/timeUtils';
   import PlaceDialog from './PlaceDialog.svelte';
   import Icon from './Icon.svelte';
   import type { ID, Subject } from '../types';
@@ -19,8 +20,8 @@
       query.trim() === '' || s.name.toLowerCase().includes(query.trim().toLowerCase()),
     ),
   );
-  const lessons = $derived(matching.filter(s => !s.isBreak));
-  const breaks = $derived(matching.filter(s => s.isBreak));
+  const lessons = $derived(sortSubjects(matching.filter(s => !s.isBreak)));
+  const breaks = $derived(sortSubjects(matching.filter(s => s.isBreak)));
   // A search box on six chips is clutter; on twenty it is the only way through.
   const showSearch = $derived(appState.subjects.length > 8);
 

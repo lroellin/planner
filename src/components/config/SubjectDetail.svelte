@@ -2,8 +2,9 @@
   import { addSubject, updateSubject, removeSubject, getState } from '../../state/store.svelte';
   import { coverageForSubject, missingLanesForSubject } from '../../reports/reports';
   import ColorPicker from './ColorPicker.svelte';
+  import GoalsEditor from './GoalsEditor.svelte';
   import Icon from '../Icon.svelte';
-  import type { Subject } from '../../types';
+  import type { Subject, SubjectContent } from '../../types';
 
   interface Props {
     /** null = the create form; an entity = the autosaving edit form. */
@@ -62,14 +63,29 @@
     isBreak: false,
     isMultiGroup: false,
     phaseId: null,
+    content: { goals: [], notes: '' },
   });
 
   const view = $derived(subject ?? draft);
   const isNew = $derived(subject === null);
 
+  // Two panes rather than one long scroll: how the subject is *scheduled* and
+  // what it is *about* are consulted at different moments, and stacking them
+  // pushed the create button below the fold.
+  type Pane = 'setup' | 'content';
+  let pane = $state<Pane>('setup');
+
+  const contentCount = $derived(
+    view.content.goals.length + (view.content.notes.trim() === '' ? 0 : 1),
+  );
+
   function set(patch: Partial<Omit<Subject, 'id'>>, coalesceKey?: string): void {
     if (subject) updateSubject(subject.id, patch, coalesceKey ? { coalesceKey } : {});
     else draft = { ...draft, ...patch };
+  }
+
+  function setContent(patch: Partial<SubjectContent>): void {
+    set({ content: { ...view.content, ...patch } }, `subject-content:${subject?.id ?? 'new'}`);
   }
 
   function toggleTeacher(teacherId: string): void {
@@ -84,8 +100,7 @@
   function create(e?: Event): void {
     e?.preventDefault();
     if (!draft.name.trim()) return;
-    addSubject({ ...draft, name: draft.name.trim() });
-    oncreated(getState().subjects.at(-1)?.id ?? '');
+    oncreated(addSubject({ ...draft, name: draft.name.trim() }));
   }
 
   function remove(): void {
@@ -105,6 +120,50 @@
     {/if}
   </div>
 
+  <div class="pane-switch" role="tablist">
+    <button
+      type="button"
+      role="tab"
+      class="pane-tab"
+      class:pane-tab-on={pane === 'setup'}
+      aria-selected={pane === 'setup'}
+      onclick={() => (pane = 'setup')}
+    >Setup</button>
+    <button
+      type="button"
+      role="tab"
+      class="pane-tab"
+      class:pane-tab-on={pane === 'content'}
+      aria-selected={pane === 'content'}
+      onclick={() => (pane = 'content')}
+    >
+      Content
+      {#if contentCount > 0}<span class="pane-badge wk-num">{contentCount}</span>{/if}
+    </button>
+  </div>
+
+  {#if pane === 'content'}
+    <div class="flex flex-col gap-5 pt-1">
+      <section class="section">
+        <h4 class="section-title">Goals</h4>
+        <p class="field-hint">
+          One per line — what the group should be able to do at the end of the lesson.
+        </p>
+        <GoalsEditor goals={view.content.goals} onchange={(goals) => setContent({ goals })} />
+      </section>
+
+      <section class="section">
+        <h4 class="section-title">Notes</h4>
+        <textarea
+          class="textarea textarea-bordered w-full"
+          rows="8"
+          placeholder="Material, preparation, anything the instructor needs on the day."
+          value={view.content.notes}
+          onchange={(e) => setContent({ notes: (e.currentTarget as HTMLTextAreaElement).value })}
+        ></textarea>
+      </section>
+    </div>
+  {:else}
   <div class="flex flex-col gap-5 pt-1">
 
     <section class="section">
@@ -290,8 +349,9 @@
       </div>
     </details>
   </div>
+  {/if}
 
-  {#if !isNew && subject}
+  {#if !isNew && subject && pane === 'setup'}
     {@const cov = coverageForSubject(appState, subject.id)}
     {@const missing = missingLanesForSubject(appState, subject.id)}
     <section class="usage">
@@ -329,3 +389,41 @@
     {/if}
   </div>
 </form>
+
+<style>
+  .pane-switch {
+    display: flex;
+    gap: 0.15rem;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--wk-line);
+    margin-bottom: -0.3rem;
+  }
+
+  .pane-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .pane-tab:hover { color: var(--wk-text); }
+
+  .pane-tab-on {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+  }
+
+  .pane-badge {
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--color-primary) 16%, transparent);
+    color: var(--color-primary);
+    font-size: var(--wk-fs-2xs);
+  }
+</style>

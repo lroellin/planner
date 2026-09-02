@@ -1,4 +1,4 @@
-import { ALL_GROUPS } from '../types';
+import { ALL_GROUPS, isHardConflict } from '../types';
 import type { AppState, CalendarEvent, EventFilter, Group, ID, Phase, Subject } from '../types';
 import type { EventInput } from '@fullcalendar/core';
 import type { ResourceInput } from '@fullcalendar/resource';
@@ -94,6 +94,15 @@ export function snapToSlot(time: string, slotMinutes = 15): string {
 export function extractDayIndex(date: Date): number {
   const d = date.getDay();
   return d === 0 ? 4 : d - 1;
+}
+
+/**
+ * Display order for subjects: alphabetical, everywhere. The stored array is in
+ * insertion order, which is meaningless to look through once there are twenty
+ * of them. Breaks are kept in their own list by the callers that separate them.
+ */
+export function sortSubjects<T extends { name: string }>(subjects: T[]): T[] {
+  return [...subjects].sort((a, b) => a.name.localeCompare(b.name, 'de'));
 }
 
 export function groupsToResources(groups: Group[], allowedIds?: ID[]): ResourceInput[] {
@@ -239,7 +248,7 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   const hasConflict = kinds.size > 0;
   // A room double-booking is advisory; a teacher or a group in two places at
   // once is not. They are drawn differently, so the card has to say which.
-  const hardConflict = kinds.has('teacher') || kinds.has('group');
+  const hardConflict = [...kinds].some(isHardConflict);
   const color = subject?.color ?? '#888888';
   const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
 

@@ -25,7 +25,9 @@
   let reportOpen = $state(false);
   let reportTab = $state<ReportTab>('coverage');
   let sidebarOpen = $state(true);
-  let conflictsOpen = $state(true);
+  // Collapsed by default: the rail keeps the issue badge in view, and the grid
+  // is what you open the app to look at.
+  let conflictsOpen = $state(false);
   let selectedEventId = $state<string | null>(null);
   let filter = $state<EventFilter | null>(null);
   let scroller: HTMLDivElement | undefined = $state();

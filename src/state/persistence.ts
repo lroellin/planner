@@ -1,9 +1,10 @@
 import { nanoid } from "nanoid";
 import type { AppState, CalendarEvent } from "../types";
 import { formatDate } from "../utils/timeUtils";
+import { migrateState } from "./migrations";
 
 const STATE_KEY = "wk-planner-state";
-const CURRENT_VERSION = 5;
+export const CURRENT_VERSION = 6;
 
 // A colour picker fires an input event per mouse move, so writes are coalesced
 // into one per frame-ish window instead of one per event. Anything still pending
@@ -26,9 +27,12 @@ export function createDefaultState(): AppState {
   const kaderPhaseId = nanoid();
   const gruppenPhaseId = nanoid();
 
+  const monday = nextMonday();
+
   return {
     version: CURRENT_VERSION,
-    wkStartDate: nextMonday(),
+    name: `WK ${monday.slice(0, 4)}`,
+    wkStartDate: monday,
     groups: [
       { id: kaderId, label: "K", enabled: true, order: 0 },
       { id: groupIds[0]!, label: "G1", enabled: true, order: 1 },
@@ -64,6 +68,7 @@ export function createDefaultState(): AppState {
         isBreak: true,
         isMultiGroup: true,
         phaseId: null,
+        content: { goals: [], notes: "" },
       },
       {
         id: nanoid(),
@@ -75,6 +80,7 @@ export function createDefaultState(): AppState {
         isBreak: true,
         isMultiGroup: false,
         phaseId: null,
+        content: { goals: [], notes: "" },
       },
     ],
     events: [],
@@ -124,14 +130,15 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * Shape check, not a migration. The app is WIP and version bumps intentionally
- * reset — but a truncated or hand-edited entry used to be cast straight to
- * AppState and crash on first render, with no way back except devtools.
+ * Shape check, not a migration — see ./migrations.ts for those. A truncated or
+ * hand-edited entry used to be cast straight to AppState and crash on first
+ * render, with no way back except devtools.
  */
 export function isValidState(value: unknown): value is AppState {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Partial<AppState>;
   return (
+    typeof s.version === "number" &&
     typeof s.wkStartDate === "string" &&
     Array.isArray(s.teachers) &&
     Array.isArray(s.rooms) &&
@@ -151,17 +158,23 @@ export function loadState(): AppState {
 
     if (!isValidState(parsed)) return createDefaultState();
 
-    if (parsed.version !== CURRENT_VERSION) {
-      const keepOld = window.confirm(
-        `Saved data format is incompatible (stored: v${parsed.version ?? "?"}, current: v${CURRENT_VERSION}).\n\n` +
-          `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`,
-      );
-      if (keepOld) return createDefaultState();
-      // User chose to keep old data — it passed the shape check, but individual
-      // fields may still mean something different in this version.
-      return parsed;
+    if (parsed.version === CURRENT_VERSION) return parsed;
+
+    // Step it forward. Only a hop with no migration (or state from a newer
+    // build) reaches the prompt.
+    const migrated = migrateState(parsed, CURRENT_VERSION);
+    if (migrated && isValidState(migrated)) {
+      saveState(migrated);
+      return migrated;
     }
 
+    const keepOld = window.confirm(
+      `Saved data format is incompatible (stored: v${parsed.version ?? "?"}, current: v${CURRENT_VERSION}).\n\n` +
+        `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`,
+    );
+    if (keepOld) return createDefaultState();
+    // User chose to keep old data — it passed the shape check, but individual
+    // fields may still mean something different in this version.
     return parsed;
   } catch {
     return createDefaultState();
@@ -172,4 +185,57 @@ function seedDefaultState(): AppState {
   const state = createDefaultState();
   saveState(state);
   return state;
+}
+
+// ─── Plan file: export & import ───────────────────────────────────────────────
+// There is exactly one plan, living in localStorage. A file is how it leaves the
+// browser — for a backup, for a second machine, for handing to a co-planner —
+// and how it comes back. Nothing here knows about a plan *library*; loading a
+// file replaces what is in the browser.
+
+/** Pretty-printed so a plan file survives being read, diffed and hand-fixed. */
+export function serializePlan(state: AppState): string {
+  return JSON.stringify(stripConflicts(state), null, 2);
+}
+
+export function planFileName(state: AppState): string {
+  const slug =
+    state.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "wk-plan";
+  return `${slug}-${state.wkStartDate}.json`;
+}
+
+export type ParseResult =
+  | { ok: true; state: AppState }
+  | { ok: false; error: string };
+
+/**
+ * Parse a plan file. Older files are migrated on the way in, exactly like
+ * localStorage, so an export taken before a schema change still opens.
+ */
+export function parsePlan(text: string): ParseResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "That file is not valid JSON." };
+  }
+
+  if (!isValidState(parsed)) {
+    return { ok: false, error: "That file is not a WK Planner plan." };
+  }
+
+  if (parsed.version === CURRENT_VERSION) return { ok: true, state: parsed };
+
+  const migrated = migrateState(parsed, CURRENT_VERSION);
+  if (migrated && isValidState(migrated)) return { ok: true, state: migrated };
+
+  return {
+    ok: false,
+    error:
+      `That plan is v${parsed.version} and this app reads v${CURRENT_VERSION}. ` +
+      "There is no upgrade path for it.",
+  };
 }

@@ -11,6 +11,7 @@
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
+  import TimeField from './TimeField.svelte';
   import type { ID } from '../types';
 
   interface Props {
@@ -188,12 +189,7 @@
           <div class="quick-label">
             <span class="wk-eyebrow">Split at</span>
           </div>
-          <input
-            type="time"
-            step="900"
-            class="input input-bordered input-sm w-full"
-            bind:value={splitTime}
-          />
+          <TimeField bind:value={splitTime} class="w-full" ariaLabel="Split at" />
           <p class="quick-hint wk-num">
             {#if splitValid}
               {ev.startTime}–{snapToSlot(splitTime)} · {snapToSlot(splitTime)}–{ev.endTime}

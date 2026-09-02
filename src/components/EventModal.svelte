@@ -11,7 +11,8 @@
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
-  import { ALL_GROUPS, type ConflictKind, type ID } from '../types';
+  import TimeField from './TimeField.svelte';
+  import { ALL_GROUPS, isHardConflict, type ConflictKind, type ID } from '../types';
 
   interface Props {
     eventId: ID;
@@ -60,6 +61,8 @@
     teacher: 'Teacher',
     room: 'Room',
     group: 'Group',
+    'teacher-absent': 'Away:',
+    'room-blocked': 'Blocked:',
   };
 
   /** Named clashes, so the editor says what it is you came here to fix. */
@@ -67,10 +70,12 @@
     if (!ev?.conflicts) return [];
     return ev.conflicts.map(c => {
       const name =
-        c.kind === 'teacher' ? appState.teachers.find(t => t.id === c.resourceId)?.name
-        : c.kind === 'room' ? appState.rooms.find(r => r.id === c.resourceId)?.name
+        c.kind === 'teacher' || c.kind === 'teacher-absent'
+          ? appState.teachers.find(t => t.id === c.resourceId)?.name
+        : c.kind === 'room' || c.kind === 'room-blocked'
+          ? appState.rooms.find(r => r.id === c.resourceId)?.name
         : appState.groups.find(g => g.id === c.resourceId)?.label;
-      return { kind: c.kind, name: name ?? c.resourceId, hard: c.kind !== 'room' };
+      return { kind: c.kind, name: name ?? c.resourceId, hard: isHardConflict(c.kind) };
     });
   });
 
@@ -296,12 +301,7 @@
           <span class="field-name">Time</span>
           <div class="field-control">
             <div class="row-2">
-              <input
-                type="time"
-                step="900"
-                class="input input-bordered input-sm w-28"
-                bind:value={localStartTime}
-              />
+              <TimeField bind:value={localStartTime} ariaLabel="Start time" />
               <input
                 type="number"
                 min="15"
@@ -334,7 +334,7 @@
         {#if showSplit}
           <div class="inset">
             <span class="inset-label">Split at</span>
-            <input type="time" bind:value={splitTime} step="900" class="input input-bordered input-sm flex-1" />
+            <TimeField bind:value={splitTime} class="flex-1" ariaLabel="Split at" />
             <button class="btn btn-sm btn-primary" onclick={doSplit}>Split</button>
             <button class="btn btn-sm btn-ghost" onclick={() => showSplit = false}>Cancel</button>
           </div>

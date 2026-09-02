@@ -13,7 +13,7 @@
   import {
     groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
     formatTime, isMultiGroupEvent, effectiveTeacherIds, effectiveRoomId, timeDiffMinutes,
-    type FCEventTeacher, type FCEventRoom,
+    sortSubjects, type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { escapeHtml } from '../utils/format';
@@ -445,7 +445,7 @@
   >
     <div class="place-picker-header wk-eyebrow">Place at {formatTime(placePending.date)}</div>
     {#each [{ isBreak: false, label: 'Lessons' }, { isBreak: true, label: 'Breaks' }] as group (group.label)}
-      {@const items = getState().subjects.filter(s => s.isBreak === group.isBreak)}
+      {@const items = sortSubjects(getState().subjects.filter(s => s.isBreak === group.isBreak))}
       {#if items.length > 0}
         <div class="place-group-label wk-eyebrow">{group.label}</div>
         {#each items as s (s.id)}

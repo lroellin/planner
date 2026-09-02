@@ -1,5 +1,5 @@
 import { ALL_GROUPS } from '../types';
-import type { AppState, CalendarEvent, GroupSelector, Subject } from '../types';
+import type { AppState, CalendarEvent, GroupSelector, Subject, TimeWindow } from '../types';
 
 /**
  * A two-phase week shaped like a real WK: a Kader phase Mon–Tue with one lane,
@@ -8,7 +8,8 @@ import type { AppState, CalendarEvent, GroupSelector, Subject } from '../types';
  */
 export function makeState(overrides: Partial<AppState> = {}): AppState {
   return {
-    version: 5,
+    version: 6,
+    name: 'Test WK',
     wkStartDate: '2026-09-07',
     groups: [
       { id: 'k', label: 'K', enabled: true, order: 0 },
@@ -21,12 +22,12 @@ export function makeState(overrides: Partial<AppState> = {}): AppState {
       { id: 'gruppen', label: 'Gruppen', startDay: 2, endDay: 4, groupIds: ['g1', 'g2', 'g3'] },
     ],
     teachers: [
-      { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1' },
-      { id: 't2', name: 'Beat Zwahlen', shortName: 'BZ', color: '#48bb78' },
+      { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1', unavailable: [] },
+      { id: 't2', name: 'Beat Zwahlen', shortName: 'BZ', color: '#48bb78', unavailable: [] },
     ],
     rooms: [
-      { id: 'r1', name: 'Seminarraum 1', color: '#48bb78', excludeFromConflictCheck: false },
-      { id: 'outside', name: 'Outside', color: '#a0aec0', excludeFromConflictCheck: true },
+      { id: 'r1', name: 'Seminarraum 1', color: '#48bb78', excludeFromConflictCheck: false, unavailable: [] },
+      { id: 'outside', name: 'Outside', color: '#a0aec0', excludeFromConflictCheck: true, unavailable: [] },
     ],
     subjects: [
       makeSubject({ id: 'lesson', name: 'Karteneröffnung' }),
@@ -48,6 +49,7 @@ export function makeSubject(overrides: Partial<Subject> & { id: string }): Subje
     isBreak: false,
     isMultiGroup: false,
     phaseId: null,
+    content: { goals: [], notes: '' },
     ...overrides,
   };
 }
@@ -67,6 +69,15 @@ export function makeEvent(
     roomId: 'inherit',
     ...overrides,
   };
+}
+
+export function makeWindow(
+  days: number[],
+  startTime = '00:00',
+  endTime = '24:00',
+  note = '',
+): TimeWindow {
+  return { id: `w${++seq}`, days, startTime, endTime, note };
 }
 
 export const ALL = ALL_GROUPS;

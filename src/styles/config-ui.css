@@ -71,7 +71,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
-  padding: 1rem 1.4rem 1.1rem;
+  padding: 1rem 1.4rem 0;
   height: 100%;
   overflow-y: auto;
 }
@@ -99,9 +99,15 @@
 }
 
 .detail-footer {
+  /* Sticky, so Create/Delete stays reachable without scrolling past the
+     optional half of the form — the pane is the scroll container. */
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
   margin-top: auto;
-  padding-top: 1rem;
+  padding: 0.85rem 0 1rem;
   border-top: 1px solid var(--wk-line);
+  background: var(--wk-surface);
   display: flex;
   justify-content: space-between;
   align-items: center;

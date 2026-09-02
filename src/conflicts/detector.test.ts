@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { detectConflicts, attachConflicts } from './detector';
-import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
+import { ALL, makeEvent, makeState, makeSubject, makeWindow } from '../test/fixtures';
 
 const kinds = (state: Parameters<typeof detectConflicts>[0]) =>
   detectConflicts(state).map(c => c.kind).sort();
@@ -139,5 +139,106 @@ describe('attachConflicts', () => {
     expect(byId.get('a')!.conflicts?.[0]!.collidingEventIds).toEqual(['b']);
     expect(byId.get('b')!.conflicts?.[0]!.collidingEventIds).toEqual(['a']);
     expect(byId.get('c')!.conflicts).toBeUndefined();
+  });
+});
+
+describe('availability', () => {
+  it('flags a lesson booked while its teacher is away', () => {
+    const state = makeState({
+      teachers: [
+        { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+          unavailable: [makeWindow([2])] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null })],
+    });
+    const reports = detectConflicts(state);
+    expect(reports.map(r => r.kind)).toEqual(['teacher-absent']);
+    expect(reports[0]!.involvedEventIds).toHaveLength(1);
+    expect(reports[0]!.detail).toContain('Wed');
+  });
+
+  it('leaves a lesson on another day alone', () => {
+    const state = makeState({
+      teachers: [
+        { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+          unavailable: [makeWindow([3])] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null })],
+    });
+    expect(detectConflicts(state)).toEqual([]);
+  });
+
+  it('treats a half-day window as a time range, not the whole day', () => {
+    const morningOff = makeWindow([2], '00:00', '12:00');
+    const teachers = [
+      { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+        unavailable: [morningOff] },
+    ];
+    const afternoon = makeState({
+      teachers,
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null, startTime: '13:00', endTime: '14:30' })],
+    });
+    expect(detectConflicts(afternoon)).toEqual([]);
+
+    const morning = makeState({
+      teachers,
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null, startTime: '11:00', endTime: '11:45' })],
+    });
+    expect(detectConflicts(morning).map(r => r.kind)).toEqual(['teacher-absent']);
+  });
+
+  it('does not flag a lesson that ends exactly when the window starts', () => {
+    const state = makeState({
+      teachers: [
+        { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+          unavailable: [makeWindow([2], '12:00', '24:00')] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null, startTime: '10:30', endTime: '12:00' })],
+    });
+    expect(detectConflicts(state)).toEqual([]);
+  });
+
+  it('flags a blocked room even when it is excluded from double-booking checks', () => {
+    const state = makeState({
+      rooms: [
+        { id: 'outside', name: 'Outside', color: '#a0aec0', excludeFromConflictCheck: true,
+          unavailable: [makeWindow([2])] },
+      ],
+      subjects: [makeSubject({ id: 'lesson', defaultTeacherIds: [], defaultRoomId: 'outside' })],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2 })],
+    });
+    expect(detectConflicts(state).map(r => r.kind)).toEqual(['room-blocked']);
+  });
+
+  it('ignores absences for events whose lanes are all disabled', () => {
+    const state = makeState({
+      groups: [
+        { id: 'k', label: 'K', enabled: true, order: 0 },
+        { id: 'g1', label: 'G1', enabled: false, order: 1 },
+        { id: 'g2', label: 'G2', enabled: true, order: 2 },
+        { id: 'g3', label: 'G3', enabled: true, order: 3 },
+      ],
+      teachers: [
+        { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+          unavailable: [makeWindow([2])] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null })],
+    });
+    expect(detectConflicts(state)).toEqual([]);
+  });
+
+  it('marks an absence as a hard conflict on the card', () => {
+    const state = makeState({
+      teachers: [
+        { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
+          unavailable: [makeWindow([2])] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: null })],
+    });
+    const annotated = attachConflicts(state, detectConflicts(state));
+    expect(annotated.events[0]!.conflicts?.[0]).toMatchObject({
+      kind: 'teacher-absent',
+      collidingEventIds: [],
+    });
   });
 });

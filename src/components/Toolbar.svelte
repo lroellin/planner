@@ -4,7 +4,7 @@
     undoLabel, redoLabel,
   } from "../state/store.svelte";
   import { getDensity, setDensity, type Density } from "../state/ui.svelte";
-  import { formatDate, dayDateLabel } from "../utils/timeUtils";
+  import { formatDate, dayDateLabel, sortSubjects } from "../utils/timeUtils";
   import { teacherShort } from "../utils/format";
   import Icon from "./Icon.svelte";
   import type { EventFilter, ReportTab } from "../types";
@@ -24,6 +24,12 @@
 
   // "teacher:abc" ⇄ { kind, id }; "" means no filter
   const filterValue = $derived(filter ? `${filter.kind}:${filter.id}` : "");
+
+  // Breaks last, each block alphabetical — the same order as the sidebar.
+  const legendSubjects = $derived([
+    ...sortSubjects(appState.subjects.filter(s => !s.isBreak)),
+    ...sortSubjects(appState.subjects.filter(s => s.isBreak)),
+  ]);
 
   const weekLabel = $derived(
     `${dayDateLabel(appState.wkStartDate, 0)}–${dayDateLabel(appState.wkStartDate, 4)}`,
@@ -109,6 +115,12 @@
   <div class="bar-left">
     <span class="wordmark">WK<span class="wordmark-thin">Planner</span></span>
 
+    <button
+      class="plan-name"
+      onclick={() => (configOpen = true)}
+      title="Rename in Config → Plan &amp; data"
+    >{appState.name}</button>
+
     <label class="filter" title="Show only events involving…">
       <Icon name="filter" size={13} />
       <select
@@ -169,7 +181,7 @@
             <p class="pop-empty">No rooms yet.</p>
           {/each}
           <div class="pop-title wk-eyebrow">Subjects</div>
-          {#each appState.subjects as s (s.id)}
+          {#each legendSubjects as s (s.id)}
             <div class="legend-row">
               <span class="legend-dot" style="background:{s.color}"></span>
               <span class="truncate">{s.name}</span>
@@ -330,6 +342,25 @@
     color: var(--wk-text);
     margin-right: 0.5rem;
     white-space: nowrap;
+  }
+
+  .plan-name {
+    max-width: 14rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.15rem 0.45rem;
+    border: 1px solid transparent;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-sm);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .plan-name:hover {
+    border-color: var(--wk-line);
+    color: var(--wk-text);
   }
 
   .wordmark-thin {

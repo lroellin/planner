@@ -3,6 +3,7 @@
   import { highlightEvents, clearHighlight, revealEvent } from '../state/ui.svelte';
   import { DAY_NAMES, eventGroupIds } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
+  import { isHardConflict } from '../types';
   import type { CalendarEvent, ConflictKind, ID } from '../types';
 
   interface Props {
@@ -19,6 +20,8 @@
     teacher: 'Teacher',
     room: 'Room',
     group: 'Group',
+    'teacher-absent': 'Away',
+    'room-blocked': 'Blocked',
   };
 
   interface ConflictGroup {
@@ -28,6 +31,8 @@
     hard: boolean;
     clashes: number;
     eventIds: ID[];
+    /** For availability cards: which window was booked into. */
+    details: string[];
   }
 
   /**
@@ -45,13 +50,17 @@
           key,
           kind: report.kind,
           resourceName: report.resourceName,
-          hard: report.kind !== 'room',
+          hard: isHardConflict(report.kind),
           clashes: 0,
           eventIds: [],
+          details: [],
         };
         byResource.set(key, group);
       }
       group.clashes++;
+      if (report.detail && !group.details.includes(report.detail)) {
+        group.details.push(report.detail);
+      }
       for (const id of report.involvedEventIds) {
         if (!group.eventIds.includes(id)) group.eventIds.push(id);
       }
@@ -66,6 +75,7 @@
     teacher: conflicts.filter(c => c.kind === 'teacher').length,
     group: conflicts.filter(c => c.kind === 'group').length,
     room: conflicts.filter(c => c.kind === 'room').length,
+    away: conflicts.filter(c => c.kind === 'teacher-absent' || c.kind === 'room-blocked').length,
   });
 
   function eventById(id: ID): CalendarEvent | undefined {
@@ -100,6 +110,7 @@
       {#if counts.teacher > 0}<span class="sum sum-hard">{counts.teacher} teacher</span>{/if}
       {#if counts.group > 0}<span class="sum sum-hard">{counts.group} group</span>{/if}
       {#if counts.room > 0}<span class="sum sum-soft">{counts.room} room</span>{/if}
+      {#if counts.away > 0}<span class="sum sum-hard">{counts.away} unavailable</span>{/if}
     </div>
   {/if}
 
@@ -156,6 +167,9 @@
           <span class="card-title">{group.resourceName}</span>
           <span class="card-count">{group.clashes}×</span>
         </header>
+        {#if group.details.length > 0}
+          <p class="card-note">{group.details.join(' · ')}</p>
+        {/if}
         <div class="rows">
           {#each sortByTime(group.eventIds) as ev (ev.id)}
             {@const subject = appState.subjects.find(s => s.id === ev.subjectId)}
@@ -179,8 +193,8 @@
 
     {#if conflicts.length > 0}
       <p class="foot-note">
-        Hover a card to find it on the grid. Room clashes are advisory; teacher and
-        group clashes are not.
+        Hover a card to find it on the grid. Room clashes are advisory; teacher, group
+        and "away" clashes are not.
       </p>
     {/if}
   </div>

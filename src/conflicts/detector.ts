@@ -1,5 +1,6 @@
 import type { AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, ID } from '../types';
 import { effectiveTeacherIds, effectiveRoomId, eventGroupIds } from '../utils/timeUtils';
+import { describeWindow, windowOverlaps } from '../utils/availability';
 
 // Arbitrary Monday as reference epoch for time comparisons
 const REFERENCE_MONDAY = new Date('2000-01-03T00:00:00').getTime();
@@ -68,6 +69,47 @@ export function detectConflicts(state: AppState): ConflictReport[] {
 
   const seen = new Set<string>();
   const reports: ConflictReport[] = [];
+
+  // ── Availability ──────────────────────────────────────────────────────────
+  // Booked while the resource is marked away. One event, not a pair, so these
+  // are collected in the same pass over the events rather than pairwise below.
+  for (const ev of state.events) {
+    const subject = subjectById.get(ev.subjectId);
+    if (!subject) continue;
+    if (eventGroupIds(state, ev).length === 0) continue;
+
+    for (const tid of effectiveTeacherIds(ev, subject)) {
+      const teacher = state.teachers.find(t => t.id === tid);
+      if (!teacher) continue;
+      for (const w of teacher.unavailable ?? []) {
+        if (!windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime)) continue;
+        reports.push({
+          kind: 'teacher-absent',
+          resourceId: tid,
+          resourceName: teacher.name,
+          involvedEventIds: [ev.id],
+          detail: `away ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
+        });
+      }
+    }
+
+    const evRoomId = effectiveRoomId(ev, subject);
+    const evRoom = evRoomId ? roomById.get(evRoomId) : null;
+    // "Ignore conflicts" governs double-booking; a room that is explicitly
+    // blocked is unavailable to everyone, shared space or not.
+    if (evRoom) {
+      for (const w of evRoom.unavailable ?? []) {
+        if (!windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime)) continue;
+        reports.push({
+          kind: 'room-blocked',
+          resourceId: evRoom.id,
+          resourceName: evRoom.name,
+          involvedEventIds: [ev.id],
+          detail: `blocked ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
+        });
+      }
+    }
+  }
 
   function checkIntervals(
     resourceId: ID,

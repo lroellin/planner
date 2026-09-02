@@ -29,17 +29,29 @@ Day ranges must be contiguous and non-overlapping across phases, and together mu
 - `id, name, shortName, color`
 - `shortName` — initials shown on calendar event cards (auto-generated from name but editable)
 - `color` — used as a visual indicator on event cards
+- `unavailable: TimeWindow[]` — when they are *not* there (see Availability)
 
-Teachers cause **hard conflicts** when the same teacher is booked for two overlapping events.
+Teachers cause **hard conflicts** when the same teacher is booked for two overlapping events, or when booked inside one of their unavailable windows.
 
 ### Rooms
 - `id, name, color, excludeFromConflictCheck`
 - Rooms with `excludeFromConflictCheck: true` (e.g. "outside") never trigger conflicts even when double-booked.
+- `unavailable: TimeWindow[]` — when the room is blocked
 
-Rooms cause **soft conflicts** when two events share the same room at the same time (and the room isn't excluded).
+Rooms cause **soft conflicts** when two events share the same room at the same time (and the room isn't excluded), or when an event is booked into a blocked window. **`excludeFromConflictCheck` does not suppress blocked windows**: sharing a space is a property of the space, being booked by someone else is not.
+
+### Availability (`TimeWindow`, `src/utils/availability.ts`)
+Unavailability is modelled as *exceptions*, not opening hours — on a WK nearly everyone is there nearly all the time, so an empty list has to mean "available" or every teacher would need a full week entered before the conflict check said anything true.
+
+```ts
+interface TimeWindow { id, days: number[], startTime: 'HH:MM', endTime: 'HH:MM', note: string }
+```
+- All-day windows are stored as `00:00`–`24:00`; morning is `00:00`–`12:00`, afternoon `12:00`–`24:00`. `windowPreset()` maps times back to the preset chip; anything else is "custom".
+- `windowOverlaps()` uses the same strict overlap as double-booking, so a lesson ending exactly when someone leaves is fine.
+- Entry (`config/AvailabilityEditor.svelte`) is day-first: clicking a day in the *Add for* row creates an all-day window immediately; narrowing to a half day or exact times is the optional second step.
 
 ### Subjects
-The draggable blocks. Each subject has:
+The draggable blocks. Subjects are displayed **alphabetically everywhere** (`sortSubjects`, `localeCompare` with `de` collation); breaks are kept in their own list, after the lessons. The stored array is insertion order and is never used for display. Each subject has:
 - `id, name, color`
 - `defaultTeacherIds: ID[]` — pre-assigned teachers (can be overridden per event)
 - `defaultRoomId: ID | null` — pre-assigned room (can be overridden per event)
@@ -47,6 +59,7 @@ The draggable blocks. Each subject has:
 - `isBreak: boolean` — breaks are shown separately in the sidebar and never counted in coverage. They *do* take part in teacher/room/group conflict checks: a lesson running through a group's lunch is a real clash.
 - `isMultiGroup: boolean` — placing this subject schedules it across every enabled lane of the target phase at once (used for Mittagessen, Pause)
 - `phaseId: ID | null` — which phase this subject is rotated through. `null` = infer from where it is placed. Set it so coverage judges a Kader lesson against the Kader lane instead of the group lanes.
+- `content: { goals: string[]; notes: string }` — what the subject is *about*, as opposed to how it is scheduled. Nested so it can grow (material, handouts, references) without widening `Subject` itself. Edited in the Subjects tab's **Content** pane; goals get a row editor (`config/GoalsEditor.svelte`) where Enter opens the next line, Backspace on an empty line steps back, and pasting a block of lines becomes one goal per line.
 
 ### Events (CalendarEvent)
 A placed instance of a subject:
@@ -142,9 +155,25 @@ Available mutations: `addEvent`, `updateEvent`, `removeEvent`, `placeSubject`, `
 
 ### Persistence (`src/state/persistence.ts`)
 
-localStorage key: `'wk-planner-state'`. Current schema version: **5**.
+localStorage key: `'wk-planner-state'`. Current schema version: **6**.
 
-Loading runs `isValidState(parsed)` first — a shape check, not a migration. A truncated or hand-edited entry falls back to defaults instead of being cast to `AppState` and crashing on first render. If the shape is fine but `version !== CURRENT_VERSION`, the user is prompted to reset or try loading the old data. The app is WIP — no migration code; version bumps reset to defaults.
+Loading runs `isValidState(parsed)` first — a shape check, not a migration. A truncated or hand-edited entry falls back to defaults instead of being cast to `AppState` and crashing on first render. State older than the current version is then stepped forward by `migrateState` (see Migrations). Only a hop with no migration — which includes state written by a *newer* build — reaches the old prompt to reset or load anyway.
+
+**Plan file.** There is exactly one plan; a file is how it leaves the browser and how it comes back.
+- `serializePlan(state)` — pretty-printed JSON with `conflicts` stripped, so a plan file survives being read, diffed and hand-fixed.
+- `planFileName(state)` — `<slugified plan name>-<wkStartDate>.json`.
+- `parsePlan(text)` — shape-checks and migrates on the way in, so an export taken before a schema change still opens. Returns a discriminated `{ ok }` result; the caller shows the error.
+- `replacePlan(next)` in the store commits it and **clears undo**: a stack whose entries describe a different week is worse than no stack, because the first Ctrl+Z would silently restore the plan the user just left.
+
+There is deliberately **no plan library / picker** — one plan in localStorage, files for everything else.
+
+### Migrations (`src/state/migrations.ts`)
+
+Stored state is stepped forward one version at a time rather than reset. Each step is a standalone function named for the hop it makes (`migrate_v5_to_v6`) plus one entry in the `MIGRATIONS` map keyed by the version it migrates *from*; deleting both removes the migration cleanly once nothing that old exists. Steps run on plain parsed JSON, not on `AppState` — the shape they receive is by definition the old one, so they cannot be typed against the current model.
+
+`migrateState(raw, target)` chains the steps and returns `null` when some hop has no migration.
+
+- **v5 → v6**: plan `name`, `subject.content` (goals + notes), `teacher.unavailable` and `room.unavailable`.
 
 `saveState` strips `conflicts` from events and **debounces** the write by 200 ms, so a colour drag produces one localStorage write rather than one per mouse move. `flushSave()` forces a write; it is also wired to `beforeunload` and `pagehide` so nothing pending is lost.
 
@@ -168,10 +197,10 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 └──────────────┴──────────────────┴──────────────────────┴───────────────────┘
 ```
 
-- **Toolbar** (`Toolbar.svelte`): wordmark, event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips, issue badge, Reports, a **Print menu** (week grid · group plans · teacher plans · room plans · coverage) and Config.
+- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips, issue badge, Reports, a **Print menu** (week grid · group plans · teacher plans · room plans · coverage) and Config.
 - **Left sidebar** (`SidePanel.svelte` wrapping `Sidebar.svelte`): collapsible. Draggable subject chips split into Subjects and Breaks; each chip previews the card it will become (same spine, same tint recipe) and carries a coverage counter. Hovering a chip **spotlights** it on the grid — everything else dims — and its tooltip names the lanes still missing it. A filter box appears once there are more than eight subjects. Chips are buttons; activating one opens `PlaceDialog`.
 - **Calendar area**: a flex row of phase segments. Each segment's `flex-grow` is proportional to `days × maxLanes`, so columns stay the same width across the week regardless of how many lanes a phase has. A `phase-label` strip shows phase names above the segments. Both segments share a single outer scroll container — `height: auto` + `stickyHeaderDates: true` on each FC instance means headers pin and bodies scroll together.
-- **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
+- **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible, and **collapsed on load** — the rail keeps the issue badge in view, and the grid is what the app is opened to look at. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
 - **Quick-edit popover** (`EventPopover.svelte`): a single click on a card selects it and opens a popover beside it with the three fields that actually change day to day — teachers, room, duration — plus copy-to-lanes, duplicate, delete and "Edit…". A double click goes straight to the full modal.
 - **Toasts** (`Toasts.svelte`): bottom-centre, one at a time, used by undo/redo.
 
@@ -275,8 +304,12 @@ The keyboard path for scheduling. Sidebar chips are `<button>`s: activating one 
 
 Iterates all events with at least one enabled lane (`eventGroupIds(state, ev).length > 0`; an event hidden by a disabled group raises nothing, which is the point of disabling it). For each event, records intervals in three maps (by teacher ID, room ID, group ID). After all events are processed, pairwise overlap checks produce `ConflictReport` entries. Overlap is strict (`aStart < bEnd && bStart < aEnd`), so back-to-back events do not clash.
 
-- **Hard** (`kind: 'teacher'` or `kind: 'group'`): same teacher or group in two overlapping time slots
-- **Soft** (`kind: 'room'`): same room double-booked (skipped when `excludeFromConflictCheck`)
+- **Hard** (`kind: 'teacher'`, `'group'` or `'teacher-absent'`): same teacher or group in two overlapping time slots, or a teacher booked while away
+- **Soft** (`kind: 'room'` or `'room-blocked'`): same room double-booked (skipped when `excludeFromConflictCheck`), or a room booked while blocked
+
+Hard vs soft is decided by `isHardConflict(kind)` in `types.ts`, which both the detector's consumers and `buildFCEvent` read — the two used to encode the same list separately.
+
+**Availability reports involve one event, not a pair.** They are collected in their own pass over the events and carry an optional `detail` string ("away Wed, Thu · afternoon (Kurs in Bern)") that the conflict panel prints under the resource name. `attachConflicts` gives such an event a `ConflictRef` with an empty `collidingEventIds`.
 
 Breaks (`subject.isBreak`) participate in **all three** checks. A lesson running through a group's lunch is a real clash, so group conflicts include breaks; they are only excluded from *coverage*. A multi-group event contributes one interval per resolved lane and therefore never collides with itself.
 
@@ -335,11 +368,14 @@ Chips are made draggable via FullCalendar's `Draggable` class, attached to the c
 
 ## Config Panel (`ConfigPanel.svelte` + `components/config/`)
 
-A `<dialog>` with five tabs and a **fixed height (82vh)** — a short tab used to shrink the dialog and move the tab strip out from under the pointer mid-click. Each tab opens with a one-line summary and an ⓘ that expands the full explanation, rather than re-reading a paragraph on every visit. Groups and Phases are single-column tables held in `ConfigPanel.svelte`. Teachers, Rooms and Subjects are composed from:
+A `<dialog>` with six tabs and a **fixed height (82vh)** — a short tab used to shrink the dialog and move the tab strip out from under the pointer mid-click. Each tab opens with a one-line summary and an ⓘ that expands the full explanation, rather than re-reading a paragraph on every visit. Groups and Phases are single-column tables held in `ConfigPanel.svelte`. Teachers, Rooms and Subjects are composed from:
 
 - `config/MasterDetail.svelte` — the generic list + add-row + detail-pane scaffold, parameterised by a `row` snippet and a `detail` snippet.
 - `config/ColorPicker.svelte` — a visible swatch that opens a curated 18-colour ramp plus a custom well. Colour used to be hidden behind clicking an avatar, with no affordance at all, and the raw OS picker let people choose colours no card could survive.
-- `config/TeacherDetail.svelte`, `config/RoomDetail.svelte`, `config/SubjectDetail.svelte` — one component per entity, each serving **both** the create and the edit form from one set of markup: `view` is either the stored entity or a local draft, and `set()` either autosaves through the store or accumulates into the draft. ConfigPanel keys them on the entity id, so changing selection remounts with a fresh draft.
+- `config/TeacherDetail.svelte`, `config/RoomDetail.svelte` — edit-only panes for an existing entity; creation is the list's **quick add** (a name and Enter, colour and short name derived, everything else on a default and editable right after). Asking for a colour and a short name up front made adding six teachers a chore.
+- `config/SubjectDetail.svelte` — still serves **both** create and edit from one set of markup, because a subject has real choices to make at creation: `view` is either the stored entity or a local draft, and `set()` either autosaves through the store or accumulates into the draft. ConfigPanel keys it on the entity id, so changing selection remounts with a fresh draft.
+- `config/AvailabilityEditor.svelte`, `config/GoalsEditor.svelte` — see Availability and Subjects.
+- The **detail footer is sticky** (`position: sticky; bottom: 0` inside the scrolling `.detail-form`), so Create/Delete stays reachable without scrolling past the optional half of the form.
 - `src/styles/config-ui.css` — the shared visual language (`.list-panel`, `.detail-form`, `.section`, `.option-row`, `.picker-chip`, …), imported from `app.css` because these classes are used across several components.
 
 ### Groups tab
@@ -349,19 +385,27 @@ Table with a drag handle (rows *are* the columns of the timetable, so dragging t
 A **week strip** across the top shows Mon–Fri with the phase that owns each day (uncovered days are hatched in red) — phases are the one concept a new user won't guess, and this explains the model at a glance. Below it, a table with label, From/To day selects (dragging one end past the other moves the other to maintain valid range), lane checkboxes (one per group), delete. Rows are sorted by `startDay`, matching the calendar. Warning banner appears when phases overlap, leave gaps, or have no lanes. Deleting confirms first and warns how many events would stop being drawn (`eventCountForPhase`). Add phase form at bottom.
 
 ### Teachers tab
-List on left (coloured avatar), detail on right: colour swatch, full name, short name, and a **Load this week** panel — lessons, hours in front of a group, days on duty, and the subjects they are the default teacher for. The pane was two text fields in a 1000px dialog; the load is what you open a teacher to find out. Autosaved on change.
+Quick-add row at the foot of the list (name + Enter). List on left (coloured avatar, `away` tag when they have windows), detail on right: colour swatch, full name, short name, an **Away** editor, and a **Load this week** panel — lessons, hours in front of a group, days on duty, and the subjects they are the default teacher for. The pane was two text fields in a 1000px dialog; the load is what you open a teacher to find out. Autosaved on change.
 
 ### Rooms tab
-List on left (coloured swatch), detail on right: colour, name, "Ignore conflicts" toggle, and an **Occupancy this week** panel (bookings, hours in use, subjects defaulting here). Autosaved.
+Quick-add row at the foot of the list. List on left (coloured swatch, `blocked` / `shared` tags), detail on right: colour, name, "Ignore conflicts" toggle, a **Blocked** editor, and an **Occupancy this week** panel (bookings, hours in use, subjects defaulting here). Autosaved.
 
 ### Subjects tab
-List on left (colour dot + break label), detail on right with sections: Identity (name + colour swatch), Duration (preset chips + numeric input), Behaviour (Break toggle, All groups at once toggle), **Coverage** (Belongs-to-phase select — "Infer from placements" or a specific phase), Defaults (teacher picker grid, room select). Autosaved.
+List on left (colour dot + break label), alphabetical with breaks last. The detail pane has two sub-tabs, because how a subject is *scheduled* and what it is *about* are consulted at different moments and stacking them pushed the create button below the fold:
+- **Setup** — Identity (name + colour swatch), Defaults for new placements (teacher picker grid, room select, duration presets + numeric input), Kind (Lesson/Break, One lane/All lanes), Advanced (Belongs-to-phase select), and a Placement panel.
+- **Content** — Goals (row editor) and Notes (textarea). The tab carries a count badge.
+
+Autosaved.
 
 Duration change cascades to all events whose duration still matched the old default.
 
 Subjects also show a **Placement** panel (instances on the grid, lanes covered, which lanes are still missing).
 
-Footer: a collapsed **Danger zone** disclosure holding **Reset all data** — it used to sit permanently one mis-click from the primary buttons.
+### Plan & data tab
+The plan's own settings, and the only destructive control in the app:
+- **Plan name** — shown in the toolbar, on the printed reports, and used for the export file name.
+- **Plan file** — Export (Blob download) and Import (hidden file input; parse → confirm naming the incoming plan and its event count → `replacePlan` → close the dialog). A parse error is shown in place rather than in an alert.
+- **Danger zone** — **Reset all data**. It used to be a disclosure in the dialog footer, repeated under every tab; a destructive action does not need to be one mis-click away from five unrelated panes.
 
 ---
 
@@ -441,10 +485,11 @@ npm run check        # svelte-check --threshold error
 
 Vitest covers the pure logic where the rules are subtle and have been reworked repeatedly:
 
-- `src/conflicts/detector.test.ts` — teacher/room/group conflicts, excluded rooms, disabled lanes, breaks vs. lessons, multi-group self-collision, annotation
+- `src/conflicts/detector.test.ts` — teacher/room/group conflicts, excluded rooms, disabled lanes, breaks vs. lessons, multi-group self-collision, annotation, and availability (absent teacher, blocked room, half-day windows, touching-but-not-overlapping)
 - `src/utils/timeUtils.test.ts` — `ALL_GROUPS` resolution, phase membership, orphans, FC event building, filters, contrast and escaping
 - `src/reports/reports.test.ts` — phase affinity, coverage counts, teaching/covering/handed-over classification
-- `src/test/fixtures.ts` — a two-phase week (Kader Mon–Tue, Gruppen Wed–Fri) with readable string ids
+- `src/state/migrations.test.ts` — each hop adds its fields without touching the schedule; `migrateState` chains, is a no-op on current state, and refuses a version with no path
+- `src/test/fixtures.ts` — a two-phase week (Kader Mon–Tue, Gruppen Wed–Fri) with readable string ids, plus `makeWindow`
 
 The component layer has no tests; verify UI work in the browser (Playwright is a devDependency for structural checks and screenshots — the density floor, the print page box and the phase row alignment were all found that way).
 
@@ -487,10 +532,12 @@ Modal move across phases:
 
 ## Known Constraints & Design Decisions
 
-- **No migration code**: The app is WIP. When the schema version increments, users reset to defaults or try loading old data at their own risk. `isValidState` is a shape guard against a corrupt entry, not a migration.
+- **Migrations, one hop at a time**: `src/state/migrations.ts`. `isValidState` remains a shape guard against a corrupt entry, not a migration; the migration chain runs after it.
+- **One plan, no picker**: exactly one plan lives in localStorage. Export/import files are the archive, the backup and the hand-off. A plan library with a picker was tried before and made the code hard to follow.
 - **Multi-group lanes are resolved on read**, never stored — see the Events section. This is why `eventGroupIds` needs `state` and why so many helpers take it.
 - **Conflicts are detected once per mutation** in the store; components must read `getConflicts()`/`getOrphans()` rather than calling `detectConflicts` again.
 - **`eventContent` is an HTML string**, so anything user-entered that reaches it must go through `escapeHtml`.
+- **No `<input type="time">`**: it renders in the *browser's* locale, so an en-US Chrome shows an AM/PM spinner however Swiss the app is. `components/TimeField.svelte` is a select over the 15-minute grid — always 24h, and it enforces the slot size the app snaps to anyway. A stored value outside the offered range is added to the list so opening an odd event cannot silently retime it.
 - **localStorage only**: No backend. A backend is a future consideration.
 - **Desktop only**: No mobile layout designed.
 - **Conflicts are advisory**: They highlight problems but never block a save.
