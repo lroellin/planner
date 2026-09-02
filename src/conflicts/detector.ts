@@ -1,5 +1,5 @@
 import type { AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, ID } from '../types';
-import { effectiveTeacherIds, effectiveRoomId } from '../utils/timeUtils';
+import { effectiveTeacherIds, effectiveRoomId, eventGroupIds } from '../utils/timeUtils';
 
 // Arbitrary Monday as reference epoch for time comparisons
 const REFERENCE_MONDAY = new Date('2000-01-03T00:00:00').getTime();
@@ -26,14 +26,17 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   const roomIntervals = new Map<ID, Interval[]>();
   const groupIntervals = new Map<ID, Interval[]>();
 
-  for (const ev of state.events) {
-    const enabled = Array.isArray(ev.groupId)
-      ? ev.groupId.some(gid => state.groups.find(g => g.id === gid)?.enabled)
-      : state.groups.find(g => g.id === ev.groupId)?.enabled;
-    if (!enabled) continue;
+  const roomById = new Map(state.rooms.map(r => [r.id, r]));
+  const subjectById = new Map(state.subjects.map(s => [s.id, s]));
 
-    const subject = state.subjects.find(s => s.id === ev.subjectId);
+  for (const ev of state.events) {
+    const subject = subjectById.get(ev.subjectId);
     if (!subject) continue;
+
+    // No enabled lane means the event is hidden — hiding it is the whole point
+    // of disabling a group, so it must not raise conflicts either.
+    const groupIds = eventGroupIds(state, ev);
+    if (groupIds.length === 0) continue;
 
     const startMs = toMs(ev.dayIndex, ev.startTime);
     const endMs = toMs(ev.dayIndex, ev.endTime);
@@ -43,8 +46,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     // Breaks count too: a lesson running through a group's lunch is a real clash.
     // Multi-group events contribute one interval per group, so they never collide
     // with themselves.
-    for (const gid of Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId]) {
-      if (!state.groups.find(g => g.id === gid)?.enabled) continue;
+    for (const gid of groupIds) {
       if (!groupIntervals.has(gid)) groupIntervals.set(gid, []);
       groupIntervals.get(gid)!.push(interval);
     }
@@ -56,7 +58,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
 
     const roomId = effectiveRoomId(ev, subject);
     if (roomId) {
-      const room = state.rooms.find(r => r.id === roomId);
+      const room = roomById.get(roomId);
       if (room && !room.excludeFromConflictCheck) {
         if (!roomIntervals.has(roomId)) roomIntervals.set(roomId, []);
         roomIntervals.get(roomId)!.push(interval);
@@ -100,9 +102,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   }
 
   for (const [rid, intervals] of roomIntervals) {
-    checkIntervals(rid, intervals, 'room', id =>
-      state.rooms.find(r => r.id === id)?.name ?? id,
-    );
+    checkIntervals(rid, intervals, 'room', id => roomById.get(id)?.name ?? id);
   }
 
   for (const [gid, intervals] of groupIntervals) {
@@ -114,10 +114,12 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   return reports;
 }
 
-export function annotateEventsWithConflicts(state: AppState): AppState {
-  const reports = detectConflicts(state);
-
-  // Build map: eventId → ConflictRef[]
+/**
+ * Attach already-computed reports to their events. Kept separate from
+ * detectConflicts so a state change runs the O(n²) detection exactly once and
+ * shares the result between the annotated events and the conflict panel.
+ */
+export function attachConflicts(state: AppState, reports: ConflictReport[]): AppState {
   const conflictMap = new Map<ID, ConflictRef[]>();
   for (const report of reports) {
     for (const eventId of report.involvedEventIds) {

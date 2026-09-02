@@ -1,50 +1,162 @@
 @import "tailwindcss";
+@import "./styles/config-ui.css";
+@import "./styles/calendar.css";
 @plugin "daisyui" {
   themes: light, dark;
 }
 
-/* Semantic tokens.
+/* ═══════════════════════════════════════════════════════════════════════════
+   Palette
+
+   daisyUI's stock purple said nothing about this app. The accent is a steel
+   blue with a Zivilschutz orange for the second voice, and — importantly — no
+   data ever takes those hues: subject, teacher and room colours are user data,
+   so the UI accent has to stay outside their range to keep meaning "this is a
+   control", not "this is a lesson".
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root {
+  --color-base-100: oklch(99% 0.002 250);
+  --color-base-200: oklch(96.4% 0.004 250);
+  --color-base-300: oklch(91.5% 0.007 250);
+  --color-base-content: oklch(26% 0.02 255);
+
+  --color-primary: oklch(50% 0.115 250);
+  --color-primary-content: oklch(98% 0.01 250);
+  --color-secondary: oklch(45% 0.03 255);
+  --color-secondary-content: oklch(98% 0.005 255);
+  --color-accent: oklch(68% 0.155 55);
+  --color-accent-content: oklch(22% 0.05 55);
+  --color-neutral: oklch(32% 0.02 255);
+  --color-neutral-content: oklch(97% 0.005 255);
+
+  --color-info: oklch(58% 0.11 240);
+  --color-info-content: oklch(98% 0.01 240);
+  --color-success: oklch(57% 0.13 155);
+  --color-success-content: oklch(98% 0.01 155);
+  --color-warning: oklch(72% 0.145 70);
+  --color-warning-content: oklch(22% 0.05 70);
+  --color-error: oklch(56% 0.195 25);
+  --color-error-content: oklch(98% 0.01 25);
+
+  /* Two radii, not five. */
+  --radius-box: 10px;
+  --radius-field: 7px;
+  --radius-selector: 999px;
+}
+
+[data-theme='dark'] {
+  --color-base-100: oklch(21% 0.012 255);
+  --color-base-200: oklch(25% 0.014 255);
+  --color-base-300: oklch(30.5% 0.016 255);
+  --color-base-content: oklch(92% 0.01 255);
+
+  --color-primary: oklch(70% 0.115 250);
+  --color-primary-content: oklch(18% 0.03 250);
+  --color-secondary: oklch(75% 0.02 255);
+  --color-secondary-content: oklch(20% 0.01 255);
+  --color-accent: oklch(75% 0.14 60);
+  --color-accent-content: oklch(20% 0.05 60);
+  --color-neutral: oklch(35% 0.02 255);
+  --color-neutral-content: oklch(96% 0.005 255);
+
+  --color-info: oklch(68% 0.11 240);
+  --color-success: oklch(70% 0.13 155);
+  --color-warning: oklch(80% 0.14 70);
+  --color-error: oklch(68% 0.175 25);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Semantic tokens
+
    daisyUI 5 names its colours --color-base-100 / --color-base-content; the v4
    --b1/--b2/--b3/--bc names no longer exist. Referencing a missing var makes the
    whole declaration invalid at computed-value time, which silently resets the
    property to its initial value (border-style: none) rather than erroring — so
-   these aliases exist to keep that mistake from recurring. */
+   these aliases exist to keep that mistake from recurring.
+   ═══════════════════════════════════════════════════════════════════════════ */
 :root {
   --wk-surface: var(--color-base-100);
   --wk-surface-alt: var(--color-base-200);
+  --wk-surface-sunken: color-mix(in oklab, var(--color-base-200) 60%, var(--color-base-300));
   --wk-line: var(--color-base-300);
   --wk-line-strong: color-mix(in oklab, var(--color-base-content) 30%, transparent);
   --wk-line-faint: color-mix(in oklab, var(--color-base-content) 8%, transparent);
   --wk-text: var(--color-base-content);
-  --wk-text-mute: color-mix(in oklab, var(--color-base-content) 60%, transparent);
-  --wk-text-faint: color-mix(in oklab, var(--color-base-content) 38%, transparent);
-  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+  --wk-text-mute: color-mix(in oklab, var(--color-base-content) 62%, transparent);
+  --wk-text-faint: color-mix(in oklab, var(--color-base-content) 40%, transparent);
+  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 5%, transparent);
+  --wk-day-band: color-mix(in oklab, var(--color-base-content) 2.5%, transparent);
+
   /* Time-gutter width. Each phase reserves exactly this much, so lanes come out
      the same width in a 1-lane phase as in a 4-lane one. */
-  --wk-axis-w: 53px;
+  --wk-axis-w: 56px;
+  /* Height of one 15-minute slot; the density control rewrites it at runtime. */
+  --wk-slot-h: 24px;
+
+  /* Type scale — five steps, so a label can't land on a sixth size by accident. */
+  --wk-fs-2xs: 0.6875rem;
+  --wk-fs-xs: 0.75rem;
+  --wk-fs-sm: 0.8125rem;
+  --wk-fs-md: 0.875rem;
+  --wk-fs-lg: 1rem;
+  --wk-fs-xl: 1.125rem;
+
+  --wk-r-sm: 7px;
+  --wk-r-md: 10px;
+
+  --wk-shadow-1: 0 1px 2px color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  --wk-shadow-2: 0 10px 34px color-mix(in oklab, var(--color-base-content) 22%, transparent);
+
+  --wk-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
 }
 
 /* Dark mode needs its lines rebuilt, not just re-tinted. daisyUI's base-300 is
-   L 21% against an L 25% base-100, so a border painted with it is DARKER than the
-   surface it sits on and reads as nothing. On a dark background a divider has to
-   be lighter than its backdrop, and white-on-dark also carries far less perceived
-   contrast per unit of alpha than black-on-light — hence both the switch to
-   base-content mixes and the higher percentages. */
+   darker than base-100 in dark themes, so a border painted with it is DARKER
+   than the surface it sits on and reads as nothing. On a dark background a
+   divider has to be lighter than its backdrop, and white-on-dark also carries
+   far less perceived contrast per unit of alpha than black-on-light — hence both
+   the switch to base-content mixes and the higher percentages. */
 [data-theme='dark'] {
   --wk-line: color-mix(in oklab, var(--color-base-content) 20%, transparent);
   --wk-line-strong: color-mix(in oklab, var(--color-base-content) 42%, transparent);
   --wk-line-faint: color-mix(in oklab, var(--color-base-content) 12%, transparent);
-  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  --wk-day-band: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+  --wk-surface-sunken: color-mix(in oklab, var(--color-base-100) 60%, black);
+  --wk-shadow-2: 0 10px 34px rgb(0 0 0 / 0.5);
 }
 
-.fc {
-  height: 100%;
-  font-family: inherit;
-  --fc-border-color: var(--wk-line);
-  --fc-page-bg-color: var(--wk-surface);
-  --fc-neutral-bg-color: var(--wk-surface-alt);
-  --fc-today-bg-color: transparent;
-  --fc-non-business-color: var(--wk-grid-fringe);
-  --fc-now-indicator-color: var(--color-error);
-  --fc-small-font-size: 0.75em;
+html,
+body {
+  font-family: var(--wk-font);
+  background: var(--wk-surface);
+  color: var(--wk-text);
+}
+
+/* Times, counters and durations line up in columns rather than shimmering as
+   digits change width. */
+.wk-num,
+input[type='time'],
+input[type='date'] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* One section-label style, used by every panel header in the app. */
+.wk-eyebrow {
+  font-size: var(--wk-fs-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--wk-text-faint);
+}
+
+.wk-icon {
+  flex-shrink: 0;
+}
+
+/* daisyUI buttons centre their label; with an icon child the optical balance
+   needs the small negative lead-in. */
+.btn .wk-icon {
+  margin-right: 0.1rem;
 }

@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { getState } from '../state/store.svelte';
-  import { detectConflicts } from '../conflicts/detector';
-  import { DAY_NAMES, orphanEvents } from '../utils/timeUtils';
-  import type { CalendarEvent, ID } from '../types';
+  import { getState, getConflicts, getOrphans } from '../state/store.svelte';
+  import { highlightEvents, clearHighlight, revealEvent } from '../state/ui.svelte';
+  import { DAY_NAMES, eventGroupIds } from '../utils/timeUtils';
+  import Icon from './Icon.svelte';
+  import type { CalendarEvent, ConflictKind, ID } from '../types';
 
   interface Props {
     selectedEventId: string | null;
@@ -11,171 +12,379 @@
   let { selectedEventId = $bindable() }: Props = $props();
 
   const appState = $derived(getState());
-  const conflicts = $derived(detectConflicts(appState));
-  const teacherCount = $derived(conflicts.filter(c => c.kind === 'teacher').length);
-  const groupCount = $derived(conflicts.filter(c => c.kind === 'group').length);
-  const roomCount = $derived(conflicts.filter(c => c.kind === 'room').length);
-  const orphans = $derived(orphanEvents(appState));
+  const conflicts = $derived(getConflicts());
+  const orphans = $derived(getOrphans());
 
-  const KIND_LABEL = { teacher: 'Teacher', room: 'Room', group: 'Group' } as const;
+  const KIND_LABEL: Record<ConflictKind, string> = {
+    teacher: 'Teacher',
+    room: 'Room',
+    group: 'Group',
+  };
 
-  // groupId is an ID for a normal event and an ID[] for a multi-group one
+  interface ConflictGroup {
+    key: string;
+    kind: ConflictKind;
+    resourceName: string;
+    hard: boolean;
+    clashes: number;
+    eventIds: ID[];
+  }
+
+  /**
+   * One card per resource, not per pair. Three overlapping lessons produce three
+   * reports naming the same teacher; the panel used to print that teacher's name
+   * three times and push everything else off-screen.
+   */
+  const groups = $derived.by(() => {
+    const byResource = new Map<string, ConflictGroup>();
+    for (const report of conflicts) {
+      const key = `${report.kind}:${report.resourceId}`;
+      let group = byResource.get(key);
+      if (!group) {
+        group = {
+          key,
+          kind: report.kind,
+          resourceName: report.resourceName,
+          hard: report.kind !== 'room',
+          clashes: 0,
+          eventIds: [],
+        };
+        byResource.set(key, group);
+      }
+      group.clashes++;
+      for (const id of report.involvedEventIds) {
+        if (!group.eventIds.includes(id)) group.eventIds.push(id);
+      }
+    }
+    // Hard problems first, then the resource with the most clashes.
+    return [...byResource.values()].sort(
+      (a, b) => Number(b.hard) - Number(a.hard) || b.clashes - a.clashes,
+    );
+  });
+
+  const counts = $derived({
+    teacher: conflicts.filter(c => c.kind === 'teacher').length,
+    group: conflicts.filter(c => c.kind === 'group').length,
+    room: conflicts.filter(c => c.kind === 'room').length,
+  });
+
+  function eventById(id: ID): CalendarEvent | undefined {
+    return appState.events.find(ev => ev.id === id);
+  }
+
   function groupLabels(ev: CalendarEvent): string {
-    const ids: ID[] = Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId];
-    const labels = ids
+    const labels = eventGroupIds(appState, ev)
       .map(id => appState.groups.find(g => g.id === id)?.label)
       .filter(Boolean);
     return labels.length > 0 ? labels.join(', ') : '—';
   }
+
+  function sortByTime(ids: ID[]): CalendarEvent[] {
+    return ids
+      .map(eventById)
+      .filter((ev): ev is CalendarEvent => ev !== undefined)
+      .sort((a, b) => a.dayIndex - b.dayIndex || a.startTime.localeCompare(b.startTime));
+  }
 </script>
 
-<div class="flex flex-col h-full">
-    <div class="flex items-center gap-2 px-3 py-2.5 border-b border-base-300 shrink-0">
-      <span class="text-[0.68rem] font-semibold uppercase tracking-widest text-base-content/50 flex-1">
-        Conflicts
-      </span>
-      {#if conflicts.length > 0}
-        <span class="badge badge-error badge-sm font-semibold">{conflicts.length}</span>
-      {/if}
+<div class="panel">
+  <header class="panel-head">
+    <span class="wk-eyebrow flex-1">Conflicts</span>
+    {#if conflicts.length + orphans.length > 0}
+      <span class="head-count">{conflicts.length + orphans.length}</span>
+    {/if}
+  </header>
+
+  {#if conflicts.length > 0}
+    <div class="summary">
+      {#if counts.teacher > 0}<span class="sum sum-hard">{counts.teacher} teacher</span>{/if}
+      {#if counts.group > 0}<span class="sum sum-hard">{counts.group} group</span>{/if}
+      {#if counts.room > 0}<span class="sum sum-soft">{counts.room} room</span>{/if}
     </div>
+  {/if}
 
-    <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
-      {#if orphans.length > 0}
-        <!-- These fall outside every phase's days or lanes, so no calendar draws
-             them — without this they would just disappear. -->
-        <div class="conflict-card conflict-hard">
-          <span class="conflict-kind">Not on any calendar</span>
-          <span class="text-xs text-base-content/60">
-            {orphans.length} event{orphans.length === 1 ? '' : 's'} sit outside every phase. Open one to move it.
-          </span>
-          <div class="flex flex-col gap-1 mt-1">
-            {#each orphans as ev (ev.id)}
-              {@const subject = appState.subjects.find(s => s.id === ev.subjectId)}
-              <button class="conflict-event" onclick={() => (selectedEventId = ev.id)}>
-                <span class="conflict-dot" style="background:{subject?.color ?? '#888'}"></span>
-                <span class="truncate">{subject?.name ?? '?'}</span>
-                <span class="conflict-when">
-                  {groupLabels(ev)} · {DAY_NAMES[ev.dayIndex] ?? ''} {ev.startTime}
-                </span>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
-
-      {#if conflicts.length === 0 && orphans.length === 0}
-        <div class="flex items-start gap-2.5 rounded-lg border border-success/40 bg-success/10 px-3 py-3">
-          <span class="text-success text-base leading-none mt-0.5">✓</span>
-          <div class="flex flex-col gap-0.5">
-            <span class="text-sm font-semibold text-success">No conflicts</span>
-            <span class="text-xs text-base-content/50">No group, teacher or room is double-booked.</span>
-          </div>
-        </div>
-      {:else if conflicts.length > 0}
-        <p class="text-xs text-base-content/50 px-0.5">
-          {teacherCount} teacher · {groupCount} group · {roomCount} room
+  <div class="panel-body">
+    {#if orphans.length > 0}
+      <!-- These fall outside every phase's days or lanes, so no calendar draws
+           them — without this they would just disappear. -->
+      <section class="card card-hard">
+        <header class="card-head">
+          <Icon name="alert" size={13} />
+          <span class="card-title">Not on any calendar</span>
+          <span class="card-count">{orphans.length}</span>
+        </header>
+        <p class="card-note">
+          {orphans.length === 1 ? 'One event sits' : 'These events sit'} outside every phase. Open
+          one to move it back.
         </p>
+        <div class="rows">
+          {#each orphans as ev (ev.id)}
+            {@const subject = appState.subjects.find(s => s.id === ev.subjectId)}
+            <button class="row" onclick={() => (selectedEventId = ev.id)}>
+              <span class="row-dot" style="background:{subject?.color ?? '#888'}"></span>
+              <span class="row-name">{subject?.name ?? '?'}</span>
+              <span class="row-when wk-num">
+                {groupLabels(ev)} · {DAY_NAMES[ev.dayIndex] ?? ''} {ev.startTime}
+              </span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
 
-        {#each conflicts as conflict (conflict.kind + conflict.resourceId + conflict.involvedEventIds.join(','))}
-          {@const hard = conflict.kind !== 'room'}
-          {@const events = conflict.involvedEventIds
-            .map(id => appState.events.find(ev => ev.id === id))
-            .filter(Boolean)}
-          <div class="conflict-card" class:conflict-hard={hard} class:conflict-soft={!hard}>
-            <div class="flex items-center gap-1.5">
-              <span class="conflict-kind">{KIND_LABEL[conflict.kind]}</span>
-              <span class="conflict-severity">{hard ? 'hard' : 'soft'}</span>
-            </div>
-            <span class="text-xs font-semibold">{conflict.resourceName}</span>
-            <div class="flex flex-col gap-1 mt-1">
-              {#each events as ev (ev!.id)}
-                {@const subject = appState.subjects.find(s => s.id === ev!.subjectId)}
-                <button class="conflict-event" onclick={() => (selectedEventId = ev!.id)}>
-                  <span class="conflict-dot" style="background:{subject?.color ?? '#888'}"></span>
-                  <span class="truncate">{subject?.name ?? '?'}</span>
-                  <span class="conflict-when">
-                    {groupLabels(ev!)} · {DAY_NAMES[ev!.dayIndex] ?? ''} {ev!.startTime}
-                  </span>
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/each}
-      {/if}
-    </div>
+    {#if conflicts.length === 0 && orphans.length === 0}
+      <div class="all-clear">
+        <Icon name="check" size={15} />
+        <div>
+          <div class="all-clear-title">No conflicts</div>
+          <div class="all-clear-note">No group, teacher or room is double-booked.</div>
+        </div>
+      </div>
+    {/if}
+
+    {#each groups as group (group.key)}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <section
+        class="card"
+        class:card-hard={group.hard}
+        class:card-soft={!group.hard}
+        onmouseenter={() => highlightEvents(group.eventIds)}
+        onmouseleave={clearHighlight}
+      >
+        <header class="card-head">
+          <span class="card-kind">{KIND_LABEL[group.kind]}</span>
+          <span class="card-title">{group.resourceName}</span>
+          <span class="card-count">{group.clashes}×</span>
+        </header>
+        <div class="rows">
+          {#each sortByTime(group.eventIds) as ev (ev.id)}
+            {@const subject = appState.subjects.find(s => s.id === ev.subjectId)}
+            <button
+              class="row"
+              onmouseenter={() => highlightEvents([ev.id])}
+              onmouseleave={() => highlightEvents(group.eventIds)}
+              onclick={() => revealEvent(ev.id)}
+              title="Show this on the grid"
+            >
+              <span class="row-dot" style="background:{subject?.color ?? '#888'}"></span>
+              <span class="row-name">{subject?.name ?? '?'}</span>
+              <span class="row-when wk-num">
+                {groupLabels(ev)} · {DAY_NAMES[ev.dayIndex] ?? ''} {ev.startTime}
+              </span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/each}
+
+    {#if conflicts.length > 0}
+      <p class="foot-note">
+        Hover a card to find it on the grid. Room clashes are advisory; teacher and
+        group clashes are not.
+      </p>
+    {/if}
+  </div>
 </div>
 
 <style>
-  /* ── Conflict cards ────────────────────────────────────────────────────────── */
-  .conflict-card {
+  .panel {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
-    border-left-width: 3px;
-    border-left-style: solid;
-    border-radius: 0 0.5rem 0.5rem 0;
-    padding: 0.5rem 0.6rem;
+    height: 100%;
+    min-height: 0;
   }
 
-  .conflict-hard {
-    border-left-color: var(--color-error);
-    background: color-mix(in oklab, var(--color-error) 10%, transparent);
+  .panel-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--wk-line);
+    flex-shrink: 0;
   }
 
-  .conflict-soft {
-    border-left-color: var(--color-warning);
-    background: color-mix(in oklab, var(--color-warning) 10%, transparent);
-  }
-
-  .conflict-kind {
-    font-size: 0.72rem;
+  .head-count {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 19px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--color-error);
+    color: var(--color-error-content);
+    font-size: var(--wk-fs-2xs);
     font-weight: 700;
   }
 
-  .conflict-hard .conflict-kind { color: var(--color-error); }
-  .conflict-soft .conflict-kind { color: var(--color-warning); }
-
-  .conflict-severity {
-    font-size: 0.6rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    opacity: 0.5;
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding: 0.5rem 0.75rem 0;
+    flex-shrink: 0;
   }
 
-  .conflict-event {
+  .sum {
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+  }
+  .sum-hard {
+    background: color-mix(in oklab, var(--color-error) 13%, transparent);
+    color: var(--color-error);
+  }
+  .sum-soft {
+    background: color-mix(in oklab, var(--color-warning) 16%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+  }
+
+  .panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.6rem 0.7rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  /* ── Conflict cards ─────────────────────────────────────────────────────── */
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    border-left: 3px solid transparent;
+    border-radius: 0 var(--wk-r-sm) var(--wk-r-sm) 0;
+    padding: 0.45rem 0.5rem 0.5rem;
+    transition: background 0.12s;
+  }
+
+  .card-hard {
+    border-left-color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 9%, transparent);
+  }
+
+  .card-soft {
+    border-left-color: var(--color-warning);
+    background: color-mix(in oklab, var(--color-warning) 11%, transparent);
+  }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .card-kind {
+    font-size: var(--wk-fs-2xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.75;
+  }
+  .card-hard .card-kind { color: var(--color-error); }
+  .card-soft .card-kind { color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text)); }
+
+  .card-title {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--wk-fs-xs);
+    font-weight: 650;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .card-count {
+    font-size: var(--wk-fs-2xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--wk-text-faint);
+  }
+
+  .card-note {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-mute);
+    line-height: 1.45;
+  }
+
+  .rows {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .row {
     display: flex;
     align-items: center;
     gap: 0.35rem;
     width: 100%;
-    padding: 0.15rem 0.25rem;
+    padding: 0.18rem 0.25rem;
     border: none;
     border-radius: 4px;
     background: transparent;
     color: var(--wk-text-mute);
-    font-size: 0.72rem;
+    font-size: var(--wk-fs-2xs);
     text-align: left;
     cursor: pointer;
     min-width: 0;
   }
 
-  .conflict-event:hover {
-    background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  .row:hover {
+    background: color-mix(in oklab, var(--color-base-content) 9%, transparent);
     color: var(--wk-text);
   }
 
-  .conflict-dot {
+  .row-dot {
     width: 7px;
     height: 7px;
     border-radius: 2px;
     flex-shrink: 0;
   }
 
-  .conflict-when {
-    margin-left: auto;
-    padding-left: 0.4rem;
-    opacity: 0.7;
+  .row-name {
+    flex: 1;
+    min-width: 0;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .row-when {
     flex-shrink: 0;
+    opacity: 0.75;
+    white-space: nowrap;
+  }
+
+  /* ── All clear ──────────────────────────────────────────────────────────── */
+  .all-clear {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.7rem 0.75rem;
+    border-radius: var(--wk-r-sm);
+    border: 1px solid color-mix(in oklab, var(--color-success) 35%, transparent);
+    background: color-mix(in oklab, var(--color-success) 10%, transparent);
+    color: var(--color-success);
+  }
+
+  .all-clear-title {
+    font-size: var(--wk-fs-sm);
+    font-weight: 650;
+  }
+
+  .all-clear-note {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
+
+  .foot-note {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+    line-height: 1.5;
+    padding: 0.2rem 0.2rem 0;
   }
 </style>

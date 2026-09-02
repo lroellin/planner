@@ -1,0 +1,436 @@
+/* Shared chrome for the configuration panel's master-detail tabs. These live
+   outside the components because the list lives in MasterDetail.svelte while the
+   forms that use the same visual language live in the per-entity detail
+   components. */
+
+/* ── Shared list panel ───────────────────────────────────────────────────── */
+.list-panel {
+  width: 232px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--wk-line);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.list-add-row {
+  padding: 0.5rem;
+  border-top: 1px solid var(--wk-line);
+  flex-shrink: 0;
+}
+
+.list-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.75rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.1s;
+  min-width: 0;
+  font-size: var(--wk-fs-sm);
+  color: var(--wk-text);
+}
+
+.list-item:hover { background: var(--wk-surface-alt); }
+
+.list-item-active {
+  background: color-mix(in oklab, var(--color-primary) 9%, transparent);
+  border-left-color: var(--color-primary);
+  font-weight: 600;
+}
+
+/* ── List avatar (small circle in list item) ─────────────────────────────── */
+.list-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  flex-shrink: 0;
+}
+
+/* ── Detail panel ────────────────────────────────────────────────────────── */
+.detail-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.detail-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1rem 1.4rem 1.1rem;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--wk-line);
+  flex-shrink: 0;
+}
+
+.detail-title {
+  font-size: var(--wk-fs-lg);
+  font-weight: 700;
+}
+
+.autosave-pill {
+  font-size: var(--wk-fs-2xs);
+  color: var(--color-success);
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.detail-footer {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--wk-line);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.empty-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 0.6rem;
+  color: var(--wk-text-faint);
+  font-size: var(--wk-fs-sm);
+  padding: 2rem;
+  text-align: center;
+}
+
+/* ── Form fields ─────────────────────────────────────────────────────────── */
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field-label {
+  font-size: var(--wk-fs-2xs);
+  font-weight: 600;
+  color: var(--wk-text-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field-label-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--wk-text-faint);
+}
+
+.field-hint {
+  font-size: var(--wk-fs-xs);
+  color: var(--wk-text-faint);
+  line-height: 1.45;
+}
+
+.swatch-caption {
+  font-size: var(--wk-fs-2xs);
+  color: var(--wk-text-faint);
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.section-title {
+  font-size: var(--wk-fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--wk-text-faint);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--wk-line);
+}
+
+/* ── Usage panel: what this entity is actually booked for ─────────────────
+   The classes are wk- prefixed because daisyUI ships its own .stat/.stat-value
+   component, and this file is imported before the plugin — the unprefixed names
+   lost the cascade and rendered as daisyUI stat blocks. */
+.usage {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.wk-stat-row {
+  display: flex;
+  gap: 1.75rem;
+  flex-wrap: wrap;
+}
+
+.wk-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.wk-stat-value {
+  font-size: var(--wk-fs-lg);
+  font-weight: 700;
+}
+
+.wk-stat-label {
+  font-size: var(--wk-fs-2xs);
+  color: var(--wk-text-faint);
+}
+
+.usage-note {
+  font-size: var(--wk-fs-xs);
+  color: var(--wk-text-mute);
+  line-height: 1.6;
+}
+
+.usage-subject {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.usage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ── Full-width option rows (replaces inline checkbox clusters) ──────────── */
+.option-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--wk-line);
+  border-radius: var(--wk-r-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.option-row:hover {
+  background: var(--wk-surface-alt);
+  border-color: var(--wk-line-strong);
+}
+
+.option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.option-title {
+  font-size: var(--wk-fs-sm);
+  font-weight: 600;
+}
+.option-desc {
+  font-size: var(--wk-fs-xs);
+  line-height: 1.45;
+  color: var(--wk-text-faint);
+  max-width: 58ch;
+}
+
+/* ── Segmented choice ─────────────────────────────────────────────────────
+   For settings that are a choice between two kinds of thing rather than a
+   feature being switched on. A toggle labelled "Break" only ever names the
+   state it is in; these name both sides, so the alternative is readable
+   without flipping the switch. */
+.choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  max-width: 30rem;
+}
+
+.choice-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--wk-line);
+  border-radius: var(--wk-r-sm);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.choice-opt:hover {
+  border-color: var(--wk-line-strong);
+  background: var(--wk-surface-alt);
+}
+
+.choice-opt-on {
+  border-color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
+}
+
+.choice-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: var(--wk-fs-sm);
+  font-weight: 600;
+  color: var(--wk-text-mute);
+}
+.choice-opt-on .choice-head { color: var(--color-primary); }
+
+.choice-sub {
+  font-size: var(--wk-fs-2xs);
+  line-height: 1.35;
+  color: var(--wk-text-faint);
+}
+
+/* ── Advanced disclosure ─────────────────────────────────────────────────── */
+.advanced {
+  border-top: 1px solid var(--wk-line);
+  padding-top: 0.6rem;
+}
+
+.advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  list-style: none;
+  cursor: pointer;
+  font-size: var(--wk-fs-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--wk-text-faint);
+}
+.advanced-summary::-webkit-details-marker { display: none; }
+.advanced-summary:hover { color: var(--wk-text-mute); }
+
+.advanced-summary svg { transition: transform 0.15s; }
+.advanced[open] .advanced-summary svg { transform: rotate(90deg); }
+
+.advanced-body {
+  padding-top: 0.7rem;
+}
+
+/* ── Duration presets ────────────────────────────────────────────────────── */
+.preset-chip {
+  padding: 0.28rem 0.65rem;
+  border-radius: var(--wk-r-sm);
+  border: 1px solid var(--wk-line);
+  background: transparent;
+  color: var(--wk-text-mute);
+  font-size: var(--wk-fs-sm);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.preset-chip:hover {
+  border-color: var(--wk-line-strong);
+  background: var(--wk-surface-alt);
+}
+.preset-chip-on {
+  border-color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+/* ── Teacher picker ──────────────────────────────────────────────────────── */
+.count-pill {
+  font-size: var(--wk-fs-2xs);
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--color-primary) 15%, transparent);
+  color: var(--color-primary);
+}
+.count-pill-empty {
+  background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
+  color: var(--wk-text-faint);
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 0.4rem;
+  max-width: 46rem;
+}
+
+.picker-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--wk-r-sm);
+  border: 1px solid var(--wk-line);
+  background: transparent;
+  color: var(--wk-text-mute);
+  font-size: var(--wk-fs-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s;
+  min-width: 0;
+}
+.picker-chip:hover {
+  border-color: var(--wk-line-strong);
+  background: var(--wk-surface-alt);
+  color: var(--wk-text);
+}
+.picker-chip-on {
+  border-color: var(--tc);
+  background: color-mix(in srgb, var(--tc) 12%, transparent);
+  color: var(--wk-text);
+  font-weight: 600;
+}
+
+/* An explicit empty square, so an unselected teacher reads as "not yet chosen"
+   rather than as a chip that happens to be styled quietly. */
+.picker-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--wk-line-strong);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  color: white;
+  flex-shrink: 0;
+}
+.picker-chip-on .picker-box {
+  background: var(--tc);
+  border-color: var(--tc);
+}
+
+.teacher-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

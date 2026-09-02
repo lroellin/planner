@@ -1,0 +1,476 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   The grid and its cards.
+
+   Lives outside Calendar.svelte because nearly all of it has to be :global
+   anyway — FullCalendar owns the DOM — and because the event card is built as
+   an HTML string in `eventContent`, which Svelte's scoped styles never reach.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.fc {
+  height: 100%;
+  font-family: inherit;
+  --fc-border-color: var(--wk-line);
+  --fc-page-bg-color: var(--wk-surface);
+  --fc-neutral-bg-color: var(--wk-surface-alt);
+  --fc-today-bg-color: transparent;
+  --fc-non-business-color: var(--wk-grid-fringe);
+  --fc-now-indicator-color: var(--color-error);
+  --fc-small-font-size: var(--wk-fs-xs);
+  --fc-event-bg-color: transparent;
+  --fc-event-border-color: transparent;
+}
+
+/* ── Time axis ─────────────────────────────────────────────────────────────── */
+
+.fc-timegrid-slot {
+  height: var(--wk-slot-h) !important;
+}
+
+/* Even an empty table cell inherits a line-height strut, and that strut (16px ×
+   1.5 from the preflight) was a ~25px floor under every row — the compact
+   density asked for 17px and silently got nothing. The cells carry no text of
+   their own; the hour label restores its own line box below. */
+.fc-timegrid-slots table {
+  line-height: 0;
+}
+
+.fc-timegrid-axis,
+.fc-timegrid-slot-label {
+  width: var(--wk-axis-w) !important;
+}
+
+/* The hour label is the only content in a slot row, and a table row is as tall
+   as its tallest cell — so the label's line box (18px text + 6px frame padding)
+   set a 24.5px floor that the compact density could not get under. Collapsing
+   the line box is what lets --wk-slot-h actually shrink the grid. */
+/* !important throughout: FullCalendar injects its stylesheet from JS at runtime,
+   so it lands after this file and wins every tie on specificity. */
+.fc .fc-timegrid-slot-label-frame {
+  line-height: 1 !important;
+  padding: 0 !important;
+}
+
+.fc .fc-timegrid-slot-label-cushion {
+  font-size: var(--wk-fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--wk-text-faint);
+  line-height: 1 !important;
+  padding: 0 0.5rem 0 0 !important;
+}
+
+/* Every phase keeps its axis *cell* — removing it drops a column from FC's
+   table, which collapsed a lane to 0px and left the header a row shorter, so
+   the two grids stopped lining up. Only the first phase shows its contents;
+   the rest collapse to zero width, which is what kills the duplicate gutter. */
+.phase-seg--noaxis .fc-timegrid-axis,
+.phase-seg--noaxis .fc-timegrid-slot-label {
+  width: 0 !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  border-left-width: 0 !important;
+  border-right-width: 0 !important;
+  overflow: hidden;
+}
+
+.phase-seg--noaxis .fc-timegrid-slot-label-frame,
+.phase-seg--noaxis .fc-timegrid-axis-frame {
+  display: none;
+}
+
+/* Every one of these tables is `table-layout: fixed` and FullCalendar writes an
+   inline `<col style="width: 4px">` from what it measured for the collapsed
+   axis cell — which then wins over the rule above and leaves a 4px stub before
+   the first lane. The axis is the only shrink column in this view, so it is the
+   only <col> FC emits here. */
+.phase-seg--noaxis colgroup col {
+  width: 0 !important;
+}
+
+/* ── Column headers: day is the structure, lane is the detail ──────────────── */
+
+.fc-col-header-cell {
+  background: var(--wk-surface);
+}
+
+.fc-col-header-cell.fc-day .fc-col-header-cell-cushion {
+  display: block;
+  padding: 0.4rem 0.25rem 0.35rem;
+  font-size: var(--wk-fs-md);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--wk-text);
+  text-decoration: none;
+}
+
+.fc-col-header-cell.fc-resource .fc-col-header-cell-cushion {
+  display: block;
+  padding: 0.25rem 0.2rem;
+  font-size: var(--wk-fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--wk-text-mute);
+}
+
+/* A one-lane phase gives each day a narrow header; letting "Mo. 31.8." wrap
+   there made its header a line taller than the wide phase's, offsetting every
+   time row between the two grids. */
+.fc-col-header-cell.fc-day {
+  white-space: nowrap;
+}
+
+.fc-scrollgrid-section-sticky > * {
+  background: var(--wk-surface);
+}
+
+/* ── Vertical rules: faint between lanes, firm between days ────────────────── */
+
+.fc-timegrid-col.fc-resource,
+.fc-col-header-cell.fc-resource {
+  border-left: 1px solid var(--wk-line-faint);
+  border-right: 0;
+}
+
+/* `.wk-day-start` is applied from tagDayBoundaries() — FC gives resource header
+   cells no fc-day-* class, so this boundary cannot be expressed in CSS alone. */
+.fc-timegrid-col.wk-day-start,
+.fc-col-header-cell.wk-day-start,
+.fc-col-header-cell.fc-day + .fc-col-header-cell.fc-day {
+  border-left: 2px solid var(--wk-line-strong);
+}
+
+/* Alternate days get a whisper of background so the eye chunks the week into
+   days without having to read the headers. */
+.fc-timegrid-col.wk-day-alt {
+  background: var(--wk-day-band);
+}
+
+/* ── Horizontal time lines, three levels deep ──────────────────────────────── */
+/* FC zeroes the slot border-bottom and draws lines via each cell's border-top.
+   Quarter hours keep FC's own faint dotted default; these two rules add the
+   hour and half-hour emphasis on top of it. Both need two classes to outrank
+   FC's `.fc-theme-standard td`. */
+.fc-timegrid-slot-lane:not(.fc-timegrid-slot-minor),
+.fc-timegrid-slot-label:not(.fc-timegrid-slot-minor) {
+  border-top: 1px solid var(--wk-line-strong);
+}
+
+/* slotMinTime is 07:00 and slots are 15 min, so rows 1, 5, 9 … are full hours
+   (never minor) and rows 3, 7, 11 … are the half hours. */
+.fc-timegrid-slots tr:nth-child(odd) .fc-timegrid-slot-minor {
+  border-top: 1px solid var(--wk-line);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Event cards
+
+   The card is a neutral surface carrying a tint and a spine of the subject
+   colour, not a saturated fill of it. Twelve lanes of full-strength colour had
+   no hierarchy, and it left nothing louder for a conflict to be drawn in.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.fc-timegrid-event.wk-ev {
+  --wk-tint: 13%;
+  --wk-edge: 34%;
+  background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
+  border: 1px solid color-mix(in oklab, var(--ev-color, gray) var(--wk-edge), var(--wk-surface));
+  border-left: 3px solid var(--ev-color, gray);
+  border-radius: var(--wk-r-sm);
+  box-shadow: var(--wk-shadow-1);
+  color: var(--wk-text);
+  overflow: hidden;
+  transition: box-shadow 0.12s, transform 0.12s, opacity 0.15s;
+}
+
+/* A tint has to be stronger against a dark ground to read as the same colour,
+   and the spine of an already-dark subject colour needs lifting off it. */
+[data-theme='dark'] .fc-timegrid-event.wk-ev {
+  --wk-tint: 24%;
+  --wk-edge: 44%;
+  border-left-color: color-mix(in oklab, var(--ev-color, gray) 85%, white);
+}
+
+.fc-timegrid-event.wk-ev:hover {
+  box-shadow: 0 2px 10px color-mix(in oklab, var(--color-base-content) 18%, transparent);
+  z-index: 3;
+}
+
+.fc-timegrid-event .fc-event-main {
+  padding: 0;
+  color: inherit;
+}
+
+.wk-ev-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  padding: 3px 5px 2px 6px;
+  overflow: hidden;
+}
+
+.wk-ev-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.wk-ev-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--wk-fs-xs);
+  font-weight: 650;
+  line-height: 1.25;
+  /* Never mid-word: "Karteneröffnung/-führung" used to break as
+     "Karteneröffn / ung/-führung". German compounds hyphenate or they clamp. */
+  overflow-wrap: break-word;
+  hyphens: auto;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.wk-ev-flags {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.wk-ev-flag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wk-text-faint);
+}
+
+.wk-ev-flag-hard { color: var(--color-error); }
+.wk-ev-flag-soft { color: var(--color-warning); }
+
+.wk-ev-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 6px;
+  min-width: 0;
+}
+
+.wk-ev-time {
+  font-size: var(--wk-fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--wk-text-mute);
+  letter-spacing: -0.01em;
+}
+
+/* Circles are people … */
+.wk-ev-teachers {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.wk-ev-av {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+/* … rectangles are places. */
+.wk-ev-room {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  font-size: var(--wk-fs-2xs);
+  color: var(--wk-text-mute);
+}
+
+.wk-ev-room-tag {
+  width: 9px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.wk-ev-room-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── How much fits: one rule per duration band ─────────────────────────────── */
+
+.wk-dur-xs .wk-ev-body { padding: 1px 4px 1px 5px; justify-content: center; }
+.wk-dur-xs .wk-ev-title { -webkit-line-clamp: 1; line-clamp: 1; }
+.wk-dur-xs .wk-ev-meta { display: none; }
+
+.wk-dur-sm .wk-ev-title { -webkit-line-clamp: 1; line-clamp: 1; }
+.wk-dur-sm .wk-ev-time { display: none; }
+.wk-dur-sm .wk-ev-meta { flex-wrap: nowrap; }
+
+.wk-dur-lg .wk-ev-title { -webkit-line-clamp: 3; line-clamp: 3; }
+
+/* ── Breaks recede ─────────────────────────────────────────────────────────── */
+
+.fc-timegrid-event.wk-ev-break {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 5px,
+      color-mix(in oklab, var(--color-base-content) 5%, transparent) 5px 10px
+    ),
+    var(--wk-surface-alt);
+  border-color: var(--wk-line);
+  border-left: 1px solid var(--wk-line);
+  box-shadow: none;
+  color: var(--wk-text-mute);
+}
+
+.wk-ev-break .wk-ev-title {
+  font-weight: 600;
+  color: var(--wk-text-mute);
+}
+
+/* A multi-group block is drawn once per lane; keeping it quiet stops three
+   identical lunch cards from being the loudest thing on the day. */
+.fc-timegrid-event.wk-ev-multi {
+  box-shadow: none;
+}
+
+/* ── Conflict: outline + icon, so it survives a red subject colour ─────────── */
+
+.fc-timegrid-event.wk-ev-hard {
+  outline: 2px solid var(--color-error);
+  outline-offset: -2px;
+}
+
+.fc-timegrid-event.wk-ev-soft {
+  outline: 2px dashed var(--color-warning);
+  outline-offset: -2px;
+}
+
+/* A corner notch: the same information without relying on hue, which matters
+   on a card whose own colour is already red. */
+.fc-timegrid-event.wk-ev-hard::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  border-width: 0 9px 9px 0;
+  border-style: solid;
+  border-color: transparent var(--color-error) transparent transparent;
+}
+
+/* ── Selection, highlight, spotlight ───────────────────────────────────────── */
+
+.fc-timegrid-event.wk-selected {
+  box-shadow:
+    0 0 0 2px var(--wk-surface),
+    0 0 0 4px var(--color-primary),
+    var(--wk-shadow-2);
+  z-index: 6;
+}
+
+.fc-timegrid-event.wk-flash {
+  animation: wk-flash 1.1s ease-out 2;
+  z-index: 5;
+}
+
+@keyframes wk-flash {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 0%, transparent); }
+  35% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-primary) 55%, transparent); }
+}
+
+/* Hovering a sidebar chip answers "where is this one still missing?" by
+   pushing everything else back. */
+.fc-timegrid-event.wk-dimmed {
+  opacity: 0.16;
+  filter: saturate(0.4);
+}
+
+/* ── Resize grip ───────────────────────────────────────────────────────────── */
+
+.fc-timegrid-event .fc-event-resizer-end {
+  height: 7px;
+  bottom: 0;
+  cursor: ns-resize;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.fc-timegrid-event .fc-event-resizer-end::after {
+  content: '';
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+}
+
+.fc-timegrid-event:hover .fc-event-resizer-end::after {
+  background: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+}
+
+/* ── Drag feedback ─────────────────────────────────────────────────────────── */
+
+.fc-event-mirror {
+  z-index: 9999 !important;
+  opacity: 0.9 !important;
+}
+
+/* The drop would double-book a teacher, a group or a room: say so before the
+   drop, not after it. Set from eventAllow, which FC calls as the drag moves. */
+.wk-cal[data-clash='hard'] .fc-event-mirror {
+  outline: 2px solid var(--color-error);
+  outline-offset: -2px;
+  background: color-mix(in oklab, var(--color-error) 22%, var(--wk-surface)) !important;
+}
+
+.wk-cal[data-clash='soft'] .fc-event-mirror {
+  outline: 2px dashed var(--color-warning);
+  outline-offset: -2px;
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────────── */
+
+@media print {
+  .fc-timegrid-event.wk-ev {
+    box-shadow: none;
+    /* Printers drop background colours; the spine survives as a solid rule. */
+    border-left-width: 4px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .fc-timegrid-event.wk-selected {
+    box-shadow: none;
+  }
+}
+
+/* FullCalendar caps its own scrollers at the on-screen height; on paper the
+   whole day has to be allowed to run past the fold. */
+@media print {
+  .fc-scroller,
+  .fc-scroller-harness,
+  .fc-view-harness {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .fc {
+    height: auto !important;
+  }
+}

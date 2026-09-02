@@ -1,9 +1,7 @@
-import type { AppState, CalendarEvent, ID, Phase, Subject, Teacher } from '../types';
-import { effectiveTeacherIds, effectiveRoomId, eventInPhase, phaseGroups } from '../utils/timeUtils';
-
-export function eventGroupIds(ev: CalendarEvent): ID[] {
-  return Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId];
-}
+import type { AppState, Group, ID, Phase, Room, Subject, Teacher } from '../types';
+import {
+  effectiveTeacherIds, effectiveRoomId, eventInPhase, phaseGroups, eventGroupIds, timeDiffMinutes,
+} from '../utils/timeUtils';
 
 // ─── Coverage: has every group had every subject? ─────────────────────────────
 
@@ -11,6 +9,12 @@ export interface CoverageRow {
   subject: Subject;
   counts: Map<ID, number>; // groupId → number of placed instances
   missing: number;         // enabled groups with zero instances
+  /**
+   * Every group has it, but not the same number of times. "Complete" hid this:
+   * one group getting the lesson twice while another got it once is a planning
+   * mistake, not a finished row.
+   */
+  uneven: boolean;
 }
 
 export interface CoverageSection {
@@ -30,12 +34,18 @@ function fallbackPhase(state: AppState): Phase | null {
 }
 
 /**
- * The phases a subject is rotated through — those it is actually placed in. A
- * Kader subject must not be judged against the group lanes and vice versa, so
- * coverage is always measured within a phase. A subject with no placements yet
- * is assumed to belong to the widest phase, the group rotation.
+ * The phases a subject is rotated through. A Kader subject must not be judged
+ * against the group lanes and vice versa, so coverage is always measured within
+ * a phase. An explicit `phaseId` settles it; otherwise the phases the subject is
+ * actually placed in are used, falling back to the widest phase (the group
+ * rotation) while it has no placements at all.
  */
-function subjectPhases(state: AppState, subjectId: ID): Phase[] {
+export function subjectPhases(state: AppState, subjectId: ID): Phase[] {
+  const subject = state.subjects.find(s => s.id === subjectId);
+  if (subject?.phaseId) {
+    const pinned = state.phases.find(p => p.id === subject.phaseId);
+    if (pinned) return [pinned];
+  }
   const placed = state.events.filter(ev => ev.subjectId === subjectId);
   if (placed.length === 0) {
     const fallback = fallbackPhase(state);
@@ -56,12 +66,15 @@ export function buildCoverage(state: AppState): CoverageSection[] {
         const counts = new Map<ID, number>(groupIds.map(id => [id, 0]));
         for (const ev of state.events) {
           if (ev.subjectId !== subject.id || !eventInPhase(state, ev, phase)) continue;
-          for (const gid of eventGroupIds(ev)) {
+          for (const gid of eventGroupIds(state, ev)) {
             if (counts.has(gid)) counts.set(gid, counts.get(gid)! + 1);
           }
         }
         const missing = groupIds.filter(id => counts.get(id) === 0).length;
-        return { subject, counts, missing };
+        const values = groupIds.map(id => counts.get(id) ?? 0);
+        const uneven =
+          missing === 0 && values.length > 1 && Math.max(...values) !== Math.min(...values);
+        return { subject, counts, missing, uneven };
       });
 
     return { phase, rows, groupIds, totalMissing: rows.reduce((n, r) => n + r.missing, 0) };
@@ -77,10 +90,29 @@ export function coverageForSubject(state: AppState, subjectId: ID): { placed: nu
     const groups = phaseGroups(state, phase);
     total += groups.length;
     placed += groups.filter(g =>
-      events.some(ev => eventInPhase(state, ev, phase) && eventGroupIds(ev).includes(g.id)),
+      events.some(ev => eventInPhase(state, ev, phase) && eventGroupIds(state, ev).includes(g.id)),
     ).length;
   }
   return { placed, total };
+}
+
+/**
+ * Which lanes still lack this subject. The sidebar counter says *that* something
+ * is missing; hovering says *where*, which is the question the planner actually
+ * has.
+ */
+export function missingLanesForSubject(state: AppState, subjectId: ID): string[] {
+  const events = state.events.filter(ev => ev.subjectId === subjectId);
+  const labels: string[] = [];
+  for (const phase of subjectPhases(state, subjectId)) {
+    for (const group of phaseGroups(state, phase)) {
+      const covered = events.some(
+        ev => eventInPhase(state, ev, phase) && eventGroupIds(state, ev).includes(group.id),
+      );
+      if (!covered) labels.push(group.label);
+    }
+  }
+  return labels;
 }
 
 // ─── Per-teacher plans ────────────────────────────────────────────────────────
@@ -116,12 +148,6 @@ export interface TeacherPlan {
   totalMinutes: number;
 }
 
-function minutesBetween(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number);
-  const [eh, em] = end.split(':').map(Number);
-  return ((eh ?? 0) * 60 + (em ?? 0)) - ((sh ?? 0) * 60 + (sm ?? 0));
-}
-
 export function buildTeacherPlans(state: AppState): TeacherPlan[] {
   const groupLabel = (id: ID): string | null =>
     state.groups.find(g => g.id === id)?.label ?? null;
@@ -137,7 +163,7 @@ export function buildTeacherPlans(state: AppState): TeacherPlan[] {
       const subject = state.subjects.find(s => s.id === ev.subjectId);
       if (!subject) continue;
 
-      const groupIds = eventGroupIds(ev).filter(gid => state.groups.find(g => g.id === gid)?.enabled);
+      const groupIds = eventGroupIds(state, ev);
       if (groupIds.length === 0) continue;
 
       const actual = effectiveTeacherIds(ev, subject);
@@ -167,7 +193,7 @@ export function buildTeacherPlans(state: AppState): TeacherPlan[] {
       else if (status === 'covering') coveringCount++;
       else handedOverCount++;
 
-      if (status !== 'handed-over') totalMinutes += minutesBetween(ev.startTime, ev.endTime);
+      if (status !== 'handed-over') totalMinutes += timeDiffMinutes(ev.startTime, ev.endTime);
 
       const roomId = effectiveRoomId(ev, subject);
 
@@ -198,5 +224,105 @@ export function buildTeacherPlans(state: AppState): TeacherPlan[] {
       .sort((a, b) => a.subject.name.localeCompare(b.subject.name));
 
     return { teacher, blocks, teachingCount, coveringCount, handedOverCount, totalMinutes };
+  });
+}
+
+// ─── Per-group and per-room plans ─────────────────────────────────────────────
+
+/** One line of a printed plan: what happens, when, with whom, where. */
+export interface ScheduleEntry {
+  eventId: ID;
+  dayIndex: number;
+  startTime: string;
+  endTime: string;
+  minutes: number;
+  subject: Subject;
+  teachers: Teacher[];
+  roomName: string | null;
+  groupLabels: string[];
+}
+
+export interface GroupPlan {
+  group: Group;
+  entries: ScheduleEntry[];
+  lessonMinutes: number;
+  lessonCount: number;
+}
+
+export interface RoomPlan {
+  room: Room;
+  entries: ScheduleEntry[];
+  bookedMinutes: number;
+}
+
+function toEntry(state: AppState, eventId: ID): ScheduleEntry | null {
+  const ev = state.events.find(e => e.id === eventId);
+  if (!ev) return null;
+  const subject = state.subjects.find(s => s.id === ev.subjectId);
+  if (!subject) return null;
+  const roomId = effectiveRoomId(ev, subject);
+  return {
+    eventId: ev.id,
+    dayIndex: ev.dayIndex,
+    startTime: ev.startTime,
+    endTime: ev.endTime,
+    minutes: timeDiffMinutes(ev.startTime, ev.endTime),
+    subject,
+    teachers: effectiveTeacherIds(ev, subject)
+      .map(id => state.teachers.find(t => t.id === id))
+      .filter((t): t is Teacher => Boolean(t)),
+    roomName: roomId ? state.rooms.find(r => r.id === roomId)?.name ?? null : null,
+    groupLabels: eventGroupIds(state, ev)
+      .map(id => state.groups.find(g => g.id === id)?.label)
+      .filter((l): l is string => Boolean(l)),
+  };
+}
+
+function byTime(a: ScheduleEntry, b: ScheduleEntry): number {
+  return a.dayIndex - b.dayIndex || a.startTime.localeCompare(b.startTime);
+}
+
+/**
+ * The document a group actually gets handed: their whole week in order, breaks
+ * included, because a participant's day is not a list of lessons.
+ */
+export function buildGroupPlans(state: AppState): GroupPlan[] {
+  return [...state.groups]
+    .filter(g => g.enabled)
+    .sort((a, b) => a.order - b.order)
+    .map(group => {
+      const entries = state.events
+        .filter(ev => eventGroupIds(state, ev).includes(group.id))
+        .map(ev => toEntry(state, ev.id))
+        .filter((e): e is ScheduleEntry => e !== null)
+        .sort(byTime);
+
+      const lessons = entries.filter(e => !e.subject.isBreak);
+      return {
+        group,
+        entries,
+        lessonCount: lessons.length,
+        lessonMinutes: lessons.reduce((n, e) => n + e.minutes, 0),
+      };
+    });
+}
+
+/** Where a room is occupied — the janitor's and the quartermaster's view. */
+export function buildRoomPlans(state: AppState): RoomPlan[] {
+  return state.rooms.map(room => {
+    const entries = state.events
+      .filter(ev => {
+        const subject = state.subjects.find(s => s.id === ev.subjectId);
+        return subject !== undefined && effectiveRoomId(ev, subject) === room.id;
+      })
+      .map(ev => toEntry(state, ev.id))
+      .filter((e): e is ScheduleEntry => e !== null)
+      .sort(byTime);
+
+    return {
+      room,
+      entries,
+      bookedMinutes: entries.reduce((n, e) => n + e.minutes, 0),
+    };
   });
 }

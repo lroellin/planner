@@ -1,37 +1,50 @@
 <script lang="ts">
   import {
-    getState,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    setWkStartDate,
+    getState, undo, redo, canUndo, canRedo, setWkStartDate, getIssueCount,
+    undoLabel, redoLabel,
   } from "../state/store.svelte";
-  import { formatDate } from "../utils/timeUtils";
-  import { detectConflicts } from "../conflicts/detector";
-  import type { EventFilter } from "../types";
+  import { getDensity, setDensity, type Density } from "../state/ui.svelte";
+  import { formatDate, dayDateLabel } from "../utils/timeUtils";
+  import { teacherShort } from "../utils/format";
+  import Icon from "./Icon.svelte";
+  import type { EventFilter, ReportTab } from "../types";
 
   interface Props {
     configOpen: boolean;
-    reportOpen: boolean;
     filter: EventFilter | null;
+    onreport: (tab: ReportTab) => void;
   }
 
-  let { configOpen = $bindable(), reportOpen = $bindable(), filter = $bindable() }: Props = $props();
+  let { configOpen = $bindable(), filter = $bindable(), onreport }: Props = $props();
 
   const appState = $derived(getState());
-  const conflictCount = $derived(detectConflicts(appState).length);
+  // Conflicts *and* orphans — the same number the conflict panel shows, so the
+  // two badges cannot disagree.
+  const conflictCount = $derived(getIssueCount());
 
   // "teacher:abc" ⇄ { kind, id }; "" means no filter
   const filterValue = $derived(filter ? `${filter.kind}:${filter.id}` : "");
 
-  const filterLabel = $derived.by(() => {
-    const f = filter;
-    if (!f) return null;
-    if (f.kind === 'teacher') return appState.teachers.find(t => t.id === f.id)?.name ?? null;
-    if (f.kind === 'room') return appState.rooms.find(r => r.id === f.id)?.name ?? null;
-    return appState.groups.find(g => g.id === f.id)?.label ?? null;
-  });
+  const weekLabel = $derived(
+    `${dayDateLabel(appState.wkStartDate, 0)}–${dayDateLabel(appState.wkStartDate, 4)}`,
+  );
+
+  let menu: 'print' | 'legend' | 'week' | null = $state(null);
+
+  // S/M/L rather than initials: "Compact" and "Comfortable" both start with C.
+  const DENSITIES: { key: Density; label: string; short: string }[] = [
+    { key: 'compact', label: 'Compact', short: 'S' },
+    { key: 'normal', label: 'Normal', short: 'M' },
+    { key: 'comfortable', label: 'Comfortable', short: 'L' },
+  ];
+
+  const PRINT_TARGETS: { tab: ReportTab | 'grid'; label: string; hint: string }[] = [
+    { tab: 'grid', label: 'Week grid', hint: 'The timetable as shown' },
+    { tab: 'groups', label: 'Group plans', hint: 'One page per group' },
+    { tab: 'teachers', label: 'Teacher plans', hint: 'One page per teacher' },
+    { tab: 'rooms', label: 'Room plans', hint: 'One page per room' },
+    { tab: 'coverage', label: 'Coverage', hint: 'Who still needs what' },
+  ];
 
   function applyFilter(raw: string): void {
     if (!raw) {
@@ -50,6 +63,18 @@
     setWkStartDate(formatDate(d));
   }
 
+  function print(target: ReportTab | 'grid'): void {
+    menu = null;
+    if (target === 'grid') {
+      window.print();
+      return;
+    }
+    onreport(target);
+    // The overlay has to be mounted (and its print stylesheet applied) before
+    // the print dialog samples the page.
+    setTimeout(() => window.print(), 350);
+  }
+
   // Ctrl+Z belongs to the focused field while text is being edited — taking it
   // for app-level undo there would revert the whole schedule instead of a typo.
   function isEditing(target: EventTarget | null): boolean {
@@ -59,6 +84,7 @@
   }
 
   function handleKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape') menu = null;
     if (!(e.ctrlKey || e.metaKey)) return;
     if (isEditing(e.target)) return;
     if (e.key === "z" && !e.shiftKey) {
@@ -78,85 +104,484 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="navbar bg-base-100 min-h-12 px-3 gap-2">
-  <div class="navbar-start gap-2 min-w-0 flex-1">
-    <span class="badge badge-primary font-bold text-xs tracking-wider shrink-0">WK</span>
+<div class="bar">
+  <!-- ── Identity + filter ────────────────────────────────────────────────── -->
+  <div class="bar-left">
+    <span class="wordmark">WK<span class="wordmark-thin">Planner</span></span>
 
-    <select
-      class="select select-bordered select-sm text-xs max-w-44"
-      value={filterValue}
-      onchange={(e) => applyFilter((e.currentTarget as HTMLSelectElement).value)}
-      title="Show only events involving…"
-    >
-      <option value="">All events</option>
-      <optgroup label="Teachers">
-        {#each appState.teachers as t (t.id)}
-          <option value="teacher:{t.id}">{t.name}</option>
-        {/each}
-      </optgroup>
-      <optgroup label="Rooms">
-        {#each appState.rooms as r (r.id)}
-          <option value="room:{r.id}">{r.name}</option>
-        {/each}
-      </optgroup>
-      <optgroup label="Groups">
-        {#each appState.groups.filter(g => g.enabled) as g (g.id)}
-          <option value="group:{g.id}">{g.label}</option>
-        {/each}
-      </optgroup>
-    </select>
+    <label class="filter" title="Show only events involving…">
+      <Icon name="filter" size={13} />
+      <select
+        class="filter-select"
+        value={filterValue}
+        onchange={(e) => applyFilter((e.currentTarget as HTMLSelectElement).value)}
+        aria-label="Filter events"
+      >
+        <option value="">All events</option>
+        <optgroup label="Teachers">
+          {#each appState.teachers as t (t.id)}
+            <option value="teacher:{t.id}">{t.name}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="Rooms">
+          {#each appState.rooms as r (r.id)}
+            <option value="room:{r.id}">{r.name}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="Groups">
+          {#each appState.groups.filter(g => g.enabled) as g (g.id)}
+            <option value="group:{g.id}">{g.label}</option>
+          {/each}
+        </optgroup>
+      </select>
+    </label>
 
-    {#if filter && filterLabel}
-      <button class="badge badge-warning gap-1 shrink-0" onclick={() => (filter = null)} title="Clear filter">
-        {filterLabel} ✕
+    <div class="legend-wrap">
+      <button
+        class="tb-btn"
+        class:tb-btn-on={menu === 'legend'}
+        onclick={() => (menu = menu === 'legend' ? null : 'legend')}
+        title="What the colours mean"
+      >
+        <Icon name="palette" size={15} /> Legend
       </button>
-    {/if}
-  </div>
-
-  <div class="navbar-center">
-    <div class="flex items-center gap-1">
-      <button class="btn btn-ghost btn-sm btn-square" onclick={() => shiftWeek(-1)} title="Previous week">‹</button>
-      <label class="flex items-center gap-2">
-        <span class="text-xs text-base-content/50 font-medium">Week</span>
-        <input
-          type="date"
-          class="input input-bordered input-sm text-sm"
-          value={appState.wkStartDate}
-          onchange={(e) => setWkStartDate((e.currentTarget as HTMLInputElement).value)}
-        />
-      </label>
-      <button class="btn btn-ghost btn-sm btn-square" onclick={() => shiftWeek(1)} title="Next week">›</button>
+      {#if menu === 'legend'}
+        <div class="pop pop-left">
+          <div class="pop-title wk-eyebrow">Teachers</div>
+          {#each appState.teachers as t (t.id)}
+            <div class="legend-row">
+              <span class="legend-av" style="background:{t.color}">{teacherShort(t)}</span>
+              <span class="truncate">{t.name}</span>
+            </div>
+          {:else}
+            <p class="pop-empty">No teachers yet.</p>
+          {/each}
+          <div class="pop-title wk-eyebrow">Rooms</div>
+          {#each appState.rooms as r (r.id)}
+            <div class="legend-row">
+              <span class="legend-tag" style="background:{r.color}"></span>
+              <span class="truncate">{r.name}</span>
+              {#if r.excludeFromConflictCheck}
+                <span class="legend-note">shared</span>
+              {/if}
+            </div>
+          {:else}
+            <p class="pop-empty">No rooms yet.</p>
+          {/each}
+          <div class="pop-title wk-eyebrow">Subjects</div>
+          {#each appState.subjects as s (s.id)}
+            <div class="legend-row">
+              <span class="legend-dot" style="background:{s.color}"></span>
+              <span class="truncate">{s.name}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   </div>
 
-  <div class="navbar-end gap-1">
+  <!-- ── The week ─────────────────────────────────────────────────────────── -->
+  <div class="bar-center">
+    <button class="tb-icon" onclick={() => shiftWeek(-1)} title="Previous week" aria-label="Previous week">
+      <Icon name="chevronLeft" size={16} />
+    </button>
+    <div class="week-wrap">
+      <button
+        class="week-btn"
+        class:tb-btn-on={menu === 'week'}
+        onclick={() => (menu = menu === 'week' ? null : 'week')}
+        title="Pick the WK week"
+      >
+        <Icon name="calendar" size={14} />
+        <span class="wk-num">{weekLabel}</span>
+      </button>
+      {#if menu === 'week'}
+        <div class="pop pop-center">
+          <div class="pop-title wk-eyebrow">WK week (Monday)</div>
+          <input
+            type="date"
+            class="input input-bordered input-sm w-full"
+            value={appState.wkStartDate}
+            onchange={(e) => {
+              setWkStartDate((e.currentTarget as HTMLInputElement).value);
+              menu = null;
+            }}
+          />
+          <p class="pop-empty">Any date snaps back to its Monday.</p>
+        </div>
+      {/if}
+    </div>
+    <button class="tb-icon" onclick={() => shiftWeek(1)} title="Next week" aria-label="Next week">
+      <Icon name="chevronRight" size={16} />
+    </button>
+  </div>
+
+  <!-- ── Actions ──────────────────────────────────────────────────────────── -->
+  <div class="bar-right">
+    <div class="density" role="group" aria-label="Row height">
+      <Icon name="rows" size={13} class="density-icon" />
+      {#each DENSITIES as d (d.key)}
+        <button
+          class="density-btn"
+          class:density-btn-on={getDensity() === d.key}
+          onclick={() => setDensity(d.key)}
+          title="{d.label} rows"
+          aria-pressed={getDensity() === d.key}
+        >{d.short}</button>
+      {/each}
+    </div>
+
+    <div class="tb-divider"></div>
+
     <button
-      class="btn btn-ghost btn-sm"
+      class="tb-icon"
       disabled={!canUndo()}
       onclick={undo}
-      title="Undo (Ctrl+Z)"
-    >↩ Undo</button>
+      title={canUndo() ? `Undo ${undoLabel() ?? ''} (Ctrl+Z)` : 'Nothing to undo'}
+      aria-label="Undo"
+    ><Icon name="undo" size={15} /></button>
     <button
-      class="btn btn-ghost btn-sm"
+      class="tb-icon"
       disabled={!canRedo()}
       onclick={redo}
-      title="Redo (Ctrl+Shift+Z)"
-    >↪ Redo</button>
+      title={canRedo() ? `Redo ${redoLabel() ?? ''} (Ctrl+Shift+Z)` : 'Nothing to redo'}
+      aria-label="Redo"
+    ><Icon name="redo" size={15} /></button>
 
     {#if conflictCount > 0}
-      <span class="badge badge-error gap-1">
-        ⚠ {conflictCount} conflict{conflictCount !== 1 ? "s" : ""}
+      <span class="issues" title="Conflicts and events that no calendar draws">
+        <Icon name="alert" size={13} />
+        {conflictCount} issue{conflictCount !== 1 ? "s" : ""}
       </span>
     {/if}
 
-    <button class="btn btn-ghost btn-sm" onclick={() => (reportOpen = true)} title="Coverage & teacher plans">
-      ▤ Reports
+    <div class="tb-divider"></div>
+
+    <button class="tb-btn" onclick={() => onreport('coverage')} title="Coverage and plans">
+      <Icon name="report" size={15} /> Reports
     </button>
-    <button class="btn btn-ghost btn-sm" onclick={() => window.print()} title="Print schedule">
-      ⎙ Print
-    </button>
-    <button class="btn btn-primary btn-sm" onclick={() => (configOpen = true)}>
-      ⚙ Config
+
+    <div class="legend-wrap">
+      <button
+        class="tb-btn"
+        class:tb-btn-on={menu === 'print'}
+        onclick={() => (menu = menu === 'print' ? null : 'print')}
+      >
+        <Icon name="printer" size={15} /> Print
+        <Icon name="chevronDown" size={12} />
+      </button>
+      {#if menu === 'print'}
+        <div class="pop pop-right">
+          <div class="pop-title wk-eyebrow">Print…</div>
+          {#each PRINT_TARGETS as target (target.tab)}
+            <button class="pop-item" onclick={() => print(target.tab)}>
+              <span class="pop-item-label">{target.label}</span>
+              <span class="pop-item-hint">{target.hint}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <button class="btn btn-primary btn-sm gap-1.5" onclick={() => (configOpen = true)}>
+      <Icon name="settings" size={15} /> Config
     </button>
   </div>
 </div>
+
+{#if menu}
+  <button class="menu-backdrop" aria-label="Close menu" onclick={() => (menu = null)}></button>
+{/if}
+
+<style>
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 46px;
+    padding: 0 0.65rem;
+    background: var(--wk-surface);
+  }
+
+  .bar-left,
+  .bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bar-right {
+    justify-content: flex-end;
+  }
+
+  .bar-center {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+  }
+
+  .wordmark {
+    font-size: var(--wk-fs-md);
+    font-weight: 750;
+    letter-spacing: -0.01em;
+    color: var(--wk-text);
+    margin-right: 0.5rem;
+    white-space: nowrap;
+  }
+
+  .wordmark-thin {
+    font-weight: 400;
+    color: var(--wk-text-faint);
+    margin-left: 0.22em;
+  }
+
+  /* ── Controls ───────────────────────────────────────────────────────────── */
+  .filter {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0 0.5rem;
+    height: 30px;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    color: var(--wk-text-mute);
+    background: var(--wk-surface);
+  }
+  .filter:focus-within {
+    border-color: var(--color-primary);
+  }
+
+  .filter-select {
+    border: none;
+    background: none;
+    outline: none;
+    font-size: var(--wk-fs-sm);
+    color: var(--wk-text);
+    max-width: 150px;
+    cursor: pointer;
+  }
+
+  .tb-btn,
+  .tb-icon,
+  .week-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    height: 30px;
+    padding: 0 0.55rem;
+    border: 1px solid transparent;
+    border-radius: var(--wk-r-sm);
+    background: transparent;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-sm);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .tb-icon {
+    width: 30px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .tb-btn:hover,
+  .tb-icon:hover:not(:disabled),
+  .week-btn:hover {
+    background: var(--wk-surface-alt);
+    color: var(--wk-text);
+  }
+
+  .tb-btn-on {
+    background: var(--wk-surface-alt);
+    color: var(--wk-text);
+    border-color: var(--wk-line);
+  }
+
+  .tb-icon:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  .tb-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--wk-line);
+    margin: 0 0.25rem;
+  }
+
+  .week-btn {
+    border-color: var(--wk-line);
+    font-weight: 600;
+    color: var(--wk-text);
+  }
+
+  /* ── Density ────────────────────────────────────────────────────────────── */
+  .density {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 5px 2px 6px;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    color: var(--wk-text-faint);
+  }
+
+  .density :global(.density-icon) {
+    margin-right: 3px;
+  }
+
+  .density-btn {
+    width: 20px;
+    height: 20px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--wk-text-faint);
+    font-size: var(--wk-fs-2xs);
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .density-btn:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
+  .density-btn-on {
+    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
+  }
+
+  /* ── Issue badge ────────────────────────────────────────────────────────── */
+  .issues {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    height: 24px;
+    padding: 0 0.5rem;
+    border-radius: var(--wk-r-sm);
+    background: color-mix(in oklab, var(--color-error) 13%, transparent);
+    color: var(--color-error);
+    font-size: var(--wk-fs-xs);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  /* ── Popovers ───────────────────────────────────────────────────────────── */
+  .legend-wrap,
+  .week-wrap {
+    position: relative;
+  }
+
+  .pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    z-index: 80;
+    min-width: 210px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    background: var(--wk-surface);
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-md);
+    box-shadow: var(--wk-shadow-2);
+  }
+
+  .pop-left { left: 0; }
+  .pop-right { right: 0; }
+  .pop-center { left: 50%; transform: translateX(-50%); }
+
+  .pop-title {
+    padding: 0.4rem 0.35rem 0.2rem;
+  }
+
+  .pop-title:not(:first-child) {
+    border-top: 1px solid var(--wk-line);
+    margin-top: 0.3rem;
+  }
+
+  .pop-empty {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+    padding: 0.1rem 0.35rem 0.3rem;
+  }
+
+  .pop-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+    padding: 0.35rem 0.45rem;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pop-item:hover { background: var(--wk-surface-alt); }
+
+  .pop-item-label {
+    font-size: var(--wk-fs-sm);
+    font-weight: 600;
+    color: var(--wk-text);
+  }
+
+  .pop-item-hint {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.15rem 0.35rem;
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    min-width: 0;
+  }
+
+  .legend-av {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 9px;
+    font-weight: 700;
+    color: white;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+    flex-shrink: 0;
+  }
+
+  .legend-tag {
+    width: 12px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .legend-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .legend-note {
+    margin-left: auto;
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
+
+  .menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    border: none;
+    background: transparent;
+    cursor: default;
+  }
+</style>

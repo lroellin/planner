@@ -1,29 +1,70 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getState } from '../state/store.svelte';
-  import { buildCoverage, buildTeacherPlans } from '../reports/reports';
+  import {
+    buildCoverage, buildTeacherPlans, buildGroupPlans, buildRoomPlans,
+    type ScheduleEntry,
+  } from '../reports/reports';
   import { DAY_NAMES, dayDateLabel, formatDuration } from '../utils/timeUtils';
-  import type { ID } from '../types';
+  import { teacherShort } from '../utils/format';
+  import Icon from './Icon.svelte';
+  import type { ID, ReportTab } from '../types';
 
-  interface Props { onclose: () => void; }
-  let { onclose }: Props = $props();
+  interface Props {
+    tab?: ReportTab;
+    onclose: () => void;
+  }
 
-  type Tab = 'coverage' | 'teachers';
-  let activeTab: Tab = $state('coverage');
+  let { tab = 'coverage', onclose }: Props = $props();
+
+  // The prop only seeds the initial tab; the panel owns it from then on.
+  // svelte-ignore state_referenced_locally
+  let activeTab: ReportTab = $state(tab);
   let teacherFilter: ID | 'all' = $state('all');
+
+  const TABS: { key: ReportTab; label: string }[] = [
+    { key: 'coverage', label: 'Coverage' },
+    { key: 'groups', label: 'Group plans' },
+    { key: 'teachers', label: 'Teacher plans' },
+    { key: 'rooms', label: 'Room plans' },
+  ];
+
+  const TITLES: Record<ReportTab, string> = {
+    coverage: 'Coverage — every group must attend every subject',
+    groups: 'Group plans',
+    teachers: 'Teacher plans',
+    rooms: 'Room occupancy',
+  };
 
   const appState = $derived(getState());
   const coverage = $derived(buildCoverage(appState));
   const totalMissing = $derived(coverage.reduce((n, s) => n + s.totalMissing, 0));
+  const totalUneven = $derived(
+    coverage.reduce((n, s) => n + s.rows.filter(r => r.uneven).length, 0),
+  );
   const plans = $derived(buildTeacherPlans(appState));
   const shownPlans = $derived(
     teacherFilter === 'all' ? plans : plans.filter(p => p.teacher.id === teacherFilter),
   );
+  const groupPlans = $derived(buildGroupPlans(appState));
+  const roomPlans = $derived(buildRoomPlans(appState));
 
   const groupLabel = (id: ID): string => appState.groups.find(g => g.id === id)?.label ?? '?';
 
   function when(dayIndex: number, startTime: string, endTime: string): string {
     return `${DAY_NAMES[dayIndex] ?? ''} ${dayDateLabel(appState.wkStartDate, dayIndex)} ${startTime}–${endTime}`;
+  }
+
+  /** Plans read as a week, so entries are shown under their day. */
+  function byDay(entries: ScheduleEntry[]): { dayIndex: number; entries: ScheduleEntry[] }[] {
+    const days = new Map<number, ScheduleEntry[]>();
+    for (const e of entries) {
+      if (!days.has(e.dayIndex)) days.set(e.dayIndex, []);
+      days.get(e.dayIndex)!.push(e);
+    }
+    return [...days.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([dayIndex, list]) => ({ dayIndex, entries: list }));
   }
 
   // Print rules key off the body class so the calendar behind can be hidden.
@@ -41,47 +82,64 @@
 <div class="report-overlay">
   <div class="report-sheet">
 
-    <div class="report-chrome flex items-center gap-3 px-6 py-3.5 border-b border-base-200 shrink-0">
-      <h3 class="text-lg font-bold">Reports</h3>
-
-      <div role="tablist" class="tabs tabs-boxed tabs-sm ml-2">
-        <button role="tab" class="tab" class:tab-active={activeTab === 'coverage'}
-          onclick={() => (activeTab = 'coverage')}>Coverage</button>
-        <button role="tab" class="tab" class:tab-active={activeTab === 'teachers'}
-          onclick={() => (activeTab = 'teachers')}>Teacher plans</button>
+    <div class="report-chrome shrink-0">
+      <div class="sheet-head">
+        <h3 class="sheet-title">Reports</h3>
+        <button class="sheet-x" onclick={onclose} aria-label="Close">
+          <Icon name="x" size={16} />
+        </button>
       </div>
 
-      <div class="flex-1"></div>
-
-      {#if activeTab === 'teachers'}
-        <select class="select select-bordered select-sm w-52" bind:value={teacherFilter}>
-          <option value="all">All teachers</option>
-          {#each appState.teachers as t (t.id)}
-            <option value={t.id}>{t.name}</option>
+      <div class="sheet-tabs">
+        <div role="tablist" class="tabs-row">
+          {#each TABS as t (t.key)}
+            <button
+              role="tab"
+              class="tab-btn"
+              class:tab-btn-on={activeTab === t.key}
+              aria-selected={activeTab === t.key}
+              onclick={() => (activeTab = t.key)}
+            >{t.label}</button>
           {/each}
-        </select>
-      {/if}
-
-      <button class="btn btn-sm btn-primary" onclick={() => window.print()}>⎙ Print</button>
-      <button class="btn btn-ghost btn-sm btn-circle opacity-50 hover:opacity-100" onclick={onclose}>✕</button>
+        </div>
+        {#if activeTab === 'teachers'}
+          <select class="select select-bordered select-sm w-48" bind:value={teacherFilter}>
+            <option value="all">All teachers</option>
+            {#each appState.teachers as t (t.id)}
+              <option value={t.id}>{t.name}</option>
+            {/each}
+          </select>
+        {/if}
+        <button class="print-btn" onclick={() => window.print()}>
+          <Icon name="printer" size={14} /> Print
+        </button>
+      </div>
     </div>
 
     <div class="report-body">
-      {#if activeTab === 'coverage'}
-        <div class="print-title">Coverage — every group must attend every subject</div>
+      <div class="print-title">{TITLES[activeTab]}</div>
 
-        {#if totalMissing === 0}
+      <!-- ══ COVERAGE ═══════════════════════════════════════════════════════ -->
+      {#if activeTab === 'coverage'}
+        {#if totalMissing === 0 && totalUneven === 0}
           <div class="banner banner-ok">
-            ✓ Every active group has each subject placed at least once.
+            <Icon name="check" size={15} />
+            Every active group has each subject placed the same number of times.
           </div>
         {:else}
           <div class="banner banner-warn">
-            {totalMissing} group/subject combination{totalMissing === 1 ? '' : 's'} still unplanned.
+            <Icon name="alert" size={15} />
+            {#if totalMissing > 0}
+              {totalMissing} group/subject combination{totalMissing === 1 ? '' : 's'} still unplanned.
+            {/if}
+            {#if totalUneven > 0}
+              {totalUneven} subject{totalUneven === 1 ? ' is' : 's are'} placed unevenly across the lanes.
+            {/if}
           </div>
         {/if}
 
         {#each coverage as section (section.phase.id)}
-          <div class="cov-phase-head">{section.phase.label}</div>
+          <div class="section-head wk-eyebrow">{section.phase.label}</div>
 
           {#if section.rows.length === 0 || section.groupIds.length === 0}
             <p class="empty-note">No subjects planned in this phase yet.</p>
@@ -100,7 +158,7 @@
                 {#each section.rows as row (row.subject.id)}
                   <tr>
                     <td class="cov-subject">
-                      <span class="cov-dot" style="background:{row.subject.color}"></span>
+                      <span class="dot" style="background:{row.subject.color}"></span>
                       {row.subject.name}
                     </td>
                     {#each section.groupIds as gid (gid)}
@@ -110,10 +168,12 @@
                       </td>
                     {/each}
                     <td class="cov-status">
-                      {#if row.missing === 0}
-                        <span class="pill pill-ok">complete</span>
-                      {:else}
+                      {#if row.missing > 0}
                         <span class="pill pill-warn">{row.missing} missing</span>
+                      {:else if row.uneven}
+                        <span class="pill pill-note">uneven</span>
+                      {:else}
+                        <span class="pill pill-ok">complete</span>
                       {/if}
                     </td>
                   </tr>
@@ -123,11 +183,57 @@
           {/if}
         {/each}
 
-        <p class="cov-legend">
-          Each cell counts placed instances of that subject for that group, within its phase. Breaks are excluded.
+        <p class="foot-note">
+          Each cell counts placed instances of that subject for that group, within its
+          phase. Breaks are excluded.
         </p>
 
-      {:else}
+      <!-- ══ GROUP PLANS ════════════════════════════════════════════════════ -->
+      {:else if activeTab === 'groups'}
+        {#each groupPlans as plan (plan.group.id)}
+          <section class="plan">
+            <header class="plan-head">
+              <span class="plan-badge">{plan.group.label}</span>
+              <div class="min-w-0">
+                <div class="plan-name">Group {plan.group.label}</div>
+                <div class="plan-summary">
+                  {plan.lessonCount} lesson{plan.lessonCount === 1 ? '' : 's'}
+                  · {formatDuration(plan.lessonMinutes)} of instruction
+                </div>
+              </div>
+            </header>
+
+            {#if plan.entries.length === 0}
+              <p class="plan-empty">Nothing scheduled.</p>
+            {:else}
+              {#each byDay(plan.entries) as day (day.dayIndex)}
+                <div class="day-block">
+                  <div class="day-head">
+                    {DAY_NAMES[day.dayIndex]} {dayDateLabel(appState.wkStartDate, day.dayIndex)}
+                  </div>
+                  <ul class="rows">
+                    {#each day.entries as e (e.eventId)}
+                      <li class="row" class:row-break={e.subject.isBreak}>
+                        <span class="cell-time wk-num">{e.startTime}–{e.endTime}</span>
+                        <span class="cell-subject">
+                          <span class="dot" style="background:{e.subject.color}"></span>
+                          {e.subject.name}
+                        </span>
+                        <span class="cell-people">{e.teachers.map(t => t.name).join(', ')}</span>
+                        <span class="cell-room">{e.roomName ?? '—'}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                </div>
+              {/each}
+            {/if}
+          </section>
+        {:else}
+          <p class="empty-note">No active groups.</p>
+        {/each}
+
+      <!-- ══ TEACHER PLANS ══════════════════════════════════════════════════ -->
+      {:else if activeTab === 'teachers'}
         {#if shownPlans.length === 0}
           <p class="empty-note">No teachers configured yet.</p>
         {/if}
@@ -136,16 +242,16 @@
           <section class="plan">
             <header class="plan-head">
               <span class="plan-avatar" style="background:{plan.teacher.color}">
-                {plan.teacher.shortName || plan.teacher.name.slice(0, 2).toUpperCase()}
+                {teacherShort(plan.teacher)}
               </span>
-              <div class="flex flex-col gap-0.5 min-w-0">
-                <span class="plan-name">{plan.teacher.name}</span>
-                <span class="plan-summary">
+              <div class="min-w-0">
+                <div class="plan-name">{plan.teacher.name}</div>
+                <div class="plan-summary">
                   {plan.teachingCount + plan.coveringCount} lesson{plan.teachingCount + plan.coveringCount === 1 ? '' : 's'}
                   · {formatDuration(plan.totalMinutes)}
                   {#if plan.coveringCount > 0}· {plan.coveringCount} as stand-in{/if}
                   {#if plan.handedOverCount > 0}· {plan.handedOverCount} handed over{/if}
-                </span>
+                </div>
               </div>
             </header>
 
@@ -153,18 +259,18 @@
               <p class="plan-empty">Nothing scheduled.</p>
             {:else}
               {#each plan.blocks as block (block.subject.id)}
-                <div class="plan-subject">
-                  <div class="plan-subject-head">
-                    <span class="cov-dot" style="background:{block.subject.color}"></span>
+                <div class="day-block">
+                  <div class="day-head">
+                    <span class="dot" style="background:{block.subject.color}"></span>
                     {block.subject.name}
                   </div>
-                  <ul class="plan-list">
+                  <ul class="rows">
                     {#each block.entries as e (e.eventId)}
-                      <li class="plan-entry" class:entry-dropped={e.status === 'handed-over'}>
-                        <span class="entry-when">{when(e.dayIndex, e.startTime, e.endTime)}</span>
-                        <span class="entry-groups">{e.groupLabels.join(', ') || '—'}</span>
-                        <span class="entry-room">{e.roomName ?? '—'}</span>
-                        <span class="entry-note">
+                      <li class="row" class:row-dropped={e.status === 'handed-over'}>
+                        <span class="cell-time wk-num">{when(e.dayIndex, e.startTime, e.endTime)}</span>
+                        <span class="cell-subject">{e.groupLabels.join(', ') || '—'}</span>
+                        <span class="cell-people">{e.roomName ?? '—'}</span>
+                        <span class="cell-note">
                           {#if e.status === 'handed-over'}
                             taken by {e.counterparts.map(t => t.name).join(', ') || 'someone else'}
                           {:else if e.status === 'covering'}
@@ -179,6 +285,51 @@
             {/if}
           </section>
         {/each}
+
+      <!-- ══ ROOM PLANS ═════════════════════════════════════════════════════ -->
+      {:else}
+        {#each roomPlans as plan (plan.room.id)}
+          <section class="plan">
+            <header class="plan-head">
+              <span class="plan-swatch" style="background:{plan.room.color}"></span>
+              <div class="min-w-0">
+                <div class="plan-name">{plan.room.name}</div>
+                <div class="plan-summary">
+                  {plan.entries.length} booking{plan.entries.length === 1 ? '' : 's'}
+                  · {formatDuration(plan.bookedMinutes)}
+                  {#if plan.room.excludeFromConflictCheck}· shared space, clashes ignored{/if}
+                </div>
+              </div>
+            </header>
+
+            {#if plan.entries.length === 0}
+              <p class="plan-empty">Never booked.</p>
+            {:else}
+              {#each byDay(plan.entries) as day (day.dayIndex)}
+                <div class="day-block">
+                  <div class="day-head">
+                    {DAY_NAMES[day.dayIndex]} {dayDateLabel(appState.wkStartDate, day.dayIndex)}
+                  </div>
+                  <ul class="rows">
+                    {#each day.entries as e (e.eventId)}
+                      <li class="row">
+                        <span class="cell-time wk-num">{e.startTime}–{e.endTime}</span>
+                        <span class="cell-subject">
+                          <span class="dot" style="background:{e.subject.color}"></span>
+                          {e.subject.name}
+                        </span>
+                        <span class="cell-people">{e.groupLabels.join(', ') || '—'}</span>
+                        <span class="cell-room">{e.teachers.map(t => t.name).join(', ')}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                </div>
+              {/each}
+            {/if}
+          </section>
+        {:else}
+          <p class="empty-note">No rooms configured yet.</p>
+        {/each}
       {/if}
     </div>
   </div>
@@ -192,92 +343,171 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, 0.45);
+    background: color-mix(in oklab, black 45%, transparent);
   }
 
   .report-sheet {
     display: flex;
     flex-direction: column;
     width: min(1080px, 94vw);
-    min-height: 460px;
-    max-height: 90vh;
+    /* Fixed, not content-sized: switching tabs used to resize the sheet and
+       move the tab strip out from under the cursor. */
+    height: 86vh;
     background: var(--wk-surface);
     color: var(--wk-text);
-    border-radius: 1rem;
+    border-radius: var(--wk-r-md);
     overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--wk-shadow-2);
   }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid var(--wk-line);
+  }
+
+  .sheet-title {
+    font-size: var(--wk-fs-lg);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .sheet-x {
+    display: flex;
+    padding: 0.3rem;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .sheet-x:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
+
+  .sheet-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid var(--wk-line);
+  }
+
+  .tabs-row {
+    display: flex;
+    gap: 0.15rem;
+    flex: 1;
+  }
+
+  .tab-btn {
+    padding: 0.6rem 0.7rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-sm);
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .tab-btn:hover { color: var(--wk-text); }
+  .tab-btn-on {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+    font-weight: 650;
+  }
+
+  .print-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-sm);
+    cursor: pointer;
+  }
+  .print-btn:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
 
   .report-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 1.5rem 2rem 2rem;
+    padding: 1.25rem 1.75rem 2rem;
     display: flex;
     flex-direction: column;
-    gap: 1.25rem;
+    gap: 0.9rem;
   }
 
   .print-title {
     display: none;
-    font-size: 1.05rem;
+    font-size: var(--wk-fs-lg);
     font-weight: 700;
   }
 
-  .empty-note {
+  .empty-note,
+  .foot-note,
+  .plan-empty {
     color: var(--wk-text-faint);
-    font-size: 0.85rem;
+    font-size: var(--wk-fs-xs);
   }
 
   .banner {
-    padding: 0.7rem 0.9rem;
-    border-radius: 0.6rem;
-    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--wk-r-sm);
+    font-size: var(--wk-fs-sm);
     font-weight: 600;
   }
   .banner-ok {
     color: var(--color-success);
-    background: color-mix(in oklab, var(--color-success) 12%, transparent);
-    border: 1px solid color-mix(in oklab, var(--color-success) 40%, transparent);
+    background: color-mix(in oklab, var(--color-success) 11%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-success) 35%, transparent);
   }
   .banner-warn {
-    color: var(--color-warning);
-    background: color-mix(in oklab, var(--color-warning) 12%, transparent);
-    border: 1px solid color-mix(in oklab, var(--color-warning) 40%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 78%, var(--wk-text));
+    background: color-mix(in oklab, var(--color-warning) 13%, transparent);
+    border: 1px solid color-mix(in oklab, var(--color-warning) 38%, transparent);
   }
 
-  /* ── Coverage table ────────────────────────────────────────────────────────── */
+  .section-head {
+    margin: 0.9rem 0 0.1rem;
+  }
+
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    display: inline-block;
+  }
+
+  /* ── Coverage table ─────────────────────────────────────────────────────── */
   .cov-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    font-size: var(--wk-fs-sm);
   }
 
   .cov-table th {
     text-align: center;
-    font-size: 0.68rem;
+    font-size: var(--wk-fs-2xs);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--wk-text-faint);
-    padding: 0.5rem 0.4rem;
+    padding: 0.45rem 0.4rem;
     border-bottom: 1px solid var(--wk-line);
   }
 
   .cov-subject-head { text-align: left; padding-left: 0.2rem; }
   .cov-status-head { text-align: right; }
 
-  .cov-phase-head {
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--wk-text-faint);
-    margin: 1.4rem 0 0.3rem;
-  }
-
   .cov-table td {
-    padding: 0.5rem 0.4rem;
+    padding: 0.45rem 0.4rem;
     border-bottom: 1px solid var(--wk-line-faint);
   }
 
@@ -288,14 +518,6 @@
     font-weight: 500;
   }
 
-  .cov-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 3px;
-    flex-shrink: 0;
-    display: inline-block;
-  }
-
   .cov-cell {
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -303,8 +525,8 @@
   }
 
   .cov-missing {
-    color: var(--color-warning);
-    background: color-mix(in oklab, var(--color-warning) 10%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+    background: color-mix(in oklab, var(--color-warning) 12%, transparent);
   }
 
   .cov-status { text-align: right; }
@@ -313,7 +535,7 @@
     display: inline-block;
     padding: 0.1rem 0.5rem;
     border-radius: 999px;
-    font-size: 0.68rem;
+    font-size: var(--wk-fs-2xs);
     font-weight: 700;
   }
   .pill-ok {
@@ -321,101 +543,128 @@
     background: color-mix(in oklab, var(--color-success) 15%, transparent);
   }
   .pill-warn {
-    color: var(--color-warning);
-    background: color-mix(in oklab, var(--color-warning) 15%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+    background: color-mix(in oklab, var(--color-warning) 16%, transparent);
+  }
+  .pill-note {
+    color: var(--wk-text-mute);
+    background: color-mix(in oklab, var(--color-base-content) 9%, transparent);
   }
 
-  .cov-legend {
-    font-size: 0.72rem;
-    color: var(--wk-text-faint);
-  }
-
-  /* ── Teacher plans ─────────────────────────────────────────────────────────── */
+  /* ── Plans (groups, teachers, rooms share the shape) ────────────────────── */
   .plan {
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
-    padding-bottom: 1.25rem;
+    gap: 0.7rem;
+    padding-bottom: 1.1rem;
     border-bottom: 1px solid var(--wk-line);
   }
 
   .plan-head {
     display: flex;
     align-items: center;
-    gap: 0.8rem;
+    gap: 0.75rem;
   }
 
-  .plan-avatar {
-    width: 40px;
-    height: 40px;
+  .plan-avatar,
+  .plan-badge {
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.8rem;
+    font-size: var(--wk-fs-xs);
     font-weight: 700;
     color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
     flex-shrink: 0;
   }
 
-  .plan-name { font-size: 1rem; font-weight: 700; }
-  .plan-summary { font-size: 0.75rem; color: var(--wk-text-faint); }
-  .plan-empty { font-size: 0.8rem; color: var(--wk-text-faint); padding-left: 3.3rem; }
-
-  .plan-subject { padding-left: 3.3rem; }
-
-  .plan-subject-head {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    padding-bottom: 0.3rem;
+  .plan-badge {
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    text-shadow: none;
   }
 
-  .plan-list {
+  .plan-swatch {
+    width: 38px;
+    height: 38px;
+    border-radius: var(--wk-r-sm);
+    flex-shrink: 0;
+  }
+
+  .plan-name { font-size: var(--wk-fs-lg); font-weight: 700; }
+  .plan-summary { font-size: var(--wk-fs-xs); color: var(--wk-text-faint); }
+  .plan-empty { padding-left: 3.2rem; }
+
+  .day-block { padding-left: 3.2rem; }
+
+  .day-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--wk-fs-sm);
+    font-weight: 650;
+    padding-bottom: 0.25rem;
+  }
+
+  .rows {
     list-style: none;
     margin: 0;
-    padding: 0 0 0 1.1rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
   }
 
-  .plan-entry {
+  .row {
     display: grid;
-    grid-template-columns: 13rem 5rem 1fr 14rem;
-    gap: 0.75rem;
+    /* minmax(0, …) throughout: with fixed rem tracks the columns overflowed each
+       other on a narrower page, and "Planungsarbeit" printed on top of the
+       teacher's name. */
+    grid-template-columns: minmax(7rem, 11rem) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 0.5rem 0.75rem;
     align-items: baseline;
-    padding: 0.28rem 0.4rem;
-    font-size: 0.8rem;
+    padding: 0.24rem 0.4rem;
+    font-size: var(--wk-fs-sm);
     border-radius: 4px;
   }
 
-  .plan-entry:nth-child(odd) {
+  .row > * {
+    min-width: 0;
+    overflow-wrap: break-word;
+  }
+
+  .row:nth-child(odd) {
     background: color-mix(in oklab, var(--color-base-content) 3%, transparent);
   }
 
-  .entry-when { font-variant-numeric: tabular-nums; font-weight: 500; }
-  .entry-groups { color: var(--wk-text-mute); }
-  .entry-room { color: var(--wk-text-mute); }
-  .entry-note { font-size: 0.72rem; color: var(--wk-text-faint); font-style: italic; }
+  .row-break {
+    color: var(--wk-text-faint);
+    font-style: italic;
+  }
+
+  .cell-time { font-weight: 500; }
+  .cell-subject { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+  .cell-people,
+  .cell-room { color: var(--wk-text-mute); }
+  .cell-note { font-size: var(--wk-fs-2xs); color: var(--wk-text-faint); font-style: italic; }
 
   /* A handed-over instance stays listed so the teacher can see it is no longer
      theirs, rather than silently vanishing from their plan. */
-  .entry-dropped .entry-when,
-  .entry-dropped .entry-groups,
-  .entry-dropped .entry-room {
+  .row-dropped .cell-time,
+  .row-dropped .cell-subject,
+  .row-dropped .cell-people {
     text-decoration: line-through;
     opacity: 0.45;
   }
-  .entry-dropped .entry-note {
-    color: var(--color-warning);
+  .row-dropped .cell-note {
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
     font-style: normal;
     font-weight: 600;
   }
 
-  /* ── Print: one teacher per page, no app chrome ────────────────────────────── */
+  /* ── Print: one plan per page, no app chrome ───────────────────────────── */
   @media print {
     :global(body.wk-report-open .app-layout) { display: none !important; }
 
@@ -428,8 +677,7 @@
     .report-sheet {
       width: 100%;
       max-width: none;
-      min-height: 0;
-      max-height: none;
+      height: auto;
       border-radius: 0;
       box-shadow: none;
       overflow: visible;
@@ -440,7 +688,7 @@
     .report-body {
       overflow: visible;
       padding: 0;
-      gap: 1rem;
+      gap: 0.9rem;
     }
 
     .print-title { display: block; }
@@ -453,6 +701,15 @@
 
     .plan:last-child { break-after: auto; }
 
-    .plan-entry:nth-child(odd) { background: none; }
+    .row:nth-child(odd) { background: none; }
+
+    .row {
+      font-size: 11px;
+      gap: 0.4rem 0.5rem;
+      grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1.5fr) minmax(0, 1.2fr) minmax(0, 1fr);
+    }
+
+    .day-block,
+    .plan-empty { padding-left: 2.4rem; }
   }
 </style>

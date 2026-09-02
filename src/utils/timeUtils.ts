@@ -1,6 +1,8 @@
+import { ALL_GROUPS } from '../types';
 import type { AppState, CalendarEvent, EventFilter, Group, ID, Phase, Subject } from '../types';
 import type { EventInput } from '@fullcalendar/core';
 import type { ResourceInput } from '@fullcalendar/resource';
+import { teacherShort } from './format';
 
 // Weekday labels, 0=Mon … 4=Fri (matches CalendarEvent.dayIndex)
 export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
@@ -19,22 +21,40 @@ export function formatTime(d: Date): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Resolve an event's effective teachers/room.
-// 'inherit' (or missing event) → fall back to subject defaults.
+// Resolve the 'inherit' sentinel against the subject's defaults. The selector
+// form is used by the event modal, which resolves values the user is still
+// editing and has no event object to hand.
+export function resolveTeacherIds(
+  teacherIds: ID[] | 'inherit',
+  subject: Subject | null | undefined,
+): ID[] {
+  return teacherIds === 'inherit' ? subject?.defaultTeacherIds ?? [] : teacherIds;
+}
+
+export function resolveRoomId(
+  roomId: ID | null | 'inherit',
+  subject: Subject | null | undefined,
+): ID | null {
+  // may be null (explicitly no room) or an ID string
+  return roomId === 'inherit' ? subject?.defaultRoomId ?? null : roomId;
+}
+
 export function effectiveTeacherIds(
   ev: CalendarEvent | null | undefined,
   subject: Subject | null | undefined,
 ): ID[] {
-  if (!ev || ev.teacherIds === 'inherit') return subject?.defaultTeacherIds ?? [];
-  return ev.teacherIds;
+  if (!ev) return subject?.defaultTeacherIds ?? [];
+  return resolveTeacherIds(ev.teacherIds, subject);
 }
 
 export function effectiveRoomId(
   ev: CalendarEvent | null | undefined,
   subject: Subject | null | undefined,
 ): ID | null {
-  if (!ev || ev.roomId === 'inherit') return subject?.defaultRoomId ?? null;
-  return ev.roomId; // may be null (explicitly no room) or an ID string
+  // Not `ev?.roomId ?? 'inherit'`: null is a real value here ("explicitly no
+  // room") and ?? would fold it back into the subject default.
+  if (!ev) return subject?.defaultRoomId ?? null;
+  return resolveRoomId(ev.roomId, subject);
 }
 
 export function toISOLocal(wkStartDate: string, dayIndex: number, time: string): string {
@@ -84,15 +104,32 @@ export function groupsToResources(groups: Group[], allowedIds?: ID[]): ResourceI
     .map(g => ({ id: g.id, title: g.label, order: g.order }));
 }
 
-export function groupIdsOf(ev: CalendarEvent): ID[] {
-  return Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId];
-}
-
 // The enabled lanes a phase renders, in column order.
 export function phaseGroups(state: AppState, phase: Phase): Group[] {
   return state.groups
     .filter(g => g.enabled && phase.groupIds.includes(g.id))
     .sort((a, b) => a.order - b.order);
+}
+
+// The phase that owns a weekday. Phases are non-overlapping by contract; when
+// they aren't, the first match wins and the config panel warns about it.
+export function phaseForDay(state: AppState, dayIndex: number): Phase | null {
+  return state.phases.find(p => dayIndex >= p.startDay && dayIndex <= p.endDay) ?? null;
+}
+
+// The lanes an event actually occupies. ALL_GROUPS resolves to the enabled lanes
+// of the phase covering its day, so a lunch break follows the phase rather than
+// the lane list that happened to exist when it was dropped.
+export function eventGroupIds(state: AppState, ev: CalendarEvent): ID[] {
+  if (ev.groupId !== ALL_GROUPS) {
+    return isEnabled(state, ev.groupId) ? [ev.groupId] : [];
+  }
+  const phase = phaseForDay(state, ev.dayIndex);
+  return phase ? phaseGroups(state, phase).map(g => g.id) : [];
+}
+
+export function isMultiGroupEvent(ev: CalendarEvent): boolean {
+  return ev.groupId === ALL_GROUPS;
 }
 
 // Clamped: FullCalendar throws on a zero/negative `duration`, which blanks the
@@ -110,18 +147,18 @@ function isEnabled(state: AppState, groupId: ID): boolean {
 // count — otherwise an event could pass this check and still render nowhere.
 export function eventInPhase(state: AppState, ev: CalendarEvent, phase: Phase): boolean {
   if (ev.dayIndex < phase.startDay || ev.dayIndex > phase.endDay) return false;
-  return groupIdsOf(ev).some(gid => phase.groupIds.includes(gid) && isEnabled(state, gid));
+  if (ev.groupId === ALL_GROUPS) return phaseGroups(state, phase).length > 0;
+  return phase.groupIds.includes(ev.groupId) && isEnabled(state, ev.groupId);
 }
 
 // Events no phase will render, despite having a lane that is switched on — they
 // would otherwise vanish silently from the grid. Events whose lanes are all
 // disabled are excluded: hiding those is the point of disabling a group.
 export function orphanEvents(state: AppState): CalendarEvent[] {
-  return state.events.filter(
-    ev =>
-      groupIdsOf(ev).some(gid => isEnabled(state, gid)) &&
-      !state.phases.some(p => eventInPhase(state, ev, p)),
-  );
+  return state.events.filter(ev => {
+    if (ev.groupId === ALL_GROUPS) return phaseForDay(state, ev.dayIndex) === null;
+    return isEnabled(state, ev.groupId) && !state.phases.some(p => eventInPhase(state, ev, p));
+  });
 }
 
 // Resolved teacher data embedded in FC extendedProps — avoids store re-lookup in eventContent
@@ -167,35 +204,50 @@ export function eventMatchesFilter(
   const subject = state.subjects.find(s => s.id === ev.subjectId);
   if (filter.kind === 'teacher') return effectiveTeacherIds(ev, subject).includes(filter.id);
   if (filter.kind === 'room') return effectiveRoomId(ev, subject) === filter.id;
-  return (Array.isArray(ev.groupId) ? ev.groupId : [ev.groupId]).includes(filter.id);
+  return eventGroupIds(state, ev).includes(filter.id);
 }
 
 export function buildFCEvents(
   state: AppState,
-  filter: EventFilter | null = null,
   phase: Phase | null = null,
+  filter: EventFilter | null = null,
 ): EventInput[] {
   return state.events
-    .filter(ev => groupIdsOf(ev).some(gid => isEnabled(state, gid)))
+    .filter(ev => eventGroupIds(state, ev).length > 0)
     .filter(ev => phase === null || eventInPhase(state, ev, phase))
     .filter(ev => eventMatchesFilter(ev, state, filter))
     .map(ev => buildFCEvent(ev, state, phase));
 }
 
+/**
+ * How much room the card has to say something. The renderer shows a different
+ * amount at each band: a 15-minute Pause used to get the same three-row layout
+ * as a three-hour block and broke its own title across four lines.
+ */
+export type DurationBand = 'xs' | 'sm' | 'md' | 'lg';
+
+export function durationBand(minutes: number): DurationBand {
+  if (minutes <= 20) return 'xs';
+  if (minutes <= 45) return 'sm';
+  if (minutes <= 75) return 'md';
+  return 'lg';
+}
+
 export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | null = null): EventInput {
   const subject = state.subjects.find(s => s.id === ev.subjectId);
-  const hasConflict = (ev.conflicts?.length ?? 0) > 0;
+  const kinds = new Set((ev.conflicts ?? []).map(c => c.kind));
+  const hasConflict = kinds.size > 0;
+  // A room double-booking is advisory; a teacher or a group in two places at
+  // once is not. They are drawn differently, so the card has to say which.
+  const hardConflict = kinds.has('teacher') || kinds.has('group');
   const color = subject?.color ?? '#888888';
+  const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
 
   const teacherIds = effectiveTeacherIds(ev, subject);
   const teachers: FCEventTeacher[] = teacherIds
     .map(tid => state.teachers.find(t => t.id === tid))
-    .filter(Boolean)
-    .map(t => ({
-      shortName: t!.shortName || t!.name.slice(0, 2).toUpperCase(),
-      name: t!.name,
-      color: t!.color,
-    }));
+    .filter((t): t is NonNullable<typeof t> => Boolean(t))
+    .map(t => ({ shortName: teacherShort(t), name: t.name, color: t.color }));
 
   const roomId = effectiveRoomId(ev, subject);
   const roomEntity = roomId ? state.rooms.find(r => r.id === roomId) : null;
@@ -203,32 +255,42 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
     ? { name: roomEntity.name, color: roomEntity.color }
     : null;
 
-  // For multi-group events, filter to only enabled groups and use resourceIds (plural).
-  // Lanes outside the rendering phase are dropped so FC never sees an unknown resource.
-  const resourceProp: { resourceId: ID } | { resourceIds: ID[] } = Array.isArray(ev.groupId)
-    ? {
-        resourceIds: ev.groupId.filter(gid =>
-          state.groups.find(g => g.id === gid)?.enabled &&
-          (phase === null || phase.groupIds.includes(gid)),
-        ),
-      }
+  // Multi-group events occupy every lane the rendering phase draws; single-lane
+  // events name their one resource.
+  const resourceProp: { resourceId: ID } | { resourceIds: ID[] } = ev.groupId === ALL_GROUPS
+    ? { resourceIds: phase ? phaseGroups(state, phase).map(g => g.id) : eventGroupIds(state, ev) }
     : { resourceId: ev.groupId };
+
+  // No inline colours: the card is a neutral surface tinted from the subject
+  // hue in CSS (which can mix against the current theme's background and give
+  // dark mode a different recipe). Saturation is reserved for state — conflict,
+  // selection, spotlight — so those can still be seen on a full week's grid.
+  const classNames = [
+    'wk-ev',
+    `wk-dur-${durationBand(minutes)}`,
+    subject?.isBreak ? 'wk-ev-break' : 'wk-ev-lesson',
+    ...(ev.groupId === ALL_GROUPS ? ['wk-ev-multi'] : []),
+    ...(hardConflict ? ['wk-ev-hard'] : hasConflict ? ['wk-ev-soft'] : []),
+  ];
 
   return {
     id: ev.id,
     ...resourceProp,
     start: toISOLocal(state.wkStartDate, ev.dayIndex, ev.startTime),
     end: toISOLocal(state.wkStartDate, ev.dayIndex, ev.endTime),
-    backgroundColor: color,
-    borderColor: hasConflict ? '#e53e3e' : color,
-    textColor: '#ffffff',
     title: subject?.name ?? '?',
-    classNames: hasConflict ? ['fc-event-conflict'] : [],
+    classNames,
     extendedProps: {
       eventId: ev.id,
+      subjectId: ev.subjectId,
+      color,
       teachers,
       room,
       hasConflict,
+      hardConflict,
+      conflictKinds: [...kinds],
+      minutes,
+      isBreak: subject?.isBreak ?? false,
       overrides: eventOverrides(ev, subject),
     },
   };

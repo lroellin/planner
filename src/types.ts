@@ -22,7 +22,11 @@ export interface Subject {
   defaultRoomId: ID | null;
   defaultDurationMinutes: number;
   isBreak: boolean;
-  isMultiGroup?: boolean; // if true, placing creates an event for every enabled group simultaneously
+  isMultiGroup: boolean; // if true, placing schedules it for every lane of the phase at once
+  // Which phase this subject is rotated through. null = infer from where it is
+  // placed. Setting it makes coverage exact for subjects that belong to one
+  // phase only (a Kader lesson must not be judged against the group lanes).
+  phaseId: ID | null;
 }
 
 export interface Group {
@@ -43,10 +47,17 @@ export interface Phase {
   groupIds: ID[];
 }
 
+// Sentinel lane: "every enabled lane of whichever phase covers this event's day".
+// Resolved at read time (see eventGroupIds) rather than expanded into a fixed
+// list at placement time, so enabling a group or adding a lane to a phase
+// immediately includes it in every lunch break instead of silently skipping it.
+export const ALL_GROUPS = 'all';
+export type GroupSelector = ID | typeof ALL_GROUPS;
+
 export interface CalendarEvent {
   id: ID;
   subjectId: ID;
-  groupId: ID | ID[];  // array = multi-group event (renders in all listed group columns)
+  groupId: GroupSelector;
   dayIndex: number;   // 0=Mon … 4=Fri
   startTime: string;  // "HH:MM"
   endTime: string;    // "HH:MM"
@@ -56,6 +67,10 @@ export interface CalendarEvent {
 }
 
 export type ConflictKind = 'teacher' | 'room' | 'group';
+
+// Which plan the report overlay is showing. Printing a WK means printing one of
+// these four documents, not one screenshot of the grid.
+export type ReportTab = 'coverage' | 'groups' | 'teachers' | 'rooms';
 
 // View-only filter: show just the events a given teacher/room/group is involved in.
 export interface EventFilter {

@@ -8,6 +8,13 @@ export function generateInitials(name: string): string {
     .slice(0, 3);
 }
 
+// Relative luminance at which white and black text score the same WCAG contrast
+// ratio against the same background: (L+0.05)/0.05 === 1.05/(L+0.05). Anything
+// lighter than this reads better with black text. The previous 0.45 gave white
+// text to every mid-tone — #a0aec0 (L≈0.42) came out at 2.3:1 where black would
+// have scored 9.2:1.
+const CONTRAST_CROSSOVER = 0.1791;
+
 // WCAG relative luminance. The naive gamma-free average rates saturated mid blues
 // as "light" and pairs them with black text, which is unreadable.
 export function getContrastColor(hex: string): '#000000' | '#ffffff' {
@@ -19,7 +26,7 @@ export function getContrastColor(hex: string): '#000000' | '#ffffff' {
   const g = channel(parseInt(hex.slice(3, 5), 16));
   const b = channel(parseInt(hex.slice(5, 7), 16));
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return luminance > 0.45 ? '#000000' : '#ffffff';
+  return luminance > CONTRAST_CROSSOVER ? '#000000' : '#ffffff';
 }
 
 function hexToHue(hex: string): number {

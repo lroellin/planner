@@ -1,33 +1,65 @@
 <script lang="ts">
   import {
     getState,
-    addTeacher, updateTeacher, removeTeacher,
-    addRoom, updateRoom, removeRoom,
-    addSubject, updateSubject, removeSubject,
-    addGroup, updateGroup, removeGroup,
-    addPhase, updatePhase, removePhase,
+    addGroup, updateGroup, removeGroup, moveGroupUp, moveGroupDown, moveGroupToIndex,
+    eventCountForGroup,
+    addPhase, updatePhase, removePhase, eventCountForPhase,
     resetToDefaults,
   } from '../state/store.svelte';
-  import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
+  import { generateDistinctColor } from '../utils/colorUtils';
+  import { teacherShort } from '../utils/format';
   import { DAY_NAMES } from '../utils/timeUtils';
+  import MasterDetail from './config/MasterDetail.svelte';
+  import TeacherDetail from './config/TeacherDetail.svelte';
+  import RoomDetail from './config/RoomDetail.svelte';
+  import SubjectDetail from './config/SubjectDetail.svelte';
+  import Icon from './Icon.svelte';
   import type { ID } from '../types';
 
   interface Props { onclose: () => void; }
   let { onclose }: Props = $props();
 
   type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects';
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'groups', label: 'Groups' },
+    { key: 'phases', label: 'Phases' },
+    { key: 'teachers', label: 'Teachers' },
+    { key: 'rooms', label: 'Rooms' },
+    { key: 'subjects', label: 'Subjects' },
+  ];
   let activeTab: Tab = $state('groups');
-  const appState = $derived(getState());
 
-  const TAB_INTRO: Record<Tab, string> = {
-    groups: 'Groups are the columns of the timetable — every group has to attend every subject. Inactive groups keep their data but are hidden from the calendar and skipped by conflict checks.',
-    phases: 'Phases split the week into stretches with their own lanes — a Kader planning course needs only one, the group rotation needs all of them. Each phase is drawn as its own calendar, so narrow phases stop wasting space.',
-    teachers: 'Teachers are checked for hard conflicts: the same teacher cannot be booked for two lessons at the same time. The short name and colour are what you see on the calendar cards.',
-    rooms: 'Rooms are checked for soft conflicts. Turn off conflict checking for shared spaces such as "outside", where two groups can be at the same place without a problem.',
-    subjects: 'Subjects are the blocks you drag onto the calendar. Their defaults — teachers, room, duration — are copied to each placed event, where you can still override them individually.',
+  const appState = $derived(getState());
+  const sortedGroups = $derived([...appState.groups].sort((a, b) => a.order - b.order));
+  const orderedPhases = $derived([...appState.phases].sort((a, b) => a.startDay - b.startDay));
+
+  // One line, not a paragraph: the full explanation lives behind the ⓘ so it
+  // isn't re-read on every visit to the tab.
+  const TAB_INTRO: Record<Tab, { short: string; long: string }> = {
+    groups: {
+      short: 'Groups are the columns of the timetable.',
+      long: 'Every group has to attend every subject. Inactive groups keep their data but are hidden from the calendar and skipped by conflict checks.',
+    },
+    phases: {
+      short: 'Phases split the week into stretches with their own lanes.',
+      long: 'A Kader planning course needs only one lane, the group rotation needs all of them. Each phase is drawn as its own calendar, so narrow phases stop wasting space.',
+    },
+    teachers: {
+      short: 'The same teacher cannot be booked twice at the same time.',
+      long: 'Teacher clashes are hard conflicts. The short name and colour are what you see on the calendar cards.',
+    },
+    rooms: {
+      short: 'Rooms are checked for soft conflicts.',
+      long: 'Turn off conflict checking for shared spaces such as "outside", where two groups can be at the same place without a problem.',
+    },
+    subjects: {
+      short: 'Subjects are the blocks you drag onto the calendar.',
+      long: 'Their defaults — teachers, room, duration — are copied to each placed event, where you can still override them individually.',
+    },
   };
 
-  const DURATION_PRESETS = [15, 30, 45, 60, 90, 120];
+  let introOpen = $state(false);
+  let dangerOpen = $state(false);
 
   // ─── Master-detail selection ──────────────────────────────────────────────
   let selectedTeacherId: ID | null = $state(getState().teachers[0]?.id ?? null);
@@ -40,6 +72,16 @@
   const selectedTeacher = $derived(appState.teachers.find(t => t.id === selectedTeacherId) ?? null);
   const selectedRoom    = $derived(appState.rooms.find(r => r.id === selectedRoomId) ?? null);
   const selectedSubject = $derived(appState.subjects.find(s => s.id === selectedSubjectId) ?? null);
+
+  // A fresh entity opens on a colour that is far from the ones already in use.
+  const nextTeacherColor = $derived(generateDistinctColor(appState.teachers.map(t => t.color)));
+  const nextRoomColor    = $derived(generateDistinctColor(appState.rooms.map(r => r.color)));
+  const nextSubjectColor = $derived(generateDistinctColor(appState.subjects.map(s => s.color)));
+
+  /** After a delete, land on the entity that slid into the removed one's place. */
+  function neighbourId(list: { id: ID }[], index: number): ID | null {
+    return list[index]?.id ?? list.at(-1)?.id ?? null;
+  }
 
   // ─── Groups ───────────────────────────────────────────────────────────────
   function nextGroupLabel(): string {
@@ -55,6 +97,28 @@
     if (!label) return;
     addGroup(label);
     newGroupLabel = nextGroupLabel();
+  }
+
+  // Deleting a lane takes its events with it, so say how many before doing it.
+  function confirmRemoveGroup(id: ID, label: string): void {
+    const count = eventCountForGroup(id);
+    const detail = count === 0
+      ? 'It has no events of its own.'
+      : `${count} event${count === 1 ? '' : 's'} placed on this lane will be deleted.`;
+    if (!window.confirm(`Delete group "${label}"?\n${detail}`)) return;
+    removeGroup(id);
+  }
+
+  // Drag to reorder: the rows *are* the columns of the timetable, so dragging
+  // them is the gesture that matches. The ▲▼ buttons stay for the keyboard.
+  let dragId: ID | null = $state(null);
+
+  function onDrop(targetId: ID): void {
+    const dragged = dragId;
+    const to = sortedGroups.findIndex(g => g.id === targetId);
+    dragId = null;
+    if (dragged === null || to < 0) return;
+    moveGroupToIndex(dragged, to);
   }
 
   // ─── Phases ───────────────────────────────────────────────────────────────
@@ -80,6 +144,20 @@
     updatePhase(id, endDay < startDay ? { endDay, startDay: endDay } : { endDay });
   }
 
+  // Removing a phase keeps its events but leaves them on no calendar at all.
+  function confirmRemovePhase(id: ID, label: string): void {
+    const count = eventCountForPhase(id);
+    const detail = count === 0
+      ? 'It covers no events.'
+      : `${count} event${count === 1 ? '' : 's'} on those days will no longer be drawn anywhere — ` +
+        `they show up under "Not on any calendar" until you move them.`;
+    if (!window.confirm(`Delete phase "${label}"?\n${detail}`)) return;
+    removePhase(id);
+  }
+
+  /** Colour a phase gets in the week strip — position, not identity. */
+  const PHASE_HUES = ['var(--color-primary)', 'var(--color-accent)', 'var(--color-info)', 'var(--color-success)'];
+
   // Phases are drawn independently, so a bad day range silently hides events
   // rather than erroring — surface the common mistakes instead.
   const phaseWarning = $derived.by(() => {
@@ -104,146 +182,17 @@
     return problems.length > 0 ? `Check your phases: ${problems.join('; ')}.` : null;
   });
 
-  // ─── Teachers ─────────────────────────────────────────────────────────────
-  let newTeacherName = $state('');
-  let newTeacherShortName = $state('');
-  let newTeacherColor = $state('#4299e1');
-  let teacherShortManual = $state(false);
-
-  function startAddTeacher(): void {
-    addingTeacher = true;
-    selectedTeacherId = null;
-    newTeacherName = '';
-    newTeacherShortName = '';
-    teacherShortManual = false;
-    newTeacherColor = generateDistinctColor(appState.teachers.map(t => t.color));
-  }
-
-  function onNewTeacherNameInput(value: string): void {
-    newTeacherName = value;
-    if (!teacherShortManual) newTeacherShortName = generateInitials(value);
-  }
-
-  function confirmAddTeacher(e?: Event): void {
-    e?.preventDefault();
-    if (!newTeacherName.trim()) return;
-    addTeacher(newTeacherName.trim(), newTeacherShortName || generateInitials(newTeacherName), newTeacherColor);
-    addingTeacher = false;
-    selectedTeacherId = getState().teachers.at(-1)?.id ?? null;
-    newTeacherName = ''; newTeacherShortName = ''; teacherShortManual = false;
-  }
-
-  function cancelAddTeacher(): void {
-    addingTeacher = false;
-    selectedTeacherId = appState.teachers[0]?.id ?? null;
-  }
-
-  function deleteTeacher(): void {
-    if (!selectedTeacherId || !selectedTeacher) return;
-    if (!window.confirm(`Delete "${selectedTeacher.name}"?\nThey will be removed from all events.`)) return;
-    const idx = appState.teachers.findIndex(t => t.id === selectedTeacherId);
-    removeTeacher(selectedTeacherId);
-    const rem = getState().teachers;
-    selectedTeacherId = rem[idx]?.id ?? rem.at(-1)?.id ?? null;
-  }
-
-  // ─── Rooms ────────────────────────────────────────────────────────────────
-  let newRoomName = $state('');
-  let newRoomColor = $state('#48bb78');
-  let newRoomExclude = $state(false);
-
-  function startAddRoom(): void {
-    addingRoom = true;
-    selectedRoomId = null;
-    newRoomName = '';
-    newRoomExclude = false;
-    newRoomColor = generateDistinctColor(appState.rooms.map(r => r.color));
-  }
-
-  function confirmAddRoom(e?: Event): void {
-    e?.preventDefault();
-    if (!newRoomName.trim()) return;
-    addRoom(newRoomName.trim(), newRoomColor, newRoomExclude);
-    addingRoom = false;
-    selectedRoomId = getState().rooms.at(-1)?.id ?? null;
-    newRoomName = ''; newRoomExclude = false;
-  }
-
-  function cancelAddRoom(): void {
-    addingRoom = false;
-    selectedRoomId = appState.rooms[0]?.id ?? null;
-  }
-
-  function deleteRoom(): void {
-    if (!selectedRoomId || !selectedRoom) return;
-    if (!window.confirm(`Delete "${selectedRoom.name}"?\nEvents will lose their room assignment.`)) return;
-    const idx = appState.rooms.findIndex(r => r.id === selectedRoomId);
-    removeRoom(selectedRoomId);
-    const rem = getState().rooms;
-    selectedRoomId = rem[idx]?.id ?? rem.at(-1)?.id ?? null;
-  }
-
-  // ─── Subjects ─────────────────────────────────────────────────────────────
-  let newSubjectName = $state('');
-  let newSubjectColor = $state('#9f7aea');
-  let newSubjectDuration = $state(60);
-  let newSubjectIsBreak = $state(false);
-  let newSubjectIsMultiGroup = $state(false);
-  let newSubjectTeacherIds: ID[] = $state([]);
-  let newSubjectRoomId: ID | null = $state(null);
-
-  function startAddSubject(): void {
-    addingSubject = true;
-    selectedSubjectId = null;
-    newSubjectName = '';
-    newSubjectColor = generateDistinctColor(appState.subjects.map(s => s.color));
-    newSubjectDuration = 60;
-    newSubjectIsBreak = false;
-    newSubjectIsMultiGroup = false;
-    newSubjectTeacherIds = [];
-    newSubjectRoomId = null;
-  }
-
-  function confirmAddSubject(e?: Event): void {
-    e?.preventDefault();
-    if (!newSubjectName.trim()) return;
-    addSubject({
-      name: newSubjectName.trim(), color: newSubjectColor,
-      defaultTeacherIds: newSubjectTeacherIds,
-      defaultRoomId: newSubjectRoomId,
-      defaultDurationMinutes: newSubjectDuration,
-      isBreak: newSubjectIsBreak,
-      isMultiGroup: newSubjectIsMultiGroup,
-    });
-    addingSubject = false;
-    selectedSubjectId = getState().subjects.at(-1)?.id ?? null;
-    newSubjectName = '';
-  }
-
-  function cancelAddSubject(): void {
-    addingSubject = false;
-    selectedSubjectId = appState.subjects[0]?.id ?? null;
-  }
-
-  function deleteSubject(): void {
-    if (!selectedSubjectId || !selectedSubject) return;
-    if (!window.confirm(`Delete "${selectedSubject.name}"?\nAll placed events will be removed.`)) return;
-    const idx = appState.subjects.findIndex(s => s.id === selectedSubjectId);
-    removeSubject(selectedSubjectId);
-    const rem = getState().subjects;
-    selectedSubjectId = rem[idx]?.id ?? rem.at(-1)?.id ?? null;
-  }
-
-  function toggleNewSubjectTeacher(tid: ID): void {
-    newSubjectTeacherIds = newSubjectTeacherIds.includes(tid)
-      ? newSubjectTeacherIds.filter(id => id !== tid) : [...newSubjectTeacherIds, tid];
-  }
-
-  function toggleSubjectTeacher(subjectId: ID, teacherId: ID, currentIds: ID[]): void {
-    const next = currentIds.includes(teacherId)
-      ? currentIds.filter(id => id !== teacherId) : [...currentIds, teacherId];
-    updateSubject(subjectId, { defaultTeacherIds: next });
-  }
+  /** Which phase owns each weekday — drives the strip above the phase table. */
+  const weekStrip = $derived(
+    DAY_NAMES.map((name, day) => {
+      const index = orderedPhases.findIndex(p => day >= p.startDay && day <= p.endDay);
+      return {
+        name,
+        phase: index >= 0 ? orderedPhases[index]! : null,
+        hue: index >= 0 ? PHASE_HUES[index % PHASE_HUES.length]! : null,
+      };
+    }),
+  );
 
   // ─── Danger zone ──────────────────────────────────────────────────────────
   function handleClearAll(): void {
@@ -261,106 +210,175 @@
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
 <dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
   class="modal">
-  <div class="modal-box config-panel p-0 flex flex-col overflow-hidden">
+  <div class="config-panel">
 
     <!-- Header -->
-    <div class="flex items-center justify-between px-6 py-4 border-b border-base-200 shrink-0">
-      <h3 class="text-lg font-bold">Configuration</h3>
-      <button class="btn btn-ghost btn-sm btn-circle opacity-40 hover:opacity-100" onclick={onclose}>✕</button>
-    </div>
+    <header class="cfg-head">
+      <h3 class="cfg-title">Configuration</h3>
+      <button class="cfg-x" onclick={onclose} aria-label="Close">
+        <Icon name="x" size={16} />
+      </button>
+    </header>
 
     <!-- Tabs -->
-    <div role="tablist" class="tabs tabs-bordered px-5 shrink-0 border-b border-base-200">
-      {#each (['groups', 'phases', 'teachers', 'rooms', 'subjects'] as Tab[]) as tab}
-        <button role="tab" class="tab font-medium capitalize"
-          class:tab-active={activeTab === tab}
-          onclick={() => activeTab = tab}>{tab}</button>
+    <div role="tablist" class="cfg-tabs">
+      {#each TABS as tab (tab.key)}
+        <button
+          role="tab"
+          class="cfg-tab"
+          class:cfg-tab-on={activeTab === tab.key}
+          aria-selected={activeTab === tab.key}
+          onclick={() => { activeTab = tab.key; introOpen = false; }}
+        >{tab.label}</button>
       {/each}
     </div>
 
-    <!-- Explanatory copy gets its own band so it never competes with the controls -->
-    <div class="intro-band"><p>{TAB_INTRO[activeTab]}</p></div>
+    <!-- One-line intro; the rest is behind the ⓘ -->
+    <div class="intro-band">
+      <p>{TAB_INTRO[activeTab].short}</p>
+      <button class="intro-more" onclick={() => (introOpen = !introOpen)}>
+        <Icon name="info" size={13} />
+        {introOpen ? 'less' : 'more'}
+      </button>
+    </div>
+    {#if introOpen}
+      <p class="intro-long">{TAB_INTRO[activeTab].long}</p>
+    {/if}
 
-    <!-- Content (flex-1, overflow hidden so inner scroll works) -->
-    <div class="flex flex-1 min-h-0 overflow-hidden">
+    <!-- Content -->
+    <div class="cfg-body">
 
-      <!-- ════ GROUPS (single column) ════════════════════════════════════════ -->
+      <!-- ════ GROUPS ════════════════════════════════════════════════════════ -->
       {#if activeTab === 'groups'}
-        <div class="flex flex-col w-full overflow-hidden">
-          <div class="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-4">
+        <div class="pane">
+          <div class="pane-scroll">
             {#if appState.groups.length > 0}
-              <div class="border border-base-200 rounded-xl overflow-hidden max-w-2xl">
-                <div class="grid grid-cols-[2.5rem_1fr_auto] items-center px-4 py-2 bg-base-200/60 text-[0.7rem] font-semibold uppercase tracking-wider text-base-content/40 border-b border-base-200">
+              <div class="table">
+                <div class="table-head grid-groups">
+                  <span></span>
                   <span class="text-center">On</span>
-                  <span class="px-2">Label</span>
+                  <span>Label</span>
+                  <span class="text-center">Order</span>
                   <span></span>
                 </div>
-                {#each [...appState.groups].sort((a, b) => a.order - b.order) as g (g.id)}
-                  <div class="grid grid-cols-[2.5rem_1fr_auto] items-center px-4 py-2.5 border-b border-base-200 last:border-0 hover:bg-base-200/30 transition-colors"
-                    class:opacity-40={!g.enabled}>
+                {#each sortedGroups as g, i (g.id)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div
+                    class="table-row grid-groups"
+                    class:row-off={!g.enabled}
+                    class:row-dragging={dragId === g.id}
+                    draggable="true"
+                    ondragstart={() => (dragId = g.id)}
+                    ondragover={(e) => e.preventDefault()}
+                    ondrop={(e) => { e.preventDefault(); onDrop(g.id); }}
+                    ondragend={() => (dragId = null)}
+                  >
+                    <span class="drag-handle" title="Drag to reorder the columns">
+                      <Icon name="grip" size={14} />
+                    </span>
                     <div class="flex justify-center">
                       <input type="checkbox" class="toggle toggle-primary toggle-sm"
                         checked={g.enabled}
+                        aria-label="Group active"
                         onchange={(e) => updateGroup(g.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
                       />
                     </div>
-                    <input class="input input-bordered input-sm mx-2 w-28" type="text" value={g.label}
+                    <input class="input input-bordered input-sm w-28" type="text" value={g.label}
+                      aria-label="Group label"
                       onchange={(e) => updateGroup(g.id, { label: (e.currentTarget as HTMLInputElement).value })}
                     />
-                    <button class="btn btn-ghost btn-xs text-error opacity-60 hover:opacity-100 hover:bg-error/15 transition"
-                      onclick={() => removeGroup(g.id)} aria-label="Delete group">✕</button>
+                    <div class="order-btns">
+                      <button class="mini" disabled={i === 0}
+                        onclick={() => moveGroupUp(g.id)} aria-label="Move up">
+                        <Icon name="chevronUp" size={12} />
+                      </button>
+                      <button class="mini" disabled={i === sortedGroups.length - 1}
+                        onclick={() => moveGroupDown(g.id)} aria-label="Move down">
+                        <Icon name="chevronDown" size={12} />
+                      </button>
+                    </div>
+                    <button class="mini mini-danger"
+                      onclick={() => confirmRemoveGroup(g.id, g.label)} aria-label="Delete group">
+                      <Icon name="trash" size={13} />
+                    </button>
                   </div>
                 {/each}
               </div>
+              <p class="field-hint mt-3">
+                Switching a group off keeps its events; they are simply not drawn and stop
+                raising conflicts.
+              </p>
             {:else}
-              <p class="text-sm text-base-content/30 text-center py-4">No groups yet. Add one below.</p>
+              <p class="pane-empty">No groups yet. Add one below.</p>
             {/if}
           </div>
 
-          <!-- Add group row -->
-          <div class="px-10 pb-6 pt-4 border-t border-base-200 shrink-0">
-            <p class="text-xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">Add group</p>
-            <form class="flex items-center gap-2" onsubmit={submitGroup}>
-              <input class="input input-bordered input-sm w-28" type="text" bind:value={newGroupLabel}
-                placeholder="G4" aria-label="Group label" />
-              <button type="submit" class="btn btn-primary btn-sm">Add group</button>
-            </form>
-          </div>
+          <form class="pane-add" onsubmit={submitGroup}>
+            <span class="field-label">Add group</span>
+            <input class="input input-bordered input-sm w-28" type="text" bind:value={newGroupLabel}
+              placeholder="G4" aria-label="Group label" />
+            <button type="submit" class="btn btn-primary btn-sm gap-1.5">
+              <Icon name="plus" size={13} /> Add group
+            </button>
+          </form>
         </div>
 
-      <!-- ════ PHASES (single column) ════════════════════════════════════════ -->
+      <!-- ════ PHASES ════════════════════════════════════════════════════════ -->
       {:else if activeTab === 'phases'}
-        <div class="flex flex-col w-full overflow-hidden">
-          <div class="flex-1 overflow-y-auto px-6 py-5 flex flex-col gap-4">
+        <div class="pane">
+          <div class="pane-scroll">
+            <!-- The week at a glance: the one picture that explains the model. -->
+            <div class="week-strip">
+              {#each weekStrip as day (day.name)}
+                <div class="strip-day" style={day.hue ? `--ph:${day.hue}` : ''} class:strip-gap={!day.phase}>
+                  <span class="strip-name">{day.name}</span>
+                  <span class="strip-phase">{day.phase?.label ?? 'no phase'}</span>
+                </div>
+              {/each}
+            </div>
+
+            {#if phaseWarning}
+              <p class="warn-banner">
+                <Icon name="alert" size={14} /> {phaseWarning}
+              </p>
+            {/if}
+
             {#if appState.phases.length > 0}
-              <div class="border border-base-200 rounded-xl overflow-hidden max-w-3xl">
-                <div class="grid grid-cols-[1fr_auto_auto_1fr] items-center gap-3 px-4 py-2 bg-base-200/60 text-[0.7rem] font-semibold uppercase tracking-wider text-base-content/40 border-b border-base-200">
+              <div class="table">
+                <div class="table-head grid-phases">
                   <span>Label</span>
                   <span>From</span>
                   <span>To</span>
                   <span>Lanes</span>
+                  <span></span>
                 </div>
-                {#each appState.phases as p (p.id)}
-                  <div class="grid grid-cols-[1fr_auto_auto_1fr] items-center gap-3 px-4 py-2.5 border-b border-base-200 last:border-0 hover:bg-base-200/30 transition-colors">
-                    <input class="input input-bordered input-sm w-full" type="text" value={p.label}
-                      onchange={(e) => updatePhase(p.id, { label: (e.currentTarget as HTMLInputElement).value })}
-                    />
+                {#each orderedPhases as p, i (p.id)}
+                  <div class="table-row grid-phases">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="phase-swatch" style="background:{PHASE_HUES[i % PHASE_HUES.length]}"></span>
+                      <input class="input input-bordered input-sm w-full" type="text" value={p.label}
+                        aria-label="Phase label"
+                        onchange={(e) => updatePhase(p.id, { label: (e.currentTarget as HTMLInputElement).value })}
+                      />
+                    </div>
                     <select class="select select-bordered select-sm" value={p.startDay}
+                      aria-label="First day"
                       onchange={(e) => setPhaseStart(p.id, Number((e.currentTarget as HTMLSelectElement).value), p.endDay)}>
-                      {#each DAY_NAMES as name, i (name)}
-                        <option value={i}>{name}</option>
+                      {#each DAY_NAMES as name, d (name)}
+                        <option value={d}>{name}</option>
                       {/each}
                     </select>
                     <select class="select select-bordered select-sm" value={p.endDay}
+                      aria-label="Last day"
                       onchange={(e) => setPhaseEnd(p.id, Number((e.currentTarget as HTMLSelectElement).value), p.startDay)}>
-                      {#each DAY_NAMES as name, i (name)}
-                        <option value={i}>{name}</option>
+                      {#each DAY_NAMES as name, d (name)}
+                        <option value={d}>{name}</option>
                       {/each}
                     </select>
-                    <div class="flex items-center gap-2 flex-wrap">
-                      {#each [...appState.groups].sort((a, b) => a.order - b.order) as g (g.id)}
-                        <label class="flex items-center gap-1 cursor-pointer text-sm">
-                          <input type="checkbox" class="checkbox checkbox-primary checkbox-xs"
+                    <div class="lane-picks">
+                      {#each sortedGroups as g (g.id)}
+                        <label class="lane-pick" class:lane-pick-on={p.groupIds.includes(g.id)}>
+                          <input type="checkbox"
                             checked={p.groupIds.includes(g.id)}
                             onchange={(e) => updatePhase(p.id, {
                               groupIds: (e.currentTarget as HTMLInputElement).checked
@@ -371,869 +389,520 @@
                           {g.label}
                         </label>
                       {/each}
-                      <button class="btn btn-ghost btn-xs text-error opacity-60 hover:opacity-100 hover:bg-error/15 transition ml-auto"
-                        onclick={() => removePhase(p.id)} aria-label="Delete phase">✕</button>
                     </div>
+                    <button class="mini mini-danger"
+                      onclick={() => confirmRemovePhase(p.id, p.label)} aria-label="Delete phase">
+                      <Icon name="trash" size={13} />
+                    </button>
                   </div>
                 {/each}
               </div>
-
-              {#if phaseWarning}
-                <p class="text-sm text-warning max-w-3xl">{phaseWarning}</p>
-              {/if}
             {:else}
-              <p class="text-sm text-base-content/30 text-center py-4">No phases yet. Add one below.</p>
+              <p class="pane-empty">No phases yet. Add one below.</p>
             {/if}
           </div>
 
-          <!-- Add phase row -->
-          <div class="px-10 pb-6 pt-4 border-t border-base-200 shrink-0">
-            <p class="text-xs font-semibold uppercase tracking-wider text-base-content/40 mb-2">Add phase</p>
-            <form class="flex items-center gap-2" onsubmit={submitPhase}>
-              <input class="input input-bordered input-sm w-48" type="text" bind:value={newPhaseLabel}
-                placeholder="Phase name" aria-label="Phase label" />
-              <button type="submit" class="btn btn-primary btn-sm">Add phase</button>
-            </form>
-          </div>
+          <form class="pane-add" onsubmit={submitPhase}>
+            <span class="field-label">Add phase</span>
+            <input class="input input-bordered input-sm w-48" type="text" bind:value={newPhaseLabel}
+              placeholder="Phase name" aria-label="Phase label" />
+            <button type="submit" class="btn btn-primary btn-sm gap-1.5">
+              <Icon name="plus" size={13} /> Add phase
+            </button>
+          </form>
         </div>
 
-      <!-- ════ TEACHERS (master-detail) ══════════════════════════════════════ -->
+      <!-- ════ TEACHERS ══════════════════════════════════════════════════════ -->
       {:else if activeTab === 'teachers'}
-        <!-- Left: list -->
-        <div class="list-panel">
-          <div class="flex-1 overflow-y-auto py-1">
-            {#each appState.teachers as t (t.id)}
-              <button class="list-item" class:list-item-active={t.id === selectedTeacherId && !addingTeacher}
-                onclick={() => { selectedTeacherId = t.id; addingTeacher = false; }}>
-                <span class="list-avatar" style="background:{t.color}">
-                  {t.shortName || t.name.slice(0, 2).toUpperCase()}
-                </span>
-                <span class="truncate min-w-0 flex-1 text-sm">{t.name}</span>
-              </button>
-            {/each}
-            {#if appState.teachers.length === 0}
-              <p class="text-sm text-base-content/30 text-center px-4 py-6">No teachers yet</p>
+        <MasterDetail
+          items={appState.teachers}
+          selectedId={selectedTeacherId}
+          adding={addingTeacher}
+          addLabel="Add teacher"
+          emptyListText="No teachers yet"
+          onselect={(id) => { selectedTeacherId = id; addingTeacher = false; }}
+          onadd={() => { addingTeacher = true; selectedTeacherId = null; }}
+        >
+          {#snippet row(t)}
+            <span class="list-avatar" style="background:{t.color}">{teacherShort(t)}</span>
+            <span class="truncate min-w-0 flex-1">{t.name}</span>
+          {/snippet}
+          {#snippet detail()}
+            {#if addingTeacher || selectedTeacher}
+              {#key selectedTeacher?.id ?? 'new'}
+                <TeacherDetail
+                  teacher={addingTeacher ? null : selectedTeacher}
+                  draftColor={nextTeacherColor}
+                  oncreated={(id) => { addingTeacher = false; selectedTeacherId = id; }}
+                  oncancel={() => { addingTeacher = false; selectedTeacherId = appState.teachers[0]?.id ?? null; }}
+                  ondeleted={(i) => (selectedTeacherId = neighbourId(getState().teachers, i))}
+                />
+              {/key}
+            {:else}
+              <div class="empty-detail">
+                <Icon name="users" size={26} />
+                <span>Select a teacher to edit, or add a new one.</span>
+              </div>
             {/if}
-          </div>
-          <div class="list-add-row">
-            <button class="btn btn-sm btn-ghost w-full justify-start gap-2 font-medium"
-              class:btn-primary={addingTeacher} class:btn-ghost={!addingTeacher}
-              onclick={startAddTeacher}>+ Add teacher</button>
-          </div>
-        </div>
+          {/snippet}
+        </MasterDetail>
 
-        <!-- Right: detail -->
-        <div class="detail-panel">
-          {#if addingTeacher}
-            <form class="detail-form" onsubmit={confirmAddTeacher}>
-              <div class="detail-header">
-                <span class="detail-title">New teacher</span>
-              </div>
-              <div class="flex items-start gap-5 pt-1">
-                <label class="teacher-avatar-lg shrink-0" style="background:{newTeacherColor}" title="Click to pick colour">
-                  <span class="teacher-initials-lg">{newTeacherShortName || '?'}</span>
-                  <input type="color" bind:value={newTeacherColor} class="sr-only" />
-                </label>
-                <div class="flex flex-col gap-2.5 flex-1 min-w-0">
-                  <div class="form-field">
-                    <span class="field-label">Full name</span>
-                    <input class="input input-bordered input-sm w-full" type="text" value={newTeacherName}
-                      placeholder="e.g. Anna Müller" autofocus
-                      oninput={(e) => onNewTeacherNameInput((e.currentTarget as HTMLInputElement).value)}
-                    />
-                  </div>
-                  <div class="form-field">
-                    <span class="field-label">Short name <span class="text-base-content/30 font-normal">(shown on cards)</span></span>
-                    <input class="input input-bordered input-sm w-28" type="text" bind:value={newTeacherShortName}
-                      placeholder="AM"
-                      oninput={() => teacherShortManual = true}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="detail-footer">
-                <button type="button" class="btn btn-ghost btn-sm" onclick={cancelAddTeacher}>Cancel</button>
-                <button type="submit" class="btn btn-primary btn-sm" disabled={!newTeacherName.trim()}>Create teacher</button>
-              </div>
-            </form>
-
-          {:else if selectedTeacher}
-            <div class="detail-form">
-              <div class="detail-header">
-                <span class="detail-title">{selectedTeacher.name}</span>
-                <span class="autosave-pill">✓ Autosaved</span>
-              </div>
-              <div class="flex items-start gap-5 pt-1">
-                <label class="teacher-avatar-lg shrink-0" style="background:{selectedTeacher.color}" title="Click to change colour">
-                  <span class="teacher-initials-lg">{selectedTeacher.shortName || selectedTeacher.name.slice(0, 2).toUpperCase()}</span>
-                  <input type="color" value={selectedTeacher.color}
-                    oninput={(e) => updateTeacher(selectedTeacherId!, { color: (e.currentTarget as HTMLInputElement).value })}
-                    class="sr-only"
-                  />
-                </label>
-                <div class="flex flex-col gap-2.5 flex-1 min-w-0">
-                  <div class="form-field">
-                    <span class="field-label">Full name</span>
-                    <input class="input input-bordered input-sm w-full" type="text" value={selectedTeacher.name}
-                      onchange={(e) => updateTeacher(selectedTeacherId!, { name: (e.currentTarget as HTMLInputElement).value })}
-                    />
-                  </div>
-                  <div class="form-field">
-                    <span class="field-label">Short name <span class="text-base-content/30 font-normal">(shown on cards)</span></span>
-                    <input class="input input-bordered input-sm w-28" type="text" value={selectedTeacher.shortName}
-                      onchange={(e) => updateTeacher(selectedTeacherId!, { shortName: (e.currentTarget as HTMLInputElement).value })}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="detail-footer">
-                <button class="btn btn-ghost btn-sm text-error" onclick={deleteTeacher}>Delete teacher</button>
-              </div>
-            </div>
-
-          {:else}
-            <div class="empty-detail">
-              <span class="text-2xl opacity-20">👤</span>
-              <span>Select a teacher to edit, or add a new one.</span>
-            </div>
-          {/if}
-        </div>
-
-      <!-- ════ ROOMS (master-detail) ═════════════════════════════════════════ -->
+      <!-- ════ ROOMS ═════════════════════════════════════════════════════════ -->
       {:else if activeTab === 'rooms'}
-        <!-- Left: list -->
-        <div class="list-panel">
-          <div class="flex-1 overflow-y-auto py-1">
-            {#each appState.rooms as r (r.id)}
-              <button class="list-item" class:list-item-active={r.id === selectedRoomId && !addingRoom}
-                onclick={() => { selectedRoomId = r.id; addingRoom = false; }}>
-                <span class="w-2.5 h-full min-h-[1.5rem] rounded-sm shrink-0 self-stretch" style="background:{r.color}"></span>
-                <span class="truncate min-w-0 flex-1 text-sm">{r.name}</span>
-                {#if r.excludeFromConflictCheck}
-                  <span class="text-[0.65rem] text-base-content/30 shrink-0">no conflicts</span>
-                {/if}
-              </button>
-            {/each}
-            {#if appState.rooms.length === 0}
-              <p class="text-sm text-base-content/30 text-center px-4 py-6">No rooms yet</p>
+        <MasterDetail
+          items={appState.rooms}
+          selectedId={selectedRoomId}
+          adding={addingRoom}
+          addLabel="Add room"
+          emptyListText="No rooms yet"
+          onselect={(id) => { selectedRoomId = id; addingRoom = false; }}
+          onadd={() => { addingRoom = true; selectedRoomId = null; }}
+        >
+          {#snippet row(r)}
+            <span class="w-2.5 h-full min-h-[1.4rem] rounded-sm shrink-0 self-stretch" style="background:{r.color}"></span>
+            <span class="truncate min-w-0 flex-1">{r.name}</span>
+            {#if r.excludeFromConflictCheck}
+              <span class="row-tag">shared</span>
             {/if}
-          </div>
-          <div class="list-add-row">
-            <button class="btn btn-sm btn-ghost w-full justify-start gap-2 font-medium"
-              class:btn-primary={addingRoom} class:btn-ghost={!addingRoom}
-              onclick={startAddRoom}>+ Add room</button>
-          </div>
-        </div>
+          {/snippet}
+          {#snippet detail()}
+            {#if addingRoom || selectedRoom}
+              {#key selectedRoom?.id ?? 'new'}
+                <RoomDetail
+                  room={addingRoom ? null : selectedRoom}
+                  draftColor={nextRoomColor}
+                  oncreated={(id) => { addingRoom = false; selectedRoomId = id; }}
+                  oncancel={() => { addingRoom = false; selectedRoomId = appState.rooms[0]?.id ?? null; }}
+                  ondeleted={(i) => (selectedRoomId = neighbourId(getState().rooms, i))}
+                />
+              {/key}
+            {:else}
+              <div class="empty-detail">
+                <Icon name="pin" size={26} />
+                <span>Select a room to edit, or add a new one.</span>
+              </div>
+            {/if}
+          {/snippet}
+        </MasterDetail>
 
-        <!-- Right: detail -->
-        <div class="detail-panel">
-          {#if addingRoom}
-            <form class="detail-form" onsubmit={confirmAddRoom}>
-              <div class="detail-header">
-                <span class="detail-title">New room</span>
-              </div>
-              <div class="flex flex-col gap-4 pt-1">
-                <div class="form-field">
-                  <span class="field-label">Room name</span>
-                  <div class="flex items-center gap-3 max-w-md">
-                    <label class="color-swatch-lg shrink-0" style="background:{newRoomColor}" title="Click to pick colour">
-                      <input type="color" bind:value={newRoomColor} class="sr-only" />
-                    </label>
-                    <input class="input input-bordered input-sm flex-1" type="text" bind:value={newRoomName}
-                      placeholder="e.g. Seminarraum 1" autofocus />
-                  </div>
-                </div>
-                <label class="option-row">
-                  <span class="option-text">
-                    <span class="option-title">Ignore conflicts</span>
-                    <span class="option-desc">Two groups may be booked here at the same time without being flagged. Use this for shared spaces such as "outside".</span>
-                  </span>
-                  <input type="checkbox" class="toggle toggle-warning toggle-sm" bind:checked={newRoomExclude} />
-                </label>
-              </div>
-              <div class="detail-footer">
-                <button type="button" class="btn btn-ghost btn-sm" onclick={cancelAddRoom}>Cancel</button>
-                <button type="submit" class="btn btn-primary btn-sm" disabled={!newRoomName.trim()}>Create room</button>
-              </div>
-            </form>
-
-          {:else if selectedRoom}
-            <div class="detail-form">
-              <div class="detail-header">
-                <span class="detail-title">{selectedRoom.name}</span>
-                <span class="autosave-pill">✓ Autosaved</span>
-              </div>
-              <div class="flex flex-col gap-4 pt-1">
-                <div class="form-field">
-                  <span class="field-label">Room name</span>
-                  <div class="flex items-center gap-3 max-w-md">
-                    <label class="color-swatch-lg shrink-0" style="background:{selectedRoom.color}" title="Click to change colour">
-                      <input type="color" value={selectedRoom.color}
-                        oninput={(e) => updateRoom(selectedRoomId!, { color: (e.currentTarget as HTMLInputElement).value })}
-                        class="sr-only"
-                      />
-                    </label>
-                    <input class="input input-bordered input-sm flex-1" type="text" value={selectedRoom.name}
-                      onchange={(e) => updateRoom(selectedRoomId!, { name: (e.currentTarget as HTMLInputElement).value })}
-                    />
-                  </div>
-                </div>
-                <label class="option-row">
-                  <span class="option-text">
-                    <span class="option-title">Ignore conflicts</span>
-                    <span class="option-desc">Two groups may be booked here at the same time without being flagged. Use this for shared spaces such as "outside".</span>
-                  </span>
-                  <input type="checkbox" class="toggle toggle-warning toggle-sm"
-                    checked={selectedRoom.excludeFromConflictCheck}
-                    onchange={(e) => updateRoom(selectedRoomId!, { excludeFromConflictCheck: (e.currentTarget as HTMLInputElement).checked })}
-                  />
-                </label>
-              </div>
-              <div class="detail-footer">
-                <button class="btn btn-ghost btn-sm text-error" onclick={deleteRoom}>Delete room</button>
-              </div>
-            </div>
-
-          {:else}
-            <div class="empty-detail">
-              <span class="text-2xl opacity-20">🚪</span>
-              <span>Select a room to edit, or add a new one.</span>
-            </div>
-          {/if}
-        </div>
-
-      <!-- ════ SUBJECTS (master-detail) ══════════════════════════════════════ -->
+      <!-- ════ SUBJECTS ══════════════════════════════════════════════════════ -->
       {:else if activeTab === 'subjects'}
-        <!-- Left: list -->
-        <div class="list-panel">
-          <div class="flex-1 overflow-y-auto py-1">
-            {#each appState.subjects as s (s.id)}
-              <button class="list-item" class:list-item-active={s.id === selectedSubjectId && !addingSubject}
-                onclick={() => { selectedSubjectId = s.id; addingSubject = false; }}>
-                <span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:{s.color}"></span>
-                <span class="truncate min-w-0 flex-1 text-sm">{s.name}</span>
-                {#if s.isBreak}
-                  <span class="text-[0.65rem] text-base-content/30 shrink-0">break</span>
-                {/if}
-              </button>
-            {/each}
-            {#if appState.subjects.length === 0}
-              <p class="text-sm text-base-content/30 text-center px-4 py-6">No subjects yet</p>
+        <MasterDetail
+          items={appState.subjects}
+          selectedId={selectedSubjectId}
+          adding={addingSubject}
+          addLabel="Add subject"
+          emptyListText="No subjects yet"
+          onselect={(id) => { selectedSubjectId = id; addingSubject = false; }}
+          onadd={() => { addingSubject = true; selectedSubjectId = null; }}
+        >
+          {#snippet row(s)}
+            <span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:{s.color}"></span>
+            <span class="truncate min-w-0 flex-1">{s.name}</span>
+            {#if s.isBreak}
+              <span class="row-tag">break</span>
             {/if}
-          </div>
-          <div class="list-add-row">
-            <button class="btn btn-sm btn-ghost w-full justify-start gap-2 font-medium"
-              class:btn-primary={addingSubject} class:btn-ghost={!addingSubject}
-              onclick={startAddSubject}>+ Add subject</button>
-          </div>
-        </div>
-
-        <!-- Right: detail -->
-        <div class="detail-panel">
-          {#if addingSubject}
-            <form class="detail-form overflow-y-auto" onsubmit={confirmAddSubject}>
-              <div class="detail-header">
-                <span class="detail-title">New subject</span>
+          {/snippet}
+          {#snippet detail()}
+            {#if addingSubject || selectedSubject}
+              {#key selectedSubject?.id ?? 'new'}
+                <SubjectDetail
+                  subject={addingSubject ? null : selectedSubject}
+                  draftColor={nextSubjectColor}
+                  oncreated={(id) => { addingSubject = false; selectedSubjectId = id; }}
+                  oncancel={() => { addingSubject = false; selectedSubjectId = appState.subjects[0]?.id ?? null; }}
+                  ondeleted={(i) => (selectedSubjectId = neighbourId(getState().subjects, i))}
+                />
+              {/key}
+            {:else}
+              <div class="empty-detail">
+                <Icon name="calendar" size={26} />
+                <span>Select a subject to edit, or add a new one.</span>
               </div>
-              <div class="flex flex-col gap-5 pt-1">
-
-                <section class="section">
-                  <h4 class="section-title">Identity</h4>
-                  <div class="form-field">
-                    <span class="field-label">Name</span>
-                    <div class="flex items-center gap-3 max-w-md">
-                      <label class="color-swatch-lg shrink-0" style="background:{newSubjectColor}" title="Pick colour">
-                        <input type="color" bind:value={newSubjectColor} class="sr-only" />
-                      </label>
-                      <input class="input input-bordered input-sm flex-1" type="text" bind:value={newSubjectName}
-                        placeholder="e.g. Karteneröffnung" autofocus />
-                    </div>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Duration</h4>
-                  <div class="flex items-center gap-2 flex-wrap">
-                    {#each DURATION_PRESETS as preset}
-                      <button type="button" class="preset-chip" class:preset-chip-on={newSubjectDuration === preset}
-                        onclick={() => newSubjectDuration = preset}>
-                        {preset < 60 ? `${preset} min` : `${preset / 60} h`}
-                      </button>
-                    {/each}
-                    <div class="flex items-center gap-1.5 ml-2">
-                      <input class="input input-bordered input-sm w-20 text-right" type="number"
-                        bind:value={newSubjectDuration} min="15" step="15" />
-                      <span class="text-sm text-base-content/50">min</span>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Behaviour</h4>
-                  <label class="option-row">
-                    <span class="option-text">
-                      <span class="option-title">Break</span>
-                      <span class="option-desc">Shown as a break rather than a lesson, and never counted as a teacher or room conflict.</span>
-                    </span>
-                    <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={newSubjectIsBreak} />
-                  </label>
-                  <label class="option-row">
-                    <span class="option-text">
-                      <span class="option-title">All groups at once</span>
-                      <span class="option-desc">Placing this schedules it for every active group simultaneously, instead of one group at a time.</span>
-                    </span>
-                    <input type="checkbox" class="toggle toggle-secondary toggle-sm" bind:checked={newSubjectIsMultiGroup} />
-                  </label>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Defaults</h4>
-
-                  {#if appState.teachers.length > 0}
-                    <div class="form-field">
-                      <div class="flex items-center gap-2">
-                        <span class="field-label">Default teachers</span>
-                        <span class="count-pill" class:count-pill-empty={newSubjectTeacherIds.length === 0}>
-                          {newSubjectTeacherIds.length} of {appState.teachers.length} selected
-                        </span>
-                      </div>
-                      <p class="field-hint">Click a teacher to select them. Nothing is selected until you do.</p>
-                      <div class="picker-grid">
-                        {#each appState.teachers as t (t.id)}
-                          {@const selected = newSubjectTeacherIds.includes(t.id)}
-                          <button type="button" class="picker-chip" class:picker-chip-on={selected}
-                            style={selected ? `--tc:${t.color}` : ''}
-                            aria-pressed={selected}
-                            onclick={() => toggleNewSubjectTeacher(t.id)}>
-                            <span class="picker-box">{selected ? '✓' : ''}</span>
-                            <span class="teacher-dot" style="background:{t.color}"></span>
-                            <span class="truncate">{t.name}</span>
-                          </button>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-
-                  {#if appState.rooms.length > 0}
-                    <div class="form-field">
-                      <span class="field-label">Default room</span>
-                      <select class="select select-bordered select-sm w-56"
-                        onchange={(e) => {
-                          const v = (e.currentTarget as HTMLSelectElement).value;
-                          newSubjectRoomId = v === '' ? null : v;
-                        }}>
-                        <option value="">No default</option>
-                        {#each appState.rooms as r (r.id)}
-                          <option value={r.id} selected={newSubjectRoomId === r.id}>{r.name}</option>
-                        {/each}
-                      </select>
-                    </div>
-                  {/if}
-                </section>
-              </div>
-
-              <div class="detail-footer">
-                <button type="button" class="btn btn-ghost btn-sm" onclick={cancelAddSubject}>Cancel</button>
-                <button type="submit" class="btn btn-primary btn-sm" disabled={!newSubjectName.trim()}>Create subject</button>
-              </div>
-            </form>
-
-          {:else if selectedSubject}
-            <div class="detail-form overflow-y-auto">
-              <div class="detail-header">
-                <span class="detail-title">{selectedSubject.name}</span>
-                <span class="autosave-pill">✓ Autosaved</span>
-              </div>
-              <div class="flex flex-col gap-5 pt-1">
-
-                <section class="section">
-                  <h4 class="section-title">Identity</h4>
-                  <div class="form-field">
-                    <span class="field-label">Name</span>
-                    <div class="flex items-center gap-3 max-w-md">
-                      <label class="color-swatch-lg shrink-0" style="background:{selectedSubject.color}" title="Click to change colour">
-                        <input type="color" value={selectedSubject.color}
-                          oninput={(e) => updateSubject(selectedSubjectId!, { color: (e.currentTarget as HTMLInputElement).value })}
-                          class="sr-only"
-                        />
-                      </label>
-                      <input class="input input-bordered input-sm flex-1" type="text" value={selectedSubject.name}
-                        onchange={(e) => updateSubject(selectedSubjectId!, { name: (e.currentTarget as HTMLInputElement).value })}
-                      />
-                    </div>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Duration</h4>
-                  <div class="flex items-center gap-2 flex-wrap">
-                    {#each DURATION_PRESETS as preset}
-                      <button type="button" class="preset-chip"
-                        class:preset-chip-on={selectedSubject.defaultDurationMinutes === preset}
-                        onclick={() => updateSubject(selectedSubjectId!, { defaultDurationMinutes: preset })}>
-                        {preset < 60 ? `${preset} min` : `${preset / 60} h`}
-                      </button>
-                    {/each}
-                    <div class="flex items-center gap-1.5 ml-2">
-                      <input class="input input-bordered input-sm w-20 text-right" type="number"
-                        value={selectedSubject.defaultDurationMinutes} min="15" step="15"
-                        onchange={(e) => updateSubject(selectedSubjectId!, { defaultDurationMinutes: Number((e.currentTarget as HTMLInputElement).value) })}
-                      />
-                      <span class="text-sm text-base-content/50">min</span>
-                    </div>
-                  </div>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Behaviour</h4>
-                  <label class="option-row">
-                    <span class="option-text">
-                      <span class="option-title">Break</span>
-                      <span class="option-desc">Shown as a break rather than a lesson, and never counted as a teacher or room conflict.</span>
-                    </span>
-                    <input type="checkbox" class="toggle toggle-primary toggle-sm"
-                      checked={selectedSubject.isBreak}
-                      onchange={(e) => updateSubject(selectedSubjectId!, { isBreak: (e.currentTarget as HTMLInputElement).checked })}
-                    />
-                  </label>
-                  <label class="option-row">
-                    <span class="option-text">
-                      <span class="option-title">All groups at once</span>
-                      <span class="option-desc">Placing this schedules it for every active group simultaneously, instead of one group at a time.</span>
-                    </span>
-                    <input type="checkbox" class="toggle toggle-secondary toggle-sm"
-                      checked={selectedSubject.isMultiGroup ?? false}
-                      onchange={(e) => updateSubject(selectedSubjectId!, { isMultiGroup: (e.currentTarget as HTMLInputElement).checked })}
-                    />
-                  </label>
-                </section>
-
-                <section class="section">
-                  <h4 class="section-title">Defaults</h4>
-
-                  {#if appState.teachers.length > 0}
-                    <div class="form-field">
-                      <div class="flex items-center gap-2">
-                        <span class="field-label">Default teachers</span>
-                        <span class="count-pill" class:count-pill-empty={selectedSubject.defaultTeacherIds.length === 0}>
-                          {selectedSubject.defaultTeacherIds.length} of {appState.teachers.length} selected
-                        </span>
-                      </div>
-                      <p class="field-hint">Click a teacher to select them. Nothing is selected until you do.</p>
-                      <div class="picker-grid">
-                        {#each appState.teachers as t (t.id)}
-                          {@const selected = selectedSubject.defaultTeacherIds.includes(t.id)}
-                          <button type="button" class="picker-chip" class:picker-chip-on={selected}
-                            style={selected ? `--tc:${t.color}` : ''}
-                            aria-pressed={selected}
-                            onclick={() => toggleSubjectTeacher(selectedSubjectId!, t.id, selectedSubject.defaultTeacherIds)}>
-                            <span class="picker-box">{selected ? '✓' : ''}</span>
-                            <span class="teacher-dot" style="background:{t.color}"></span>
-                            <span class="truncate">{t.name}</span>
-                          </button>
-                        {/each}
-                      </div>
-                    </div>
-                  {/if}
-
-                  {#if appState.rooms.length > 0}
-                    <div class="form-field">
-                      <span class="field-label">Default room</span>
-                      <select class="select select-bordered select-sm w-56"
-                        value={selectedSubject.defaultRoomId ?? ''}
-                        onchange={(e) => {
-                          const v = (e.currentTarget as HTMLSelectElement).value;
-                          updateSubject(selectedSubjectId!, { defaultRoomId: v === '' ? null : v });
-                        }}>
-                        <option value="">No default</option>
-                        {#each appState.rooms as r (r.id)}
-                          <option value={r.id}>{r.name}</option>
-                        {/each}
-                      </select>
-                    </div>
-                  {/if}
-                </section>
-              </div>
-
-              <div class="detail-footer">
-                <button class="btn btn-ghost btn-sm text-error" onclick={deleteSubject}>Delete subject</button>
-              </div>
-            </div>
-
-          {:else}
-            <div class="empty-detail">
-              <span class="text-2xl opacity-20">📚</span>
-              <span>Select a subject to edit, or add a new one.</span>
-            </div>
-          {/if}
-        </div>
+            {/if}
+          {/snippet}
+        </MasterDetail>
       {/if}
 
     </div>
 
-    <!-- Footer: danger zone -->
-    <div class="shrink-0 border-t border-base-200 px-5 py-3 flex items-center gap-3">
-      <button class="btn btn-ghost btn-xs text-error" onclick={handleClearAll}>⚠ Reset all data</button>
-      <span class="text-xs text-base-content/25">Removes all events, groups, teachers, rooms, and subjects</span>
-    </div>
+    <!-- Footer: the destructive action lives behind a disclosure, not one
+         mis-click away from Save. -->
+    <footer class="cfg-foot">
+      <button class="danger-toggle" onclick={() => (dangerOpen = !dangerOpen)}>
+        <Icon name={dangerOpen ? 'chevronDown' : 'chevronRight'} size={12} />
+        Danger zone
+      </button>
+      {#if dangerOpen}
+        <div class="danger-body">
+          <span class="danger-note">Removes all events, groups, teachers, rooms and subjects.</span>
+          <button class="btn btn-sm btn-error gap-1.5" onclick={handleClearAll}>
+            <Icon name="trash" size={13} /> Reset all data
+          </button>
+        </div>
+      {/if}
+    </footer>
 
   </div>
 </dialog>
 
 <style>
   dialog::backdrop {
-    background: rgba(0, 0, 0, 0.45);
+    background: color-mix(in oklab, black 45%, transparent);
   }
 
   .config-panel {
+    display: flex;
+    flex-direction: column;
     width: min(1000px, 92vw);
-    max-width: none;
-    /* Grow to fit the tab, but never past the viewport — short tabs (Rooms)
-       shouldn't leave a tall empty region below the form. */
-    height: auto;
-    min-height: 480px;
-    max-height: 86vh;
+    /* Fixed: a short tab used to shrink the dialog and move the tab strip out
+       from under the pointer mid-click. */
+    height: 82vh;
+    background: var(--wk-surface);
+    color: var(--wk-text);
+    border-radius: var(--wk-r-md);
+    box-shadow: var(--wk-shadow-2);
+    overflow: hidden;
+  }
+
+  .cfg-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1.25rem;
+    border-bottom: 1px solid var(--wk-line);
+    flex-shrink: 0;
+  }
+
+  .cfg-title {
+    font-size: var(--wk-fs-lg);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .cfg-x {
+    display: flex;
+    padding: 0.3rem;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .cfg-x:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
+
+  .cfg-tabs {
+    display: flex;
+    gap: 0.15rem;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid var(--wk-line);
+    flex-shrink: 0;
+  }
+
+  .cfg-tab {
+    padding: 0.6rem 0.7rem;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-sm);
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .cfg-tab:hover { color: var(--wk-text); }
+  .cfg-tab-on {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+    font-weight: 650;
   }
 
   .intro-band {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     flex-shrink: 0;
-    padding: 0.6rem 1.25rem;
+    padding: 0.45rem 1.25rem;
     background: var(--wk-surface-alt);
     border-bottom: 1px solid var(--wk-line);
   }
 
   .intro-band p {
     margin: 0;
-    max-width: 82ch;
-    font-size: 0.82rem;
-    line-height: 1.5;
+    flex: 1;
+    font-size: var(--wk-fs-xs);
     color: var(--wk-text-mute);
   }
 
-  /* ── Shared list panel ───────────────────────────────────────────────────── */
-  .list-panel {
-    width: 230px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--wk-line);
+  .intro-more {
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+    border: none;
+    background: none;
+    color: var(--color-primary);
+    font-size: var(--wk-fs-2xs);
+    cursor: pointer;
+  }
+  .intro-more:hover { text-decoration: underline; }
+
+  .intro-long {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0.55rem 1.25rem;
+    font-size: var(--wk-fs-xs);
+    line-height: 1.55;
+    color: var(--wk-text-mute);
+    background: var(--wk-surface-alt);
+    border-bottom: 1px solid var(--wk-line);
+  }
+
+  .cfg-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
   }
 
-  .list-add-row {
-    padding: 0.5rem;
-    border-top: 1px solid var(--wk-line);
-    flex-shrink: 0;
+  .pane {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    overflow: hidden;
   }
 
-  .list-item {
+  .pane-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 1.4rem;
+  }
+
+  .pane-empty {
+    font-size: var(--wk-fs-sm);
+    color: var(--wk-text-faint);
+    text-align: center;
+    padding: 1.5rem 0;
+  }
+
+  .pane-add {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    padding: 0.5rem 0.75rem;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    border-left: 3px solid transparent;
-    cursor: pointer;
-    transition: background 0.1s;
-    min-width: 0;
-  }
-
-  .list-item:hover { background: var(--wk-surface-alt); }
-
-  .list-item-active {
-    background: color-mix(in oklab, var(--color-primary) 8%, transparent);
-    border-left-color: var(--color-primary);
-  }
-
-  .list-item-active :global(span:last-child) { font-weight: 600; }
-
-  /* ── Detail panel ────────────────────────────────────────────────────────── */
-  .detail-panel {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .detail-form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.9rem;
-    padding: 1.1rem 1.5rem 1.25rem;
-    height: 100%;
-    overflow-y: auto;
-  }
-
-  .detail-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--wk-line);
     flex-shrink: 0;
-  }
-
-  .detail-title {
-    font-size: 1rem;
-    font-weight: 700;
-  }
-
-  .autosave-pill {
-    font-size: 0.7rem;
-    color: var(--color-success);
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-
-  .detail-footer {
-    margin-top: auto;
-    padding-top: 1rem;
+    padding: 0.75rem 1.4rem;
     border-top: 1px solid var(--wk-line);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-  }
-
-  .empty-detail {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    gap: 0.5rem;
-    color: color-mix(in oklab, var(--color-base-content) 30%, transparent);
-    font-size: 0.85rem;
-    padding: 2rem;
-    text-align: center;
-  }
-
-  /* ── Form fields ─────────────────────────────────────────────────────────── */
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-
-  .field-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  /* ── Teacher avatar (large, in detail panel) ─────────────────────────────── */
-  .teacher-avatar-lg {
-    width: 64px;
-    height: 64px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    border: 2.5px solid rgba(255,255,255,0.3);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-    transition: transform 0.15s, box-shadow 0.15s;
-    flex-shrink: 0;
-  }
-  .teacher-avatar-lg:hover {
-    transform: scale(1.06);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-  }
-  .teacher-initials-lg {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: white;
-    text-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    pointer-events: none;
-    letter-spacing: 0.02em;
-  }
-
-  /* ── List avatar (small circle in list item) ─────────────────────────────── */
-  .list-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.6rem;
-    font-weight: 700;
-    color: white;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.25);
-    flex-shrink: 0;
-    border: 1.5px solid rgba(255,255,255,0.2);
-  }
-
-  /* ── Color swatch (clickable color picker in detail panel) ───────────────── */
-  .color-swatch-lg {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    cursor: pointer;
-    border: 1.5px solid rgba(0,0,0,0.15);
-    flex-shrink: 0;
-    transition: transform 0.15s;
-  }
-  .color-swatch-lg:hover { transform: scale(1.08); }
-
-  /* ── Sections ────────────────────────────────────────────────────────────── */
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .section-title {
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: var(--wk-text-faint);
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid var(--wk-line);
-  }
-
-  /* ── Full-width option rows (replaces inline checkbox clusters) ──────────── */
-  .option-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 2rem;
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--wk-line);
-    border-radius: 0.6rem;
-    cursor: pointer;
-    transition: background 0.12s, border-color 0.12s;
-  }
-  .option-row:hover {
-    background: var(--wk-surface-alt);
-    border-color: var(--wk-line-strong);
-  }
-
-  .option-text {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    min-width: 0;
-  }
-  .option-title {
-    font-size: 0.85rem;
-    font-weight: 600;
-  }
-  .option-desc {
-    font-size: 0.75rem;
-    line-height: 1.45;
-    color: var(--wk-text-faint);
-    max-width: 58ch;
-  }
-
-  /* ── Duration presets ────────────────────────────────────────────────────── */
-  .preset-chip {
-    padding: 0.3rem 0.7rem;
-    border-radius: 0.45rem;
-    border: 1px solid var(--wk-line);
-    background: transparent;
-    color: var(--wk-text-mute);
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.12s;
-  }
-  .preset-chip:hover {
-    border-color: var(--wk-line-strong);
     background: var(--wk-surface-alt);
   }
-  .preset-chip-on {
-    border-color: var(--color-primary);
-    background: color-mix(in oklab, var(--color-primary) 12%, transparent);
-    color: var(--color-primary);
-    font-weight: 700;
-  }
 
-  /* ── Teacher picker ──────────────────────────────────────────────────────── */
-  .field-hint {
-    font-size: 0.72rem;
-    color: var(--wk-text-faint);
-  }
-
-  .count-pill {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.1rem 0.45rem;
-    border-radius: 999px;
-    background: color-mix(in oklab, var(--color-primary) 15%, transparent);
-    color: var(--color-primary);
-  }
-  .count-pill-empty {
-    background: color-mix(in oklab, var(--color-base-content) 8%, transparent);
-    color: var(--wk-text-faint);
-  }
-
-  .picker-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-    gap: 0.5rem;
+  /* ── Tables ─────────────────────────────────────────────────────────────── */
+  .table {
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-md);
+    overflow: hidden;
     max-width: 46rem;
   }
 
-  .picker-chip {
-    display: flex;
+  .table-head {
     align-items: center;
-    gap: 0.55rem;
-    padding: 0.5rem 0.7rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--wk-line);
-    background: transparent;
-    color: var(--wk-text-mute);
-    font-size: 0.82rem;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.12s;
-    min-width: 0;
-  }
-  .picker-chip:hover {
-    border-color: var(--wk-line-strong);
+    padding: 0.4rem 0.85rem;
     background: var(--wk-surface-alt);
-    color: var(--wk-text);
-  }
-  .picker-chip-on {
-    border-color: var(--tc);
-    background: color-mix(in srgb, var(--tc) 12%, transparent);
-    color: var(--wk-text);
+    border-bottom: 1px solid var(--wk-line);
+    font-size: var(--wk-fs-2xs);
     font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--wk-text-faint);
   }
 
-  /* An explicit empty square, so an unselected teacher reads as "not yet chosen"
-     rather than as a chip that happens to be styled quietly. */
-  .picker-box {
+  .table-row {
+    align-items: center;
+    padding: 0.4rem 0.85rem;
+    border-bottom: 1px solid var(--wk-line);
+    transition: background 0.1s;
+  }
+  .table-row:last-child { border-bottom: 0; }
+  .table-row:hover { background: color-mix(in oklab, var(--color-base-content) 3%, transparent); }
+
+  .row-off { opacity: 0.45; }
+  .row-dragging { opacity: 0.4; background: color-mix(in oklab, var(--color-primary) 10%, transparent); }
+
+  .grid-groups {
+    display: grid;
+    grid-template-columns: 1.4rem 3rem 1fr 2.6rem 2rem;
+    gap: 0.6rem;
+  }
+
+  .grid-phases {
+    display: grid;
+    grid-template-columns: minmax(9rem, 1fr) 5.5rem 5.5rem minmax(10rem, 1.2fr) 2rem;
+    gap: 0.6rem;
+  }
+
+  .drag-handle {
+    display: flex;
+    color: var(--wk-text-faint);
+    cursor: grab;
+  }
+  .drag-handle:active { cursor: grabbing; }
+
+  .order-btns {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .mini {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
+    width: 22px;
+    height: 18px;
+    border: none;
     border-radius: 4px;
-    border: 1.5px solid var(--wk-line-strong);
-    font-size: 0.65rem;
-    font-weight: 700;
-    line-height: 1;
-    color: white;
-    flex-shrink: 0;
+    background: none;
+    color: var(--wk-text-faint);
+    cursor: pointer;
   }
-  .picker-chip-on .picker-box {
-    background: var(--tc);
-    border-color: var(--tc);
+  .mini:hover:not(:disabled) { background: var(--wk-surface-alt); color: var(--wk-text); }
+  .mini:disabled { opacity: 0.25; cursor: default; }
+
+  .mini-danger { height: 24px; }
+  .mini-danger:hover {
+    color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 12%, transparent);
   }
 
-  .teacher-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
+  .row-tag {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
     flex-shrink: 0;
+  }
+
+  /* ── Phases: the week strip ─────────────────────────────────────────────── */
+  .week-strip {
+    display: flex;
+    gap: 3px;
+    margin-bottom: 1rem;
+    max-width: 46rem;
+  }
+
+  .strip-day {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: var(--wk-r-sm);
+    border-top: 3px solid var(--ph, var(--wk-line-strong));
+    background: color-mix(in oklab, var(--ph, gray) 9%, var(--wk-surface-alt));
+    min-width: 0;
+  }
+
+  .strip-gap {
+    background: repeating-linear-gradient(
+      135deg,
+      transparent 0 5px,
+      color-mix(in oklab, var(--color-error) 12%, transparent) 5px 10px
+    );
+    border-top-color: var(--color-error);
+  }
+
+  .strip-name {
+    font-size: var(--wk-fs-xs);
+    font-weight: 700;
+  }
+
+  .strip-phase {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-mute);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .phase-swatch {
+    width: 8px;
+    height: 22px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .lane-picks {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+
+  .lane-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.4rem;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    font-size: var(--wk-fs-xs);
+    cursor: pointer;
+  }
+  .lane-pick-on {
+    border-color: var(--color-primary);
+    background: color-mix(in oklab, var(--color-primary) 10%, transparent);
+    font-weight: 600;
+  }
+  .lane-pick input { accent-color: var(--color-primary); }
+
+  .warn-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 46rem;
+    margin-bottom: 0.9rem;
+    padding: 0.5rem 0.7rem;
+    border-radius: var(--wk-r-sm);
+    font-size: var(--wk-fs-xs);
+    background: color-mix(in oklab, var(--color-warning) 13%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+  }
+
+  /* ── Footer ─────────────────────────────────────────────────────────────── */
+  .cfg-foot {
+    flex-shrink: 0;
+    padding: 0.5rem 1.25rem;
+    border-top: 1px solid var(--wk-line);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .danger-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    align-self: flex-start;
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .danger-toggle:hover { color: var(--color-error); }
+
+  .danger-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--color-error) 35%, transparent);
+    border-radius: var(--wk-r-sm);
+    background: color-mix(in oklab, var(--color-error) 7%, transparent);
+  }
+
+  .danger-note {
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
   }
 </style>

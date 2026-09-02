@@ -1,9 +1,14 @@
-import { nanoid } from 'nanoid';
-import type { AppState, CalendarEvent } from '../types';
-import { formatDate } from '../utils/timeUtils';
+import { nanoid } from "nanoid";
+import type { AppState, CalendarEvent } from "../types";
+import { formatDate } from "../utils/timeUtils";
 
-const STATE_KEY = 'wk-planner-state';
-const CURRENT_VERSION = 4;
+const STATE_KEY = "wk-planner-state";
+const CURRENT_VERSION = 5;
+
+// A colour picker fires an input event per mouse move, so writes are coalesced
+// into one per frame-ish window instead of one per event. Anything still pending
+// is flushed before the page goes away.
+const SAVE_DEBOUNCE_MS = 200;
 
 function nextMonday(): string {
   const d = new Date();
@@ -18,56 +23,58 @@ export function createDefaultState(): AppState {
   const roomId = nanoid();
   const kaderId = nanoid();
   const groupIds = [nanoid(), nanoid(), nanoid()];
+  const kaderPhaseId = nanoid();
+  const gruppenPhaseId = nanoid();
 
   return {
     version: CURRENT_VERSION,
     wkStartDate: nextMonday(),
     groups: [
-      { id: kaderId, label: 'K', enabled: true, order: 0 },
-      { id: groupIds[0]!, label: 'G1', enabled: true, order: 1 },
-      { id: groupIds[1]!, label: 'G2', enabled: true, order: 2 },
-      { id: groupIds[2]!, label: 'G3', enabled: true, order: 3 },
+      { id: kaderId, label: "K", enabled: true, order: 0 },
+      { id: groupIds[0]!, label: "G1", enabled: true, order: 1 },
+      { id: groupIds[1]!, label: "G2", enabled: true, order: 2 },
+      { id: groupIds[2]!, label: "G3", enabled: true, order: 3 },
     ],
     phases: [
-      { id: nanoid(), label: 'Planungskurs', startDay: 0, endDay: 1, groupIds: [kaderId] },
-      { id: nanoid(), label: 'Gruppen', startDay: 2, endDay: 4, groupIds },
+      {
+        id: kaderPhaseId,
+        label: "KVK",
+        startDay: 0,
+        endDay: 1,
+        groupIds: [kaderId],
+      },
+      {
+        id: gruppenPhaseId,
+        label: "WK",
+        startDay: 2,
+        endDay: 4,
+        groupIds,
+      },
     ],
-    teachers: [
-      { id: teacherId, name: 'Teacher 1', shortName: 'T1', color: '#4299e1' },
-    ],
-    rooms: [
-      { id: roomId, name: 'Room 1', color: '#48bb78', excludeFromConflictCheck: false },
-    ],
+    teachers: [],
+    rooms: [],
     subjects: [
       {
         id: nanoid(),
-        name: 'Mittagessen',
-        color: '#a0aec0',
+        name: "Mittagessen",
+        color: "#a0aec0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 60,
         isBreak: true,
         isMultiGroup: true,
+        phaseId: null,
       },
       {
         id: nanoid(),
-        name: 'Pause',
-        color: '#cbd5e0',
+        name: "Pause",
+        color: "#cbd5e0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 15,
         isBreak: true,
-        isMultiGroup: true,
-      },
-      {
-        id: nanoid(),
-        name: 'Karteneröffnung/-führung',
-        color: '#9f7aea',
-        defaultTeacherIds: [],
-        defaultRoomId: roomId,
-        defaultDurationMinutes: 90,
-        isBreak: false,
         isMultiGroup: false,
+        phaseId: null,
       },
     ],
     events: [],
@@ -77,16 +84,62 @@ export function createDefaultState(): AppState {
 function stripConflicts(state: AppState): AppState {
   return {
     ...state,
-    events: state.events.map(({ conflicts: _omit, ...ev }) => ev as CalendarEvent),
+    events: state.events.map(
+      ({ conflicts: _omit, ...ev }) => ev as CalendarEvent,
+    ),
   };
 }
 
-export function saveState(state: AppState): void {
+let pending: AppState | null = null;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function writeNow(): void {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (pending === null) return;
+  const toWrite = pending;
+  pending = null;
   try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(stripConflicts(state)));
+    localStorage.setItem(STATE_KEY, JSON.stringify(stripConflicts(toWrite)));
   } catch {
     // localStorage full or unavailable
   }
+}
+
+export function saveState(state: AppState): void {
+  pending = state;
+  if (saveTimer === null) saveTimer = setTimeout(writeNow, SAVE_DEBOUNCE_MS);
+}
+
+/** Write any debounced state immediately. */
+export function flushSave(): void {
+  writeNow();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", writeNow);
+  window.addEventListener("pagehide", writeNow);
+}
+
+/**
+ * Shape check, not a migration. The app is WIP and version bumps intentionally
+ * reset — but a truncated or hand-edited entry used to be cast straight to
+ * AppState and crash on first render, with no way back except devtools.
+ */
+export function isValidState(value: unknown): value is AppState {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as Partial<AppState>;
+  return (
+    typeof s.wkStartDate === "string" &&
+    Array.isArray(s.teachers) &&
+    Array.isArray(s.rooms) &&
+    Array.isArray(s.subjects) &&
+    Array.isArray(s.groups) &&
+    Array.isArray(s.phases) &&
+    Array.isArray(s.events)
+  );
 }
 
 export function loadState(): AppState {
@@ -94,17 +147,18 @@ export function loadState(): AppState {
     const raw = localStorage.getItem(STATE_KEY);
     if (!raw) return seedDefaultState();
 
-    const parsed = JSON.parse(raw) as AppState;
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!isValidState(parsed)) return createDefaultState();
 
     if (parsed.version !== CURRENT_VERSION) {
-      const confirmed = window.confirm(
-        `Saved data format is incompatible (stored: v${parsed.version ?? '?'}, current: v${CURRENT_VERSION}).\n\n` +
-        `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`
+      const keepOld = window.confirm(
+        `Saved data format is incompatible (stored: v${parsed.version ?? "?"}, current: v${CURRENT_VERSION}).\n\n` +
+          `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`,
       );
-      if (confirmed) {
-        return createDefaultState();
-      }
-      // User chose to keep old data — returned as-is, app may behave unexpectedly
+      if (keepOld) return createDefaultState();
+      // User chose to keep old data — it passed the shape check, but individual
+      // fields may still mean something different in this version.
       return parsed;
     }
 
@@ -116,10 +170,6 @@ export function loadState(): AppState {
 
 function seedDefaultState(): AppState {
   const state = createDefaultState();
-  try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(state));
-  } catch {
-    // localStorage full or unavailable
-  }
+  saveState(state);
   return state;
 }
