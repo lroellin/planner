@@ -21,7 +21,7 @@
   {#if open}
     <div class="panel-body">{@render children()}</div>
   {:else}
-    <button class="panel-rail" onclick={() => (open = true)} title="Expand {label}">
+    <button class="panel-rail" onclick={() => (open = true)} title="{label} ausklappen">
       {#if badge !== undefined && badge > 0}
         <span class="rail-badge">{badge}</span>
       {/if}
@@ -33,10 +33,10 @@
     class="panel-toggle"
     onclick={() => (open = !open)}
     aria-expanded={open}
-    title="{open ? 'Collapse' : 'Expand'} {label}"
+    title="{label} {open ? 'einklappen' : 'ausklappen'}"
   >
     <span class="toggle-chevron">{chevron}</span>
-    {#if open}<span class="toggle-text">Collapse</span>{/if}
+    {#if open}<span class="toggle-text">Einklappen</span>{/if}
   </button>
 </aside>
 

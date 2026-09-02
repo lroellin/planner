@@ -101,7 +101,7 @@
         class="goal-input input input-bordered input-sm flex-1 min-w-0"
         type="text"
         bind:value={rows[i]}
-        placeholder="What the group can do afterwards"
+        placeholder="Was die Gruppe danach kann"
         onchange={commit}
         onblur={commit}
         onkeydown={(e) => onKeydown(e, i)}
@@ -111,18 +111,18 @@
         type="button"
         class="goal-x"
         onclick={() => removeRow(i)}
-        aria-label="Remove goal {i + 1}"
+        aria-label="Lernziel {i + 1} entfernen"
       ><Icon name="x" size={13} /></button>
     </div>
   {/each}
 
   <button type="button" class="goal-add" onclick={() => addRow()}>
     <Icon name="plus" size={12} />
-    {rows.length === 0 ? 'Add a goal' : 'Add another'}
+    {rows.length === 0 ? 'Lernziel hinzufügen' : 'Weiteres hinzufügen'}
   </button>
 
   {#if rows.length > 0}
-    <p class="field-hint">Enter opens the next line · paste a list to fill several at once</p>
+    <p class="field-hint">Enter öffnet die nächste Zeile · eine Liste einfügen füllt mehrere aufs Mal</p>
   {/if}
 </div>
 

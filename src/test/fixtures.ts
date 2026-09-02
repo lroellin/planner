@@ -8,7 +8,7 @@ import type { AppState, CalendarEvent, GroupSelector, Subject, TimeWindow } from
  */
 export function makeState(overrides: Partial<AppState> = {}): AppState {
   return {
-    version: 6,
+    version: 8,
     name: 'Test WK',
     wkStartDate: '2026-09-07',
     groups: [
@@ -18,8 +18,8 @@ export function makeState(overrides: Partial<AppState> = {}): AppState {
       { id: 'g3', label: 'G3', enabled: true, order: 3 },
     ],
     phases: [
-      { id: 'kader', label: 'Planungskurs', startDay: 0, endDay: 1, groupIds: ['k'] },
-      { id: 'gruppen', label: 'Gruppen', startDay: 2, endDay: 4, groupIds: ['g1', 'g2', 'g3'] },
+      { id: 'kader', label: 'KVK', startDay: 0, endDay: 1, groupIds: ['k'] },
+      { id: 'gruppen', label: 'WK', startDay: 2, endDay: 4, groupIds: ['g1', 'g2', 'g3'] },
     ],
     teachers: [
       { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1', unavailable: [] },

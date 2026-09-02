@@ -41,6 +41,12 @@ export interface Subject {
   color: string;
   defaultTeacherIds: ID[];
   defaultRoomId: ID | null;
+  /**
+   * How long the subject takes — and therefore how much of it every group owes.
+   * There is no separate target: if Leitungsbau is 2.5 h then each group needs
+   * 2.5 h of it, whether that is one block or 1.5 h + 1 h. Coverage measures
+   * placed minutes against this.
+   */
   defaultDurationMinutes: number;
   isBreak: boolean;
   isMultiGroup: boolean; // if true, placing schedules it for every lane of the phase at once
@@ -98,6 +104,18 @@ export type ConflictKind =
   | 'room-blocked';
 
 export const HARD_CONFLICT_KINDS: ConflictKind[] = ['teacher', 'group', 'teacher-absent'];
+
+/**
+ * What each kind is called on screen. One map, because the conflict panel and
+ * the card tooltip both name the same thing and had no reason to disagree.
+ */
+export const CONFLICT_KIND_LABELS: Record<ConflictKind, string> = {
+  teacher: 'Gruppenführer',
+  room: 'Raum',
+  group: 'Gruppe',
+  'teacher-absent': 'Abwesend',
+  'room-blocked': 'Gesperrt',
+};
 
 export function isHardConflict(kind: ConflictKind): boolean {
   return HARD_CONFLICT_KINDS.includes(kind);

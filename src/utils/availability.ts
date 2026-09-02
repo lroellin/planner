@@ -25,9 +25,9 @@ const PRESET_TIMES: Record<Exclude<WindowPreset, 'custom'>, [string, string]> = 
 };
 
 export const PRESET_LABELS: { key: Exclude<WindowPreset, 'custom'>; label: string }[] = [
-  { key: 'all-day', label: 'All day' },
-  { key: 'morning', label: 'Morning' },
-  { key: 'afternoon', label: 'Afternoon' },
+  { key: 'all-day', label: 'Ganzer Tag' },
+  { key: 'morning', label: 'Vormittag' },
+  { key: 'afternoon', label: 'Nachmittag' },
 ];
 
 /** Which preset a window's times correspond to, or 'custom'. */
@@ -66,22 +66,22 @@ export function windowOverlaps(
   return minutes(startTime) < minutes(w.endTime) && minutes(w.startTime) < minutes(endTime);
 }
 
-/** "Mon, Tue" — the days a window covers, in week order. */
+/** "Mo, Di" — the days a window covers, in week order. */
 export function windowDayLabel(w: TimeWindow): string {
-  if (w.days.length === 0) return 'no day';
-  if (w.days.length === DAY_NAMES.length) return 'Mon–Fri';
+  if (w.days.length === 0) return 'kein Tag';
+  if (w.days.length === DAY_NAMES.length) return 'Mo–Fr';
   return [...w.days].sort((a, b) => a - b).map(d => DAY_NAMES[d] ?? '?').join(', ');
 }
 
 export function windowTimeLabel(w: TimeWindow): string {
   const preset = windowPreset(w);
-  if (preset === 'all-day') return 'all day';
-  if (preset === 'morning') return 'morning';
-  if (preset === 'afternoon') return 'afternoon';
+  if (preset === 'all-day') return 'ganzer Tag';
+  if (preset === 'morning') return 'Vormittag';
+  if (preset === 'afternoon') return 'Nachmittag';
   return `${w.startTime}–${w.endTime}`;
 }
 
-/** One line for the conflict panel and the config list: "Wed, Thu · afternoon". */
+/** One line for the conflict panel and the config list: "Mi, Do · Nachmittag". */
 export function describeWindow(w: TimeWindow): string {
   return `${windowDayLabel(w)} · ${windowTimeLabel(w)}`;
 }

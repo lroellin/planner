@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { nanoid } from 'nanoid';
   import Toolbar from './components/Toolbar.svelte';
   import Sidebar from './components/Sidebar.svelte';
   import Calendar from './components/Calendar.svelte';
@@ -10,19 +9,25 @@
   import ConfigPanel from './components/ConfigPanel.svelte';
   import SidePanel from './components/SidePanel.svelte';
   import ReportPanel from './components/ReportPanel.svelte';
+  import ShortcutsDialog from './components/ShortcutsDialog.svelte';
   import Toasts from './components/Toasts.svelte';
   import Icon from './components/Icon.svelte';
   import {
-    getState, getIssueCount, updateEvent, removeEvent, addEvent,
+    getState, getIssueCount, updateEvents, removeEvents, duplicateEvents,
   } from './state/store.svelte';
   import {
-    getQuickEdit, closeQuickEdit, getSelectedEventId, selectEvent, getDensity, slotHeight,
+    getQuickEdit, closeQuickEdit, getSelectedEventId, getSelectedEventIds, setSelection,
+    clearSelection, getDensity, slotHeight, suppressNextDateClick,
   } from './state/ui.svelte';
-  import { phaseGroups, phaseDayCount, addMinutesToTime, timeDiffMinutes } from './utils/timeUtils';
-  import type { EventFilter, Phase, ReportTab } from './types';
+  import {
+    phaseGroups, phaseDayCount, addMinutesToTime, timeDiffMinutes, clampDayIndex, orderedPhases,
+  } from './utils/timeUtils';
+  import { isEditingTarget } from './utils/format';
+  import type { EventFilter, ID, Phase, ReportTab } from './types';
 
   let configOpen = $state(false);
   let reportOpen = $state(false);
+  let shortcutsOpen = $state(false);
   let reportTab = $state<ReportTab>('coverage');
   let sidebarOpen = $state(true);
   // Collapsed by default: the rail keeps the issue badge in view, and the grid
@@ -40,11 +45,9 @@
   const conflictCount = $derived(getIssueCount());
   const hasEvents = $derived(getState().events.length > 0);
   const quickEdit = $derived(getQuickEdit());
+  const selectedIds = $derived(getSelectedEventIds());
 
-  // Stored order is insertion order; the week has to read left to right.
-  const orderedPhases = $derived(
-    [...getState().phases].sort((a, b) => a.startDay - b.startDay),
-  );
+  const phases = $derived(orderedPhases(getState()));
 
   // Column count drives each phase's share of the width, so lanes stay the same
   // width across the whole week regardless of how many a phase has.
@@ -72,7 +75,7 @@
 
   $effect(() => {
     // Re-observe whenever the segments themselves are rebuilt.
-    orderedPhases.length;
+    phases.length;
     getDensity();
     if (!scroller) return;
 
@@ -89,30 +92,48 @@
   }
 
   // ─── Keyboard editing on the grid ──────────────────────────────────────────
-  // The selected card can be nudged without reaching for the mouse: this is the
+  // The selected cards can be nudged without reaching for the mouse: this is the
   // fastest way to close a gap left by a break, and it works on the phase the
   // event already lives in.
-  function isEditing(target: EventTarget | null): boolean {
-    const el = target as HTMLElement | null;
-    if (!el?.tagName) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable;
-  }
 
   function handleGridKeys(e: KeyboardEvent): void {
-    if (isEditing(e.target)) return;
+    if (isEditingTarget(e.target)) return;
 
-    if (e.key === 'Escape') {
-      closeQuickEdit();
-      selectEvent(null);
+    // "?" is the one shortcut that has to be discoverable without being known.
+    // It closes itself, but never opens on top of another dialog.
+    if (e.key === '?') {
+      if (shortcutsOpen) {
+        e.preventDefault();
+        shortcutsOpen = false;
+        return;
+      }
+      if (configOpen || reportOpen || selectedEventId !== null) return;
+      e.preventDefault();
+      shortcutsOpen = true;
       return;
     }
 
-    const id = getSelectedEventId();
-    if (!id || selectedEventId !== null || configOpen || reportOpen) return;
-    const ev = getState().events.find(x => x.id === id);
-    if (!ev) return;
+    if (e.key === 'Escape') {
+      closeQuickEdit();
+      clearSelection();
+      return;
+    }
 
-    const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
+    const overlayOpen = selectedEventId !== null || configOpen || reportOpen || shortcutsOpen;
+
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A') && !overlayOpen) {
+      e.preventDefault();
+      selectAllVisible();
+      return;
+    }
+
+    const ids = getSelectedEventIds();
+    if (ids.length === 0 || overlayOpen) return;
+
+    const state = getState();
+    const events = state.events.filter(ev => ids.includes(ev.id));
+    if (events.length === 0) return;
+
     const shift = e.shiftKey;
 
     switch (e.key) {
@@ -121,43 +142,135 @@
         e.preventDefault();
         const delta = e.key === 'ArrowUp' ? -15 : 15;
         if (shift) {
-          // Resize: never below one slot.
-          const next = Math.max(15, minutes + delta);
-          updateEvent(id, { endTime: addMinutesToTime(ev.startTime, next) }, 'resizing');
+          // Resize: never below one slot. Each block keeps its own length.
+          updateEvents(ids, ev => {
+            const minutes = Math.max(15, timeDiffMinutes(ev.startTime, ev.endTime) + delta);
+            return { endTime: addMinutesToTime(ev.startTime, minutes) };
+          }, 'in der Dauer ändern');
         } else {
-          const start = addMinutesToTime(ev.startTime, delta);
-          updateEvent(id, { startTime: start, endTime: addMinutesToTime(start, minutes) }, 'moving');
+          updateEvents(ids, ev => {
+            const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
+            const start = addMinutesToTime(ev.startTime, delta);
+            return { startTime: start, endTime: addMinutesToTime(start, minutes) };
+          }, 'verschieben');
         }
         break;
       }
       case 'ArrowLeft':
       case 'ArrowRight': {
         e.preventDefault();
-        const dayIndex = Math.min(4, Math.max(0, ev.dayIndex + (e.key === 'ArrowLeft' ? -1 : 1)));
-        if (dayIndex !== ev.dayIndex) updateEvent(id, { dayIndex }, 'moving');
+        const step = e.key === 'ArrowLeft' ? -1 : 1;
+        // At the edge of the week nothing can move, and an undo entry for a
+        // keypress that changed nothing is worse than no feedback.
+        if (events.every(ev => clampDayIndex(ev.dayIndex + step) === ev.dayIndex)) break;
+        updateEvents(ids, ev => ({ dayIndex: clampDayIndex(ev.dayIndex + step) }), 'verschieben');
         break;
       }
       case 'Delete':
       case 'Backspace':
         e.preventDefault();
-        removeEvent(id);
-        selectEvent(null);
+        removeEvents(ids);
+        clearSelection();
         closeQuickEdit();
         break;
       case 'Enter':
         e.preventDefault();
         closeQuickEdit();
-        selectedEventId = id;
+        selectedEventId = getSelectedEventId();
         break;
       case 'd':
       case 'D':
         if (e.metaKey || e.ctrlKey) {
           e.preventDefault();
-          const { conflicts: _omit, ...copy } = ev;
-          addEvent({ ...copy, id: nanoid() }, 'duplicating');
+          // Select the copies, not the originals: the next arrow key belongs to
+          // what was just created.
+          const copies = duplicateEvents(ids);
+          if (copies.length > 0) setSelection(copies);
         }
         break;
     }
+  }
+
+  /** Everything the grid is currently drawing — the filter narrows this too. */
+  function selectAllVisible(): void {
+    if (!scroller) return;
+    const ids = [...scroller.querySelectorAll<HTMLElement>('.fc-event[data-wk-event-id]')]
+      .map(el => el.dataset['wkEventId'])
+      .filter((id): id is ID => Boolean(id));
+    closeQuickEdit();
+    // A multi-group event is drawn once per lane, so the same id comes back
+    // several times.
+    setSelection([...new Set(ids)]);
+  }
+
+  // ─── Marquee ───────────────────────────────────────────────────────────────
+  // Dragging across empty grid selects what it covers. FullCalendar has no
+  // range selection enabled, so the empty background is free for this; the only
+  // thing that has to be kept out of the way is its dateClick, which fires on
+  // the mouseup that ends the marquee.
+
+  interface Marquee { x1: number; y1: number; x2: number; y2: number; }
+  let marquee = $state<Marquee | null>(null);
+
+  const marqueeRect = $derived(
+    marquee
+      ? {
+          left: Math.min(marquee.x1, marquee.x2),
+          top: Math.min(marquee.y1, marquee.y2),
+          width: Math.abs(marquee.x2 - marquee.x1),
+          height: Math.abs(marquee.y2 - marquee.y1),
+        }
+      : null,
+  );
+
+  function eventsWithin(rect: { left: number; top: number; width: number; height: number }): ID[] {
+    if (!scroller) return [];
+    const right = rect.left + rect.width;
+    const bottom = rect.top + rect.height;
+    const hit = new Set<ID>();
+    for (const el of scroller.querySelectorAll<HTMLElement>('.fc-event[data-wk-event-id]')) {
+      const r = el.getBoundingClientRect();
+      if (r.right < rect.left || r.left > right || r.bottom < rect.top || r.top > bottom) continue;
+      const id = el.dataset['wkEventId'];
+      if (id) hit.add(id);
+    }
+    return [...hit];
+  }
+
+  function onScrollerPointerDown(e: PointerEvent): void {
+    if (e.button !== 0 || !scroller) return;
+    const target = e.target as HTMLElement | null;
+    // Cards own their own drag and resize gestures.
+    if (!target || target.closest('.fc-event')) return;
+
+    const origin = { x: e.clientX, y: e.clientY };
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    let base: ID[] = [];
+    let active = false;
+
+    const move = (ev: PointerEvent): void => {
+      // Below the threshold this is still a click on an empty slot, which is
+      // how a subject gets placed without dragging.
+      if (!active && Math.hypot(ev.clientX - origin.x, ev.clientY - origin.y) < 6) return;
+      if (!active) {
+        active = true;
+        base = additive ? getSelectedEventIds() : [];
+        closeQuickEdit();
+      }
+      marquee = { x1: origin.x, y1: origin.y, x2: ev.clientX, y2: ev.clientY };
+      if (marqueeRect) setSelection([...new Set([...base, ...eventsWithin(marqueeRect)])]);
+    };
+
+    const up = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (!active) return;
+      suppressNextDateClick();
+      marquee = null;
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
   }
 
   /**
@@ -219,17 +332,23 @@
 
 <div class="app-layout">
   <div class="toolbar-wrapper">
-    <Toolbar bind:configOpen bind:filter onreport={openReport} />
+    <Toolbar
+      bind:configOpen
+      bind:filter
+      onreport={openReport}
+      onshowissues={() => (conflictsOpen = true)}
+      onshowshortcuts={() => (shortcutsOpen = true)}
+    />
   </div>
 
   <div class="main-area">
-    <SidePanel side="left" bind:open={sidebarOpen} label="Subjects" width="208px">
+    <SidePanel side="left" bind:open={sidebarOpen} label="Themen" width="208px">
       <Sidebar />
     </SidePanel>
 
     <div class="calendar-wrapper" bind:this={calendarWrapper}>
       <div class="phase-labels">
-        {#each orderedPhases as phase, i (phase.id)}
+        {#each phases as phase, i (phase.id)}
           <div
             class="phase-label wk-eyebrow"
             class:phase-label--noaxis={i > 0}
@@ -240,12 +359,13 @@
         {/each}
       </div>
 
-      <div class="phase-scroll" bind:this={scroller}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="phase-scroll" bind:this={scroller} onpointerdown={onScrollerPointerDown}>
         <!-- Keyed on the density: FullCalendar measures one slot row at render
              and sizes the grid from it, then stretches the rows back out to that
              height, so a shrink only takes effect on a fresh instance. -->
         {#key getDensity()}
-          {#each orderedPhases as phase, i (phase.id)}
+          {#each phases as phase, i (phase.id)}
             <div
               class="phase-seg"
               class:phase-seg--noaxis={i > 0}
@@ -259,19 +379,53 @@
         {#if !hasEvents}
           <div class="empty-hint" aria-hidden="true">
             <Icon name="arrowLeft" size={20} />
-            <div>Drag a subject from the sidebar onto the calendar, or click an empty slot.</div>
+            <div>Ein Thema aus der Seitenleiste auf den Kalender ziehen, oder ein leeres Feld anklicken.</div>
           </div>
         {/if}
       </div>
     </div>
 
-    <SidePanel side="right" bind:open={conflictsOpen} label="Conflicts" width="268px" badge={conflictCount}>
+    <SidePanel side="right" bind:open={conflictsOpen} label="Konflikte" width="268px" badge={conflictCount}>
       <ConflictPanel bind:selectedEventId />
     </SidePanel>
   </div>
 </div>
 
-{#if quickEdit && selectedEventId === null}
+{#if marqueeRect && marqueeRect.width > 2 && marqueeRect.height > 2}
+  <div
+    class="marquee"
+    aria-hidden="true"
+    style="left:{marqueeRect.left}px; top:{marqueeRect.top}px; width:{marqueeRect.width}px; height:{marqueeRect.height}px"
+  ></div>
+{/if}
+
+<!-- A set has no popover and no modal, so without this bar the only way to act
+     on one is the keyboard, and nothing on screen says how many are selected. -->
+{#if selectedIds.length > 1}
+  <div class="selbar" role="status">
+    <span class="selbar-count wk-num">{selectedIds.length}</span>
+    <span class="selbar-text">Lektionen ausgewählt</span>
+    <div class="selbar-sep"></div>
+    <button
+      class="selbar-btn"
+      onclick={() => {
+        const copies = duplicateEvents(selectedIds);
+        if (copies.length > 0) setSelection(copies);
+      }}
+    >
+      <Icon name="copy" size={13} /> Duplizieren
+    </button>
+    <button
+      class="selbar-btn selbar-btn-danger"
+      onclick={() => { removeEvents(selectedIds); clearSelection(); }}
+    >
+      <Icon name="trash" size={13} /> Löschen
+    </button>
+    <button class="selbar-btn" onclick={clearSelection}>Aufheben</button>
+  </div>
+{/if}
+
+{#if quickEdit && selectedEventId === null && selectedIds.length <= 1}
   <EventPopover
     quick={quickEdit}
     onedit={(id) => { closeQuickEdit(); selectedEventId = id; }}
@@ -288,6 +442,10 @@
 
 {#if reportOpen}
   <ReportPanel tab={reportTab} onclose={() => (reportOpen = false)} />
+{/if}
+
+{#if shortcutsOpen}
+  <ShortcutsDialog onclose={() => (shortcutsOpen = false)} />
 {/if}
 
 <Toasts />
@@ -391,6 +549,69 @@
     border-left: 0;
   }
 
+  /* ── Marquee & selection bar ────────────────────────────────────────────── */
+  .marquee {
+    position: fixed;
+    z-index: 900;
+    pointer-events: none;
+    border: 1px solid var(--color-primary);
+    background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+    border-radius: 3px;
+  }
+
+  .selbar {
+    position: fixed;
+    left: 50%;
+    /* Above the toasts, which own the bottom centre. */
+    bottom: 68px;
+    transform: translateX(-50%);
+    z-index: 950;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem 0.4rem 0.7rem;
+    background: var(--wk-surface);
+    border: 1px solid var(--wk-line-strong);
+    border-radius: 999px;
+    box-shadow: var(--wk-shadow-2);
+    font-size: var(--wk-fs-xs);
+  }
+
+  .selbar-count {
+    font-weight: 700;
+    color: var(--color-primary);
+  }
+
+  .selbar-text {
+    color: var(--wk-text-mute);
+  }
+
+  .selbar-sep {
+    width: 1px;
+    height: 16px;
+    background: var(--wk-line);
+  }
+
+  .selbar-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    border: none;
+    border-radius: 999px;
+    background: none;
+    color: var(--wk-text);
+    font-size: var(--wk-fs-xs);
+    font-weight: 550;
+    cursor: pointer;
+  }
+  .selbar-btn:hover { background: var(--wk-surface-alt); }
+
+  .selbar-btn-danger { color: var(--color-error); }
+  .selbar-btn-danger:hover {
+    background: color-mix(in oklab, var(--color-error) 12%, transparent);
+  }
+
   .empty-hint {
     position: absolute;
     top: 34%;
@@ -424,7 +645,9 @@
       margin: 10mm;
     }
 
-    .toolbar-wrapper {
+    .toolbar-wrapper,
+    .selbar,
+    .marquee {
       display: none !important;
     }
 

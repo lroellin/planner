@@ -50,6 +50,15 @@ export function canRedo(): boolean { return future.length > 0; }
 export function peekUndoLabel(): string | null { return past.at(-1)?.label ?? null; }
 export function peekRedoLabel(): string | null { return future.at(-1)?.label ?? null; }
 
+/**
+ * The actions undo would take back, most recent first — the history menu.
+ * Pressing Ctrl+Z five times and watching the grid to work out where you have
+ * landed is not a way to go back to before lunch was moved.
+ */
+export function undoLabels(limit = MAX_DEPTH): string[] {
+  return past.slice(-limit).reverse().map(entry => entry.label);
+}
+
 export function clearUndo(): void {
   past = [];
   future = [];

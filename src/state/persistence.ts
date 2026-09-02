@@ -4,7 +4,7 @@ import { formatDate } from "../utils/timeUtils";
 import { migrateState } from "./migrations";
 
 const STATE_KEY = "wk-planner-state";
-export const CURRENT_VERSION = 6;
+export const CURRENT_VERSION = 8;
 
 // A colour picker fires an input event per mouse move, so writes are coalesced
 // into one per frame-ish window instead of one per event. Anything still pending
@@ -168,11 +168,11 @@ export function loadState(): AppState {
       return migrated;
     }
 
-    const keepOld = window.confirm(
-      `Saved data format is incompatible (stored: v${parsed.version ?? "?"}, current: v${CURRENT_VERSION}).\n\n` +
-        `Press OK to reset to defaults, or Cancel to try loading the old data (may be unstable).`,
+    const reset = window.confirm(
+      `Das gespeicherte Datenformat passt nicht (gespeichert: v${parsed.version ?? "?"}, aktuell: v${CURRENT_VERSION}).\n\n` +
+        `OK setzt auf die Vorgaben zurück, Abbrechen versucht die alten Daten trotzdem zu laden (kann instabil sein).`,
     );
-    if (keepOld) return createDefaultState();
+    if (reset) return createDefaultState();
     // User chose to keep old data — it passed the shape check, but individual
     // fields may still mean something different in this version.
     return parsed;
@@ -220,11 +220,11 @@ export function parsePlan(text: string): ParseResult {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { ok: false, error: "That file is not valid JSON." };
+    return { ok: false, error: "Diese Datei ist kein gültiges JSON." };
   }
 
   if (!isValidState(parsed)) {
-    return { ok: false, error: "That file is not a WK Planner plan." };
+    return { ok: false, error: "Diese Datei ist kein WK-Planer-Plan." };
   }
 
   if (parsed.version === CURRENT_VERSION) return { ok: true, state: parsed };
@@ -235,7 +235,7 @@ export function parsePlan(text: string): ParseResult {
   return {
     ok: false,
     error:
-      `That plan is v${parsed.version} and this app reads v${CURRENT_VERSION}. ` +
-      "There is no upgrade path for it.",
+      `Dieser Plan ist v${parsed.version}, diese App liest v${CURRENT_VERSION}. ` +
+      "Es gibt keinen Aktualisierungspfad dafür.",
   };
 }

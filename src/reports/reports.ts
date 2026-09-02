@@ -1,21 +1,26 @@
-import type { AppState, Group, ID, Phase, Room, Subject, Teacher } from '../types';
+import type { AppState, CalendarEvent, Group, ID, Phase, Room, Subject, Teacher } from '../types';
 import {
   effectiveTeacherIds, effectiveRoomId, eventInPhase, phaseGroups, eventGroupIds, timeDiffMinutes,
-  sortSubjects,
+  sortSubjects, isEventActive,
 } from '../utils/timeUtils';
 
 // ─── Coverage: has every group had every subject? ─────────────────────────────
 
 export interface CoverageRow {
   subject: Subject;
-  counts: Map<ID, number>; // groupId → number of placed instances
-  missing: number;         // enabled groups with zero instances
+  counts: Map<ID, number>;  // groupId → number of placed instances
+  minutes: Map<ID, number>; // groupId → placed minutes
+/** Minutes each lane owes: the subject's own duration. */
+  target: number;
+  missing: number;          // enabled groups with zero instances
   /**
-   * Every group has it, but not the same number of times. "Complete" hid this:
-   * one group getting the lesson twice while another got it once is a planning
-   * mistake, not a finished row.
+   * Every group has the full time, but not the same amount of it — someone got
+   * more than the subject calls for. How the time was *cut up* is not a mistake
+   * (1.5 h + 1 h is a fine way to deliver 2.5 h); having a different total is.
    */
   uneven: boolean;
+  /** Every group has some of it, but at least one lane is under the duration. */
+  short: boolean;
 }
 
 export interface CoverageSection {
@@ -23,6 +28,16 @@ export interface CoverageSection {
   rows: CoverageRow[];
   groupIds: ID[];
   totalMissing: number;
+}
+
+/** How a row reads at a glance. One definition, used by the report and the sidebar. */
+export type CoverageStatus = 'missing' | 'short' | 'uneven' | 'complete';
+
+export function coverageStatus(row: Pick<CoverageRow, 'missing' | 'short' | 'uneven'>): CoverageStatus {
+  if (row.missing > 0) return 'missing';
+  if (row.short) return 'short';
+  if (row.uneven) return 'uneven';
+  return 'complete';
 }
 
 /** The widest phase — where an as-yet unplaced subject is assumed to belong. */
@@ -55,6 +70,33 @@ export function subjectPhases(state: AppState, subjectId: ID): Phase[] {
   return state.phases.filter(p => placed.some(ev => eventInPhase(state, ev, p)));
 }
 
+interface LaneTally {
+  count: number;
+  minutes: number;
+}
+
+/**
+ * What each lane of one phase has of one subject. Minutes are what count: a
+ * subject is delivered when the time is there, so 2×45 and 1×90 are the same
+ * lesson. The instance count is kept only as the small print under it.
+ */
+function tallyLanes(state: AppState, subjectId: ID, phase: Phase): Map<ID, LaneTally> {
+  const tally = new Map<ID, LaneTally>(
+    phaseGroups(state, phase).map(g => [g.id, { count: 0, minutes: 0 }]),
+  );
+  for (const ev of state.events) {
+    if (ev.subjectId !== subjectId || !eventInPhase(state, ev, phase)) continue;
+    const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
+    for (const gid of eventGroupIds(state, ev)) {
+      const lane = tally.get(gid);
+      if (!lane) continue;
+      lane.count++;
+      lane.minutes += minutes;
+    }
+  }
+  return tally;
+}
+
 export function buildCoverage(state: AppState): CoverageSection[] {
   return state.phases.map(phase => {
     const groupIds = phaseGroups(state, phase).map(g => g.id);
@@ -64,56 +106,120 @@ export function buildCoverage(state: AppState): CoverageSection[] {
       .filter(s => !s.isBreak)
       .filter(s => subjectPhases(state, s.id).some(p => p.id === phase.id))
       .map(subject => {
-        const counts = new Map<ID, number>(groupIds.map(id => [id, 0]));
-        for (const ev of state.events) {
-          if (ev.subjectId !== subject.id || !eventInPhase(state, ev, phase)) continue;
-          for (const gid of eventGroupIds(state, ev)) {
-            if (counts.has(gid)) counts.set(gid, counts.get(gid)! + 1);
-          }
-        }
+        const tally = tallyLanes(state, subject.id, phase);
+        const counts = new Map<ID, number>(groupIds.map(id => [id, tally.get(id)?.count ?? 0]));
+        const minutes = new Map<ID, number>(groupIds.map(id => [id, tally.get(id)?.minutes ?? 0]));
+        const target = subject.defaultDurationMinutes;
+
         const missing = groupIds.filter(id => counts.get(id) === 0).length;
-        const values = groupIds.map(id => counts.get(id) ?? 0);
+        const totals = groupIds.map(id => minutes.get(id) ?? 0);
+        const short = missing === 0 && totals.some(m => m < target);
         const uneven =
-          missing === 0 && values.length > 1 && Math.max(...values) !== Math.min(...values);
-        return { subject, counts, missing, uneven };
+          missing === 0 && !short && totals.length > 1 &&
+          Math.max(...totals) !== Math.min(...totals);
+
+        return { subject, counts, minutes, target, missing, uneven, short };
       });
 
     return { phase, rows, groupIds, totalMissing: rows.reduce((n, r) => n + r.missing, 0) };
   });
 }
 
-/** Lanes covered across the phases this subject is taught in. Drives the sidebar counter. */
-export function coverageForSubject(state: AppState, subjectId: ID): { placed: number; total: number } {
-  const events = state.events.filter(ev => ev.subjectId === subjectId);
+/**
+ * Lane coverage across the phases this subject is taught in — the sidebar
+ * counter. It carries the same `uneven`/`short` verdicts the coverage report
+ * reaches, because a chip that reads a green 3/3 while the report calls the same
+ * row short is the badge people look at all day being the one that is wrong.
+ */
+export function coverageForSubject(
+  state: AppState,
+  subjectId: ID,
+): { placed: number; total: number; uneven: boolean; short: boolean } {
+  const subject = state.subjects.find(s => s.id === subjectId);
+  const target = subject?.defaultDurationMinutes ?? 0;
   let placed = 0;
   let total = 0;
+  let uneven = false;
+  let short = false;
+
   for (const phase of subjectPhases(state, subjectId)) {
     const groups = phaseGroups(state, phase);
+    if (groups.length === 0) continue;
+    const tally = tallyLanes(state, subjectId, phase);
+    const totals = groups.map(g => tally.get(g.id)?.minutes ?? 0);
+
     total += groups.length;
-    placed += groups.filter(g =>
-      events.some(ev => eventInPhase(state, ev, phase) && eventGroupIds(state, ev).includes(g.id)),
-    ).length;
+    placed += groups.filter(g => (tally.get(g.id)?.count ?? 0) > 0).length;
+
+    if (totals.some(m => m === 0)) continue;
+    if (totals.some(m => m < target)) short = true;
+    else if (totals.length > 1 && Math.max(...totals) !== Math.min(...totals)) uneven = true;
   }
-  return { placed, total };
+
+  return { placed, total, uneven, short };
 }
 
 /**
  * Which lanes still lack this subject. The sidebar counter says *that* something
  * is missing; hovering says *where*, which is the question the planner actually
- * has.
+ * has. Lanes that have it but fall short of the target are named too, with how
+ * much time is still owed.
  */
 export function missingLanesForSubject(state: AppState, subjectId: ID): string[] {
-  const events = state.events.filter(ev => ev.subjectId === subjectId);
+  const subject = state.subjects.find(s => s.id === subjectId);
+  const target = subject?.defaultDurationMinutes ?? 0;
   const labels: string[] = [];
   for (const phase of subjectPhases(state, subjectId)) {
+    const tally = tallyLanes(state, subjectId, phase);
     for (const group of phaseGroups(state, phase)) {
-      const covered = events.some(
-        ev => eventInPhase(state, ev, phase) && eventGroupIds(state, ev).includes(group.id),
-      );
-      if (!covered) labels.push(group.label);
+      const lane = tally.get(group.id) ?? { count: 0, minutes: 0 };
+      if (lane.count === 0) labels.push(group.label);
+      else if (lane.minutes < target) {
+        labels.push(`${group.label} (noch ${target - lane.minutes} min)`);
+      }
     }
   }
   return labels;
+}
+
+// ─── Workload ─────────────────────────────────────────────────────────────────
+// What one teacher or one room is booked for. The config detail panes worked
+// this out for themselves, which had already drifted: the teacher pane counted
+// events on switched-off groups and the report did not, so the same week showed
+// two different hour counts depending on where you looked.
+
+export interface ResourceLoad {
+  count: number;
+  minutes: number;
+  /** Weekday indices with at least one booking, in week order. */
+  days: number[];
+  /** Subjects that name this resource as their default. */
+  subjects: Subject[];
+}
+
+function loadFrom(state: AppState, events: CalendarEvent[], subjects: Subject[]): ResourceLoad {
+  return {
+    count: events.length,
+    minutes: events.reduce((n, ev) => n + timeDiffMinutes(ev.startTime, ev.endTime), 0),
+    days: [...new Set(events.map(ev => ev.dayIndex))].sort((a, b) => a - b),
+    subjects: sortSubjects(subjects),
+  };
+}
+
+export function teacherLoad(state: AppState, teacherId: ID): ResourceLoad {
+  const events = state.events.filter(ev =>
+    isEventActive(state, ev) &&
+    effectiveTeacherIds(ev, state.subjects.find(s => s.id === ev.subjectId)).includes(teacherId),
+  );
+  return loadFrom(state, events, state.subjects.filter(s => s.defaultTeacherIds.includes(teacherId)));
+}
+
+export function roomLoad(state: AppState, roomId: ID): ResourceLoad {
+  const events = state.events.filter(ev =>
+    isEventActive(state, ev) &&
+    effectiveRoomId(ev, state.subjects.find(s => s.id === ev.subjectId)) === roomId,
+  );
+  return loadFrom(state, events, state.subjects.filter(s => s.defaultRoomId === roomId));
 }
 
 // ─── Per-teacher plans ────────────────────────────────────────────────────────
@@ -314,7 +420,11 @@ export function buildRoomPlans(state: AppState): RoomPlan[] {
     const entries = state.events
       .filter(ev => {
         const subject = state.subjects.find(s => s.id === ev.subjectId);
-        return subject !== undefined && effectiveRoomId(ev, subject) === room.id;
+        // isEventActive for the same reason the teacher plans skip them: a
+        // booking nobody attends is not a booking.
+        return subject !== undefined
+          && isEventActive(state, ev)
+          && effectiveRoomId(ev, subject) === room.id;
       })
       .map(ev => toEntry(state, ev.id))
       .filter((e): e is ScheduleEntry => e !== null)

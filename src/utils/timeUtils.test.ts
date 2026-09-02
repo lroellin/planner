@@ -167,7 +167,7 @@ describe('time helpers', () => {
     const state = makeState();
     const subject = state.subjects[0]!;
     expect(eventOverrides(makeEvent({ groupId: 'g1' }), subject)).toEqual([]);
-    expect(eventOverrides(makeEvent({ groupId: 'g1', roomId: 'outside' }), subject)).toEqual(['room']);
+    expect(eventOverrides(makeEvent({ groupId: 'g1', roomId: 'outside' }), subject)).toEqual(['Raum']);
   });
 });
 

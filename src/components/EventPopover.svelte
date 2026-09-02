@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { nanoid } from 'nanoid';
   import {
-    getState, updateEvent, removeEvent, addEvent, splitEvent, copyEventToLanes, lanesWithoutEvent,
+    getState, updateEvent, removeEvent, duplicateEvents, splitEvent, copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
   import { closeQuickEdit, selectEvent, type QuickEdit } from '../state/ui.svelte';
   import {
     DAY_NAMES, addMinutesToTime, timeDiffMinutes, effectiveTeacherIds, effectiveRoomId,
-    eventOverrides, snapToSlot,
+    eventOverrides, snapToSlot, splitRange,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
@@ -39,8 +38,11 @@
   let chosenLanes: ID[] = $state([]);
   let splitTime = $state('');
 
-  // A 15-minute event has nothing to split into.
-  const canSplit = $derived(minutes >= 30);
+  // Both halves have to be at least one slot long, so the picker only offers the
+  // slots strictly inside the event and Split is hidden when there are none.
+  const split = $derived(
+    ev ? splitRange(ev.startTime, ev.endTime) : { from: '00:00', to: '00:00', canSplit: false },
+  );
 
   // Sit beside the card, flipping to its left when the right edge is close, and
   // never running off the bottom.
@@ -77,27 +79,26 @@
     updateEvent(
       ev.id,
       { endTime: addMinutesToTime(ev.startTime, min) },
-      `resizing ${subject?.name ?? 'event'}`,
+      `${subject?.name ?? 'Lektion'} in der Dauer ändern`,
     );
   }
 
   function resetField(field: 'teachers' | 'room' | 'duration'): void {
     if (!ev || !subject) return;
-    if (field === 'teachers') updateEvent(ev.id, { teacherIds: 'inherit' }, 'resetting teachers');
-    else if (field === 'room') updateEvent(ev.id, { roomId: 'inherit' }, 'resetting the room');
+    if (field === 'teachers') updateEvent(ev.id, { teacherIds: 'inherit' }, 'Gruppenführer zurücksetzen');
+    else if (field === 'room') updateEvent(ev.id, { roomId: 'inherit' }, 'Raum zurücksetzen');
     else {
       updateEvent(
         ev.id,
         { endTime: addMinutesToTime(ev.startTime, subject.defaultDurationMinutes) },
-        'resetting the duration',
+        'Dauer zurücksetzen',
       );
     }
   }
 
   function duplicate(): void {
     if (!ev) return;
-    const { conflicts: _omit, ...copy } = ev;
-    addEvent({ ...copy, id: nanoid() }, `duplicating ${subject?.name ?? 'event'}`);
+    duplicateEvents([ev.id]);
     closeQuickEdit();
   }
 
@@ -128,7 +129,6 @@
     splitTime = snapToSlot(addMinutesToTime(ev.startTime, Math.round(minutes / 2)));
   }
 
-  /** Both halves have to be at least one slot long. */
   const splitValid = $derived.by(() => {
     if (!ev || !splitTime) return false;
     const at = snapToSlot(splitTime);
@@ -168,7 +168,7 @@
     class="quick"
     style="left:{pos.left}px; top:{pos.top}px; width:{pos.width}px; --ev-color:{subject.color}"
     role="dialog"
-    aria-label="Quick edit"
+    aria-label="Schnellbearbeitung"
   >
     <header class="quick-head">
       <span class="quick-spine"></span>
@@ -178,7 +178,7 @@
           {DAY_NAMES[ev.dayIndex]} · {ev.startTime}–{ev.endTime}
         </div>
       </div>
-      <button class="quick-x" onclick={closeQuickEdit} aria-label="Close">
+      <button class="quick-x" onclick={closeQuickEdit} aria-label="Schliessen">
         <Icon name="x" size={14} />
       </button>
     </header>
@@ -187,20 +187,24 @@
       <div class="quick-body">
         <div class="quick-row">
           <div class="quick-label">
-            <span class="wk-eyebrow">Split at</span>
+            <span class="wk-eyebrow">Teilen um</span>
           </div>
-          <TimeField bind:value={splitTime} class="w-full" ariaLabel="Split at" />
-          <p class="quick-hint wk-num">
-            {#if splitValid}
+          <TimeField
+            bind:value={splitTime}
+            from={split.from}
+            to={split.to}
+            class="w-full"
+            ariaLabel="Teilen um"
+          />
+          {#if splitValid}
+            <p class="quick-hint wk-num">
               {ev.startTime}–{snapToSlot(splitTime)} · {snapToSlot(splitTime)}–{ev.endTime}
-            {:else}
-              Pick a time inside {ev.startTime}–{ev.endTime}.
-            {/if}
-          </p>
+            </p>
+          {/if}
         </div>
       </div>
       <footer class="quick-foot">
-        <button class="btn btn-ghost btn-xs" onclick={() => (mode = 'main')}>Back</button>
+        <button class="btn btn-ghost btn-xs" onclick={() => (mode = 'main')}>Zurück</button>
         <button class="btn btn-primary btn-xs" disabled={!splitValid} onclick={confirmSplit}>
           Split
         </button>
@@ -208,10 +212,10 @@
     {:else if mode === 'copy'}
       <div class="quick-body">
         <div class="quick-label">
-          <span class="wk-eyebrow">Copy to lanes</span>
+          <span class="wk-eyebrow">Auf Gruppen kopieren</span>
         </div>
         {#if spareLanes.length === 0}
-          <p class="quick-empty">Every other lane already has this at this time.</p>
+          <p class="quick-empty">Alle anderen Gruppen haben das zu dieser Zeit bereits.</p>
         {:else}
           <div class="lane-grid">
             {#each spareLanes as g (g.id)}
@@ -231,27 +235,27 @@
             {/each}
           </div>
           <p class="quick-hint">
-            Same day and time. Clashes are reported, never blocked.
+            Gleicher Tag, gleiche Zeit. Konflikte werden gemeldet, nie blockiert.
           </p>
         {/if}
       </div>
       <footer class="quick-foot">
-        <button class="btn btn-ghost btn-xs" onclick={() => (mode = 'main')}>Back</button>
+        <button class="btn btn-ghost btn-xs" onclick={() => (mode = 'main')}>Zurück</button>
         <button
           class="btn btn-primary btn-xs"
           disabled={chosenLanes.length === 0}
           onclick={confirmCopy}
-        >Copy to {chosenLanes.length}</button>
+        >Auf {chosenLanes.length} kopieren</button>
       </footer>
     {:else}
       <div class="quick-body">
         <!-- Teachers -->
         <div class="quick-row">
           <div class="quick-label">
-            <span class="wk-eyebrow">Teachers</span>
+            <span class="wk-eyebrow">Gruppenführer</span>
             {#if overrides.includes('teachers')}
-              <button class="quick-reset" onclick={() => resetField('teachers')} title="Back to the subject default">
-                <Icon name="reset" size={11} /> reset
+              <button class="quick-reset" onclick={() => resetField('teachers')} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> zurück
               </button>
             {/if}
           </div>
@@ -268,7 +272,7 @@
               >{teacherShort(t)}</button>
             {/each}
             {#if appState.teachers.length === 0}
-              <span class="quick-empty">No teachers configured.</span>
+              <span class="quick-empty">Keine Gruppenführer erfasst.</span>
             {/if}
           </div>
         </div>
@@ -276,10 +280,10 @@
         <!-- Room -->
         <div class="quick-row">
           <div class="quick-label">
-            <span class="wk-eyebrow">Room</span>
+            <span class="wk-eyebrow">Raum</span>
             {#if overrides.includes('room')}
-              <button class="quick-reset" onclick={() => resetField('room')} title="Back to the subject default">
-                <Icon name="reset" size={11} /> reset
+              <button class="quick-reset" onclick={() => resetField('room')} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> zurück
               </button>
             {/if}
           </div>
@@ -288,7 +292,7 @@
             value={roomId ?? ''}
             onchange={(e) => setRoom((e.currentTarget as HTMLSelectElement).value)}
           >
-            <option value="">No room</option>
+            <option value="">Kein Raum</option>
             {#each appState.rooms as r (r.id)}
               <option value={r.id}>{r.name}</option>
             {/each}
@@ -298,10 +302,10 @@
         <!-- Duration -->
         <div class="quick-row">
           <div class="quick-label">
-            <span class="wk-eyebrow">Duration</span>
+            <span class="wk-eyebrow">Dauer</span>
             {#if overrides.includes('duration')}
-              <button class="quick-reset" onclick={() => resetField('duration')} title="Back to the subject default">
-                <Icon name="reset" size={11} /> reset
+              <button class="quick-reset" onclick={() => resetField('duration')} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> zurück
               </button>
             {/if}
           </div>
@@ -321,25 +325,25 @@
         <div class="flex items-center gap-1">
           <button
             class="icon-btn"
-            title={canSplit ? 'Split into two events' : 'Too short to split'}
-            aria-label="Split into two events"
+            title={split.canSplit ? 'In zwei Lektionen teilen' : 'Zu kurz zum Teilen'}
+            aria-label="In zwei Lektionen teilen"
             onclick={startSplit}
-            disabled={!canSplit}
+            disabled={!split.canSplit}
           >
             <Icon name="scissors" size={14} />
           </button>
-          <button class="icon-btn" title="Copy to other lanes" onclick={startCopy} disabled={spareLanes.length === 0}>
+          <button class="icon-btn" title="Auf andere Gruppen kopieren" onclick={startCopy} disabled={spareLanes.length === 0}>
             <Icon name="layers" size={14} />
           </button>
-          <button class="icon-btn" title="Duplicate" onclick={duplicate}>
+          <button class="icon-btn" title="Duplizieren" onclick={duplicate}>
             <Icon name="copy" size={14} />
           </button>
-          <button class="icon-btn icon-btn-danger" title="Delete" onclick={remove}>
+          <button class="icon-btn icon-btn-danger" title="Löschen" onclick={remove}>
             <Icon name="trash" size={14} />
           </button>
         </div>
         <button class="btn btn-ghost btn-xs gap-1" onclick={() => onedit(ev.id)}>
-          <Icon name="pencil" size={12} /> Edit…
+          <Icon name="pencil" size={12} /> Bearbeiten …
         </button>
       </footer>
     {/if}

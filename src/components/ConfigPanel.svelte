@@ -10,8 +10,9 @@
   import { serializePlan, planFileName, parsePlan } from '../state/persistence';
   import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
-  import { DAY_NAMES, sortSubjects } from '../utils/timeUtils';
+  import { DAY_NAMES, orderedPhases, sortSubjects } from '../utils/timeUtils';
   import { describeWindow } from '../utils/availability';
+  import AddRow from './config/AddRow.svelte';
   import MasterDetail from './config/MasterDetail.svelte';
   import TeacherDetail from './config/TeacherDetail.svelte';
   import RoomDetail from './config/RoomDetail.svelte';
@@ -24,45 +25,45 @@
 
   type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'data';
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'groups', label: 'Groups' },
-    { key: 'phases', label: 'Phases' },
-    { key: 'teachers', label: 'Teachers' },
-    { key: 'rooms', label: 'Rooms' },
-    { key: 'subjects', label: 'Subjects' },
-    { key: 'data', label: 'Plan & data' },
+    { key: 'groups', label: 'Gruppen' },
+    { key: 'phases', label: 'Phasen' },
+    { key: 'teachers', label: 'Gruppenführer' },
+    { key: 'rooms', label: 'Räume' },
+    { key: 'subjects', label: 'Themen' },
+    { key: 'data', label: 'Plan & Daten' },
   ];
   let activeTab: Tab = $state('groups');
 
   const appState = $derived(getState());
   const sortedGroups = $derived([...appState.groups].sort((a, b) => a.order - b.order));
-  const orderedPhases = $derived([...appState.phases].sort((a, b) => a.startDay - b.startDay));
+  const phases = $derived(orderedPhases(appState));
 
   // One line, not a paragraph: the full explanation lives behind the ⓘ so it
   // isn't re-read on every visit to the tab.
   const TAB_INTRO: Record<Tab, { short: string; long: string }> = {
     groups: {
-      short: 'Groups are the columns of the timetable.',
-      long: 'Every group has to attend every subject. Inactive groups keep their data but are hidden from the calendar and skipped by conflict checks.',
+      short: 'Gruppen sind die Spalten des Stundenplans.',
+      long: 'Jede Gruppe muss jedes Thema besuchen. Inaktive Gruppen behalten ihre Daten, werden aber im Kalender ausgeblendet und von der Konfliktprüfung übersprungen.',
     },
     phases: {
-      short: 'Phases split the week into stretches with their own lanes.',
-      long: 'A Kader planning course needs only one lane, the group rotation needs all of them. Each phase is drawn as its own calendar, so narrow phases stop wasting space.',
+      short: 'Phasen teilen die Woche in Abschnitte mit eigenen Gruppen.',
+      long: 'Ein Kadervorkurs braucht nur eine Gruppe, die Gruppenrotation alle. Jede Phase wird als eigener Kalender gezeichnet, damit schmale Phasen keinen Platz verschwenden.',
     },
     teachers: {
-      short: 'The same teacher cannot be booked twice at the same time.',
-      long: 'Teacher clashes are hard conflicts. The short name and colour are what you see on the calendar cards.',
+      short: 'Derselbe Gruppenführer kann nicht zweimal gleichzeitig eingeteilt sein.',
+      long: 'Konflikte bei Gruppenführern sind harte Konflikte. Kürzel und Farbe sind das, was auf den Karten im Kalender erscheint.',
     },
     rooms: {
-      short: 'Rooms are checked for soft conflicts.',
-      long: 'Turn off conflict checking for shared spaces such as "outside", where two groups can be at the same place without a problem.',
+      short: 'Räume werden auf weiche Konflikte geprüft.',
+      long: 'Bei geteilten Flächen wie «draussen», wo zwei Gruppen problemlos am selben Ort sein können, die Konfliktprüfung ausschalten.',
     },
     subjects: {
-      short: 'Subjects are the blocks you drag onto the calendar.',
-      long: 'Their defaults — teachers, room, duration — are copied to each placed event, where you can still override them individually. Content (goals, notes) lives on the subject too.',
+      short: 'Themen werden auf den Kalender gezogen und dort zu Lektionen.',
+      long: 'Ihre Vorgaben — Gruppenführer, Raum, Dauer — werden auf jede platzierte Lektion kopiert, wo sie einzeln überschrieben werden können. Auch Inhalt (Lernziele, Notizen) liegt am Thema. Die Dauer ist zugleich das Soll pro Gruppe.',
     },
     data: {
-      short: 'One plan, kept in this browser. A file is how it leaves and returns.',
-      long: 'Everything is stored in this browser\'s localStorage — clearing site data clears the plan. Export writes the whole plan to a JSON file; importing one replaces what is here. There is no plan library: the file is the archive.',
+      short: 'Ein Plan, in diesem Browser gespeichert. Eine Datei ist der Weg hinaus und zurück.',
+      long: 'Alles liegt im localStorage dieses Browsers — Website-Daten löschen löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei; ein Import ersetzt, was hier ist. Es gibt keine Planbibliothek: die Datei ist das Archiv.',
     },
   };
 
@@ -112,23 +113,13 @@
     while (appState.groups.some(g => g.label === `G${i}`)) i++;
     return `G${i}`;
   }
-  let newGroupLabel = $state(nextGroupLabel());
-
-  function submitGroup(e?: Event): void {
-    e?.preventDefault();
-    const label = newGroupLabel.trim();
-    if (!label) return;
-    addGroup(label);
-    newGroupLabel = nextGroupLabel();
-  }
-
   // Deleting a lane takes its events with it, so say how many before doing it.
   function confirmRemoveGroup(id: ID, label: string): void {
     const count = eventCountForGroup(id);
     const detail = count === 0
-      ? 'It has no events of its own.'
-      : `${count} event${count === 1 ? '' : 's'} placed on this lane will be deleted.`;
-    if (!window.confirm(`Delete group "${label}"?\n${detail}`)) return;
+      ? 'Sie hat keine eigenen Lektionen.'
+      : `${count} auf dieser Gruppe platzierte ${count === 1 ? 'Lektion wird' : 'Lektionen werden'} gelöscht.`;
+    if (!window.confirm(`Gruppe «${label}» löschen?\n${detail}`)) return;
     removeGroup(id);
   }
 
@@ -145,16 +136,11 @@
   }
 
   // ─── Phases ───────────────────────────────────────────────────────────────
-  let newPhaseLabel = $state('');
-
-  function submitPhase(e?: Event): void {
-    e?.preventDefault();
-    const label = newPhaseLabel.trim();
-    if (!label) return;
+  /** A new phase takes the days after the last one, through Friday. */
+  function submitPhase(label: string): void {
     const lastDay = appState.phases.reduce((m, p) => Math.max(m, p.endDay), -1);
     const start = Math.min(lastDay + 1, DAY_NAMES.length - 1);
     addPhase(label, start, DAY_NAMES.length - 1, appState.groups.filter(g => g.enabled).map(g => g.id));
-    newPhaseLabel = '';
   }
 
   // Moving one end past the other drags the other end along, so a phase can
@@ -171,10 +157,10 @@
   function confirmRemovePhase(id: ID, label: string): void {
     const count = eventCountForPhase(id);
     const detail = count === 0
-      ? 'It covers no events.'
-      : `${count} event${count === 1 ? '' : 's'} on those days will no longer be drawn anywhere — ` +
-        `they show up under "Not on any calendar" until you move them.`;
-    if (!window.confirm(`Delete phase "${label}"?\n${detail}`)) return;
+      ? 'Sie deckt keine Lektionen ab.'
+      : `${count} ${count === 1 ? 'Lektion an diesen Tagen wird' : 'Lektionen an diesen Tagen werden'} nirgends mehr gezeichnet — ` +
+        `sie erscheinen unter «Auf keinem Kalender», bis sie verschoben werden.`;
+    if (!window.confirm(`Phase «${label}» löschen?\n${detail}`)) return;
     removePhase(id);
   }
 
@@ -186,10 +172,10 @@
   const phaseWarning = $derived.by(() => {
     const problems: string[] = [];
     if (appState.phases.some(p => p.endDay < p.startDay)) {
-      problems.push('a phase ends before it starts');
+      problems.push('eine Phase endet vor ihrem Beginn');
     }
     if (appState.phases.some(p => p.groupIds.length === 0)) {
-      problems.push('a phase has no lanes');
+      problems.push('eine Phase hat keine Gruppen');
     }
     const covered = new Set<number>();
     let overlaps = false;
@@ -199,19 +185,19 @@
         covered.add(d);
       }
     }
-    if (overlaps) problems.push('two phases cover the same day');
+    if (overlaps) problems.push('zwei Phasen decken denselben Tag ab');
     const uncovered = DAY_NAMES.filter((_, i) => !covered.has(i));
-    if (uncovered.length > 0) problems.push(`${uncovered.join(', ')} not covered by any phase`);
-    return problems.length > 0 ? `Check your phases: ${problems.join('; ')}.` : null;
+    if (uncovered.length > 0) problems.push(`${uncovered.join(', ')} von keiner Phase abgedeckt`);
+    return problems.length > 0 ? `Phasen prüfen: ${problems.join('; ')}.` : null;
   });
 
   /** Which phase owns each weekday — drives the strip above the phase table. */
   const weekStrip = $derived(
     DAY_NAMES.map((name, day) => {
-      const index = orderedPhases.findIndex(p => day >= p.startDay && day <= p.endDay);
+      const index = phases.findIndex(p => day >= p.startDay && day <= p.endDay);
       return {
         name,
-        phase: index >= 0 ? orderedPhases[index]! : null,
+        phase: index >= 0 ? phases[index]! : null,
         hue: index >= 0 ? PHASE_HUES[index % PHASE_HUES.length]! : null,
       };
     }),
@@ -242,10 +228,10 @@
     const incoming = result.state;
     const events = incoming.events.length;
     if (!window.confirm(
-      `Load "${incoming.name}"?\n\n` +
-      `It has ${events} event${events === 1 ? '' : 's'} and starts ${incoming.wkStartDate}.\n\n` +
-      'This replaces the plan in this browser, and undo history is cleared. ' +
-      'Export the current plan first if you want to keep it.',
+      `«${incoming.name}» laden?\n\n` +
+      `Er enthält ${events} ${events === 1 ? 'Lektion' : 'Lektionen'} und beginnt am ${incoming.wkStartDate}.\n\n` +
+      'Das ersetzt den Plan in diesem Browser, und der Verlauf wird gelöscht. ' +
+      'Zuerst den aktuellen Plan exportieren, wenn er behalten werden soll.',
     )) return;
     replacePlan(incoming);
     onclose();
@@ -261,7 +247,7 @@
 
   function handleClearAll(): void {
     if (!window.confirm(
-      'Clear ALL data?\n\nThis permanently removes every event, group, teacher, room, and subject and resets to defaults.\n\nThis cannot be undone.'
+      'ALLE Daten löschen?\n\nDas entfernt endgültig jede Lektion, jede Gruppe, jeden Gruppenführer, jeden Raum und jedes Thema und setzt auf die Vorgaben zurück.\n\nDas kann nicht rückgängig gemacht werden.'
     )) return;
     resetToDefaults();
     onclose();
@@ -278,8 +264,8 @@
 
     <!-- Header -->
     <header class="cfg-head">
-      <h3 class="cfg-title">Configuration</h3>
-      <button class="cfg-x" onclick={onclose} aria-label="Close">
+      <h3 class="cfg-title">Konfiguration</h3>
+      <button class="cfg-x" onclick={onclose} aria-label="Schliessen">
         <Icon name="x" size={16} />
       </button>
     </header>
@@ -302,7 +288,7 @@
       <p>{TAB_INTRO[activeTab].short}</p>
       <button class="intro-more" onclick={() => (introOpen = !introOpen)}>
         <Icon name="info" size={13} />
-        {introOpen ? 'less' : 'more'}
+        {introOpen ? 'weniger' : 'mehr'}
       </button>
     </div>
     {#if introOpen}
@@ -320,9 +306,9 @@
               <div class="table">
                 <div class="table-head grid-groups">
                   <span></span>
-                  <span class="text-center">On</span>
-                  <span>Label</span>
-                  <span class="text-center">Order</span>
+                  <span class="text-center">Aktiv</span>
+                  <span>Bezeichnung</span>
+                  <span class="text-center">Reihenfolge</span>
                   <span></span>
                 </div>
                 {#each sortedGroups as g, i (g.id)}
@@ -337,32 +323,32 @@
                     ondrop={(e) => { e.preventDefault(); onDrop(g.id); }}
                     ondragend={() => (dragId = null)}
                   >
-                    <span class="drag-handle" title="Drag to reorder the columns">
+                    <span class="drag-handle" title="Ziehen, um die Spalten neu zu ordnen">
                       <Icon name="grip" size={14} />
                     </span>
                     <div class="flex justify-center">
                       <input type="checkbox" class="toggle toggle-primary toggle-sm"
                         checked={g.enabled}
-                        aria-label="Group active"
+                        aria-label="Gruppe aktiv"
                         onchange={(e) => updateGroup(g.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
                       />
                     </div>
                     <input class="input input-bordered input-sm w-28" type="text" value={g.label}
-                      aria-label="Group label"
+                      aria-label="Gruppenbezeichnung"
                       onchange={(e) => updateGroup(g.id, { label: (e.currentTarget as HTMLInputElement).value })}
                     />
                     <div class="order-btns">
                       <button class="mini" disabled={i === 0}
-                        onclick={() => moveGroupUp(g.id)} aria-label="Move up">
+                        onclick={() => moveGroupUp(g.id)} aria-label="Nach oben">
                         <Icon name="chevronUp" size={12} />
                       </button>
                       <button class="mini" disabled={i === sortedGroups.length - 1}
-                        onclick={() => moveGroupDown(g.id)} aria-label="Move down">
+                        onclick={() => moveGroupDown(g.id)} aria-label="Nach unten">
                         <Icon name="chevronDown" size={12} />
                       </button>
                     </div>
                     <button class="mini mini-danger"
-                      onclick={() => confirmRemoveGroup(g.id, g.label)} aria-label="Delete group">
+                      onclick={() => confirmRemoveGroup(g.id, g.label)} aria-label="Gruppe löschen">
                       <Icon name="trash" size={13} />
                     </button>
                   </div>
@@ -377,14 +363,13 @@
             {/if}
           </div>
 
-          <form class="pane-add" onsubmit={submitGroup}>
-            <span class="field-label">Add group</span>
-            <input class="input input-bordered input-sm w-28" type="text" bind:value={newGroupLabel}
-              placeholder="G4" aria-label="Group label" />
-            <button type="submit" class="btn btn-primary btn-sm gap-1.5">
-              <Icon name="plus" size={13} /> Add group
-            </button>
-          </form>
+          <AddRow
+            label="Gruppe hinzufügen"
+            placeholder="G4"
+            nextValue={nextGroupLabel}
+            onadd={addGroup}
+            inputClass="w-28"
+          />
         </div>
 
       <!-- ════ PHASES ════════════════════════════════════════════════════════ -->
@@ -396,7 +381,7 @@
               {#each weekStrip as day (day.name)}
                 <div class="strip-day" style={day.hue ? `--ph:${day.hue}` : ''} class:strip-gap={!day.phase}>
                   <span class="strip-name">{day.name}</span>
-                  <span class="strip-phase">{day.phase?.label ?? 'no phase'}</span>
+                  <span class="strip-phase">{day.phase?.label ?? 'keine Phase'}</span>
                 </div>
               {/each}
             </div>
@@ -410,30 +395,30 @@
             {#if appState.phases.length > 0}
               <div class="table">
                 <div class="table-head grid-phases">
-                  <span>Label</span>
-                  <span>From</span>
-                  <span>To</span>
-                  <span>Lanes</span>
+                  <span>Bezeichnung</span>
+                  <span>Von</span>
+                  <span>Bis</span>
+                  <span>Gruppen</span>
                   <span></span>
                 </div>
-                {#each orderedPhases as p, i (p.id)}
+                {#each phases as p, i (p.id)}
                   <div class="table-row grid-phases">
                     <div class="flex items-center gap-2 min-w-0">
                       <span class="phase-swatch" style="background:{PHASE_HUES[i % PHASE_HUES.length]}"></span>
                       <input class="input input-bordered input-sm w-full" type="text" value={p.label}
-                        aria-label="Phase label"
+                        aria-label="Phasenbezeichnung"
                         onchange={(e) => updatePhase(p.id, { label: (e.currentTarget as HTMLInputElement).value })}
                       />
                     </div>
                     <select class="select select-bordered select-sm" value={p.startDay}
-                      aria-label="First day"
+                      aria-label="Erster Tag"
                       onchange={(e) => setPhaseStart(p.id, Number((e.currentTarget as HTMLSelectElement).value), p.endDay)}>
                       {#each DAY_NAMES as name, d (name)}
                         <option value={d}>{name}</option>
                       {/each}
                     </select>
                     <select class="select select-bordered select-sm" value={p.endDay}
-                      aria-label="Last day"
+                      aria-label="Letzter Tag"
                       onchange={(e) => setPhaseEnd(p.id, Number((e.currentTarget as HTMLSelectElement).value), p.startDay)}>
                       {#each DAY_NAMES as name, d (name)}
                         <option value={d}>{name}</option>
@@ -455,7 +440,7 @@
                       {/each}
                     </div>
                     <button class="mini mini-danger"
-                      onclick={() => confirmRemovePhase(p.id, p.label)} aria-label="Delete phase">
+                      onclick={() => confirmRemovePhase(p.id, p.label)} aria-label="Phase löschen">
                       <Icon name="trash" size={13} />
                     </button>
                   </div>
@@ -466,14 +451,7 @@
             {/if}
           </div>
 
-          <form class="pane-add" onsubmit={submitPhase}>
-            <span class="field-label">Add phase</span>
-            <input class="input input-bordered input-sm w-48" type="text" bind:value={newPhaseLabel}
-              placeholder="Phase name" aria-label="Phase label" />
-            <button type="submit" class="btn btn-primary btn-sm gap-1.5">
-              <Icon name="plus" size={13} /> Add phase
-            </button>
-          </form>
+          <AddRow label="Phase hinzufügen" placeholder="Name der Phase" onadd={submitPhase} />
         </div>
 
       <!-- ════ TEACHERS ══════════════════════════════════════════════════════ -->
@@ -481,9 +459,9 @@
         <MasterDetail
           items={appState.teachers}
           selectedId={selectedTeacherId}
-          addLabel="Add teacher"
-          placeholder="Name, then Enter"
-          emptyListText="No teachers yet"
+          addLabel="Gruppenführer hinzufügen"
+          placeholder="Name des Gruppenführers"
+          emptyListText="Noch keine Gruppenführer"
           onselect={(id) => (selectedTeacherId = id)}
           onquickadd={quickAddTeacher}
         >
@@ -491,7 +469,7 @@
             <span class="list-avatar" style="background:{t.color}">{teacherShort(t)}</span>
             <span class="truncate min-w-0 flex-1">{t.name}</span>
             {#if t.unavailable.length > 0}
-              <span class="row-tag" title={t.unavailable.map(describeWindow).join(' · ')}>away</span>
+              <span class="row-tag" title={t.unavailable.map(describeWindow).join(' · ')}>abwesend</span>
             {/if}
           {/snippet}
           {#snippet detail()}
@@ -505,7 +483,7 @@
             {:else}
               <div class="empty-detail">
                 <Icon name="users" size={26} />
-                <span>Type a name below to add a teacher, then edit them here.</span>
+                <span>Unten einen Namen eingeben, um einen Gruppenführer hinzuzufügen — bearbeitet wird er dann hier.</span>
               </div>
             {/if}
           {/snippet}
@@ -516,9 +494,9 @@
         <MasterDetail
           items={appState.rooms}
           selectedId={selectedRoomId}
-          addLabel="Add room"
-          placeholder="Name, then Enter"
-          emptyListText="No rooms yet"
+          addLabel="Raum hinzufügen"
+          placeholder="Raumname"
+          emptyListText="Noch keine Räume"
           onselect={(id) => (selectedRoomId = id)}
           onquickadd={quickAddRoom}
         >
@@ -543,7 +521,7 @@
             {:else}
               <div class="empty-detail">
                 <Icon name="pin" size={26} />
-                <span>Type a name below to add a room, then edit it here.</span>
+                <span>Unten einen Namen eingeben, um einen Raum hinzuzufügen — bearbeitet wird er dann hier.</span>
               </div>
             {/if}
           {/snippet}
@@ -555,8 +533,8 @@
           items={listedSubjects}
           selectedId={selectedSubjectId}
           adding={addingSubject}
-          addLabel="Add subject"
-          emptyListText="No subjects yet"
+          addLabel="Thema hinzufügen"
+          emptyListText="Noch keine Themen"
           onselect={(id) => { selectedSubjectId = id; addingSubject = false; }}
           onadd={() => { addingSubject = true; selectedSubjectId = null; }}
         >
@@ -564,7 +542,7 @@
             <span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:{s.color}"></span>
             <span class="truncate min-w-0 flex-1">{s.name}</span>
             {#if s.isBreak}
-              <span class="row-tag">break</span>
+              <span class="row-tag">Pause</span>
             {/if}
           {/snippet}
           {#snippet detail()}
@@ -581,7 +559,7 @@
             {:else}
               <div class="empty-detail">
                 <Icon name="calendar" size={26} />
-                <span>Select a subject to edit, or add a new one.</span>
+                <span>Ein Thema zum Bearbeiten wählen, oder ein neues hinzufügen.</span>
               </div>
             {/if}
           {/snippet}
@@ -594,32 +572,32 @@
             <div class="data-stack">
 
               <section class="data-card">
-                <h4 class="section-title">Plan name</h4>
+                <h4 class="section-title">Planname</h4>
                 <p class="field-hint">
-                  Shown in the toolbar, on the printed plans, and used for the export file name.
+                  Erscheint in der Werkzeugleiste, auf den gedruckten Plänen und im Namen der Exportdatei.
                 </p>
                 <input
                   class="input input-bordered input-sm w-80 max-w-full"
                   type="text"
                   value={appState.name}
-                  placeholder="e.g. WK 2026 Zug 3"
-                  aria-label="Plan name"
-                  onchange={(e) => setPlanName((e.currentTarget as HTMLInputElement).value.trim() || 'WK plan')}
+                  placeholder="z. B. WK 2026 Zug 3"
+                  aria-label="Planname"
+                  onchange={(e) => setPlanName((e.currentTarget as HTMLInputElement).value.trim() || 'WK-Plan')}
                 />
               </section>
 
               <section class="data-card">
-                <h4 class="section-title">Plan file</h4>
+                <h4 class="section-title">Plandatei</h4>
                 <p class="field-hint">
-                  The plan lives in this browser only. A file is the backup, the way to move it to
-                  another machine, and the way to hand it to someone else.
+                  Der Plan liegt nur in diesem Browser. Eine Datei ist die Sicherung, der Weg auf einen
+                  anderen Rechner und der Weg zu jemand anderem.
                 </p>
                 <div class="data-actions">
                   <button class="btn btn-sm btn-primary gap-1.5" onclick={exportPlan}>
-                    <Icon name="download" size={14} /> Export plan…
+                    <Icon name="download" size={14} /> Plan exportieren …
                   </button>
                   <button class="btn btn-sm gap-1.5" onclick={() => importFileEl?.click()}>
-                    <Icon name="upload" size={14} /> Import plan…
+                    <Icon name="upload" size={14} /> Plan importieren …
                   </button>
                   <input
                     bind:this={importFileEl}
@@ -630,10 +608,10 @@
                   />
                 </div>
                 <p class="field-hint">
-                  <span class="wk-num">{appState.events.length}</span> events ·
-                  <span class="wk-num">{appState.subjects.length}</span> subjects ·
-                  <span class="wk-num">{appState.teachers.length}</span> teachers ·
-                  <span class="wk-num">{appState.rooms.length}</span> rooms
+                  <span class="wk-num">{appState.events.length}</span> Lektionen ·
+                  <span class="wk-num">{appState.subjects.length}</span> Themen ·
+                  <span class="wk-num">{appState.teachers.length}</span> Gruppenführer ·
+                  <span class="wk-num">{appState.rooms.length}</span> Räume
                 </p>
                 {#if importError}
                   <p class="warn-banner"><Icon name="alert" size={14} /> {importError}</p>
@@ -641,14 +619,14 @@
               </section>
 
               <section class="data-card data-card-danger">
-                <h4 class="section-title">Danger zone</h4>
+                <h4 class="section-title">Gefahrenzone</h4>
                 <div class="danger-body">
                   <span class="danger-note">
-                    Removes every event, group, teacher, room and subject, and starts again from the
-                    defaults. Export first if there is anything worth keeping.
+                    Entfernt jede Lektion, jede Gruppe, jeden Gruppenführer, jeden Raum und jedes Thema und beginnt
+                    wieder mit den Vorgaben. Vorher exportieren, wenn etwas erhalten bleiben soll.
                   </span>
                   <button class="btn btn-sm btn-error gap-1.5" onclick={handleClearAll}>
-                    <Icon name="trash" size={13} /> Reset all data
+                    <Icon name="trash" size={13} /> Alle Daten zurücksetzen
                   </button>
                 </div>
               </section>
@@ -798,16 +776,6 @@
     color: var(--wk-text-faint);
     text-align: center;
     padding: 1.5rem 0;
-  }
-
-  .pane-add {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-shrink: 0;
-    padding: 0.75rem 1.4rem;
-    border-top: 1px solid var(--wk-line);
-    background: var(--wk-surface-alt);
   }
 
   /* ── Tables ─────────────────────────────────────────────────────────────── */

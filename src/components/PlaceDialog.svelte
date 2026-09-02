@@ -68,19 +68,19 @@
         <header class="sheet-head">
           <span class="sheet-spine"></span>
           <div class="min-w-0 flex-1">
-            <h3 class="sheet-title">Place {subject.name}</h3>
+            <h3 class="sheet-title">{subject.name} platzieren</h3>
             <p class="sheet-when wk-num">
               {subject.defaultDurationMinutes} min{#if isMultiGroup} · every lane{/if}
             </p>
           </div>
-          <button type="button" class="sheet-x" onclick={onclose} aria-label="Close">
+          <button type="button" class="sheet-x" onclick={onclose} aria-label="Schliessen">
             <Icon name="x" size={16} />
           </button>
         </header>
 
         <div class="sheet-body">
           <div class="field">
-            <span class="field-name">Day</span>
+            <span class="field-name">Tag</span>
             <select class="select select-bordered select-sm flex-1" bind:value={dayIndex}>
               {#each DAY_NAMES as name, i (name)}
                 <option value={i}>{name} {dayDateLabel(appState.wkStartDate, i)}</option>
@@ -89,10 +89,10 @@
           </div>
 
           <div class="field">
-            <span class="field-name">Lane</span>
+            <span class="field-name">Gruppe</span>
             {#if isMultiGroup}
               <span class="hint flex-1">
-                All lanes of {targetPhase?.label ?? 'the phase'}
+                Alle Gruppen von {targetPhase?.label ?? 'der Phase'}
                 {#if laneOptions.length > 0}({laneOptions.map(g => g.label).join(', ')}){/if}
               </span>
             {:else}
@@ -112,27 +112,27 @@
           <div class="field">
             <span class="field-name">Start</span>
             <div class="flex items-center gap-2 flex-1">
-              <TimeField bind:value={startTime} ariaLabel="Start time" />
-              <span class="hint wk-num">ends {previewEnd}</span>
+              <TimeField bind:value={startTime} ariaLabel="Startzeit" />
+              <span class="hint wk-num">endet {previewEnd}</span>
             </div>
           </div>
 
           {#if targetPhase === null}
-            <p class="warn">No phase covers {DAY_NAMES[dayIndex]} — pick another day.</p>
+            <p class="warn">Keine Phase deckt {DAY_NAMES[dayIndex]} ab — anderen Tag wählen.</p>
           {:else if laneOptions.length === 0}
-            <p class="warn">{targetPhase.label} has no active lanes — pick another day.</p>
+            <p class="warn">{targetPhase.label} hat keine aktiven Gruppen — anderen Tag wählen.</p>
           {:else}
             <p class="hint phase-note">Phase: {targetPhase.label}</p>
           {/if}
         </div>
 
         <footer class="sheet-foot">
-          <button type="button" class="btn btn-ghost btn-sm" onclick={onclose}>Cancel</button>
-          <button type="submit" class="btn btn-primary btn-sm" disabled={!canPlace}>Place</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick={onclose}>Abbrechen</button>
+          <button type="submit" class="btn btn-primary btn-sm" disabled={!canPlace}>Platzieren</button>
         </footer>
       </form>
     {:else}
-      <div class="p-6 text-sm">Subject not found.</div>
+      <div class="p-6 text-sm">Thema nicht gefunden.</div>
     {/if}
   </div>
 </dialog>

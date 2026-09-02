@@ -21,3 +21,14 @@ export function escapeHtml(value: string): string {
 export function teacherShort(teacher: Pick<Teacher, 'name' | 'shortName'>): string {
   return teacher.shortName || teacher.name.slice(0, 2).toUpperCase();
 }
+
+/**
+ * Is the user typing? Both window-level key handlers — the toolbar's Ctrl+Z and
+ * the grid's arrow keys — have to leave a focused field alone, and each carried
+ * its own copy of this test.
+ */
+export function isEditingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el?.tagName) return false;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable;
+}

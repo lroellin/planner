@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getState } from '../state/store.svelte';
   import {
-    buildCoverage, buildTeacherPlans, buildGroupPlans, buildRoomPlans,
+    buildCoverage, buildTeacherPlans, buildGroupPlans, buildRoomPlans, coverageStatus as status,
     type ScheduleEntry,
   } from '../reports/reports';
   import { DAY_NAMES, dayDateLabel, formatDuration } from '../utils/timeUtils';
@@ -23,17 +23,17 @@
   let teacherFilter: ID | 'all' = $state('all');
 
   const TABS: { key: ReportTab; label: string }[] = [
-    { key: 'coverage', label: 'Coverage' },
-    { key: 'groups', label: 'Group plans' },
-    { key: 'teachers', label: 'Teacher plans' },
-    { key: 'rooms', label: 'Room plans' },
+    { key: 'coverage', label: 'Abdeckung' },
+    { key: 'groups', label: 'Gruppenpläne' },
+    { key: 'teachers', label: 'Gruppenführerpläne' },
+    { key: 'rooms', label: 'Raumpläne' },
   ];
 
   const TITLES: Record<ReportTab, string> = {
-    coverage: 'Coverage — every group must attend every subject',
-    groups: 'Group plans',
-    teachers: 'Teacher plans',
-    rooms: 'Room occupancy',
+    coverage: 'Abdeckung — jede Gruppe muss jedes Thema besuchen',
+    groups: 'Gruppenpläne',
+    teachers: 'Gruppenführerpläne',
+    rooms: 'Raumbelegung',
   };
 
   const appState = $derived(getState());
@@ -41,6 +41,10 @@
   const totalMissing = $derived(coverage.reduce((n, s) => n + s.totalMissing, 0));
   const totalUneven = $derived(
     coverage.reduce((n, s) => n + s.rows.filter(r => r.uneven).length, 0),
+  );
+  // A row whose lanes all have the subject, but not yet for its full duration.
+  const totalShort = $derived(
+    coverage.reduce((n, s) => n + s.rows.filter(r => r.short).length, 0),
   );
   const plans = $derived(buildTeacherPlans(appState));
   const shownPlans = $derived(
@@ -84,8 +88,8 @@
 
     <div class="report-chrome shrink-0">
       <div class="sheet-head">
-        <h3 class="sheet-title">Reports</h3>
-        <button class="sheet-x" onclick={onclose} aria-label="Close">
+        <h3 class="sheet-title">Auswertungen</h3>
+        <button class="sheet-x" onclick={onclose} aria-label="Schliessen">
           <Icon name="x" size={16} />
         </button>
       </div>
@@ -104,14 +108,14 @@
         </div>
         {#if activeTab === 'teachers'}
           <select class="select select-bordered select-sm w-48" bind:value={teacherFilter}>
-            <option value="all">All teachers</option>
+            <option value="all">Alle Gruppenführer</option>
             {#each appState.teachers as t (t.id)}
               <option value={t.id}>{t.name}</option>
             {/each}
           </select>
         {/if}
         <button class="print-btn" onclick={() => window.print()}>
-          <Icon name="printer" size={14} /> Print
+          <Icon name="printer" size={14} /> Drucken
         </button>
       </div>
     </div>
@@ -124,16 +128,20 @@
         {#if totalMissing === 0 && totalUneven === 0}
           <div class="banner banner-ok">
             <Icon name="check" size={15} />
-            Every active group has each subject placed the same number of times.
+            Jede aktive Gruppe hat jedes Thema in voller Dauer.
           </div>
         {:else}
           <div class="banner banner-warn">
             <Icon name="alert" size={15} />
             {#if totalMissing > 0}
-              {totalMissing} group/subject combination{totalMissing === 1 ? '' : 's'} still unplanned.
+              {totalMissing} Kombination{totalMissing === 1 ? '' : 'en'} aus Gruppe und Thema noch ungeplant.
+            {/if}
+            {#if totalShort > 0}
+              {totalShort} {totalShort === 1 ? 'Thema hat' : 'Themen haben'} bei mindestens einer Gruppe
+              noch nicht die volle Dauer.
             {/if}
             {#if totalUneven > 0}
-              {totalUneven} subject{totalUneven === 1 ? ' is' : 's are'} placed unevenly across the lanes.
+              {totalUneven} {totalUneven === 1 ? 'Thema ist' : 'Themen sind'} ungleich auf die Gruppen verteilt.
             {/if}
           </div>
         {/if}
@@ -142,12 +150,12 @@
           <div class="section-head wk-eyebrow">{section.phase.label}</div>
 
           {#if section.rows.length === 0 || section.groupIds.length === 0}
-            <p class="empty-note">No subjects planned in this phase yet.</p>
+            <p class="empty-note">In dieser Phase ist noch kein Thema geplant.</p>
           {:else}
             <table class="cov-table">
               <thead>
                 <tr>
-                  <th class="cov-subject-head">Subject</th>
+                  <th class="cov-subject-head">Thema</th>
                   {#each section.groupIds as gid (gid)}
                     <th>{groupLabel(gid)}</th>
                   {/each}
@@ -160,20 +168,35 @@
                     <td class="cov-subject">
                       <span class="dot" style="background:{row.subject.color}"></span>
                       {row.subject.name}
+                      <span class="cov-target wk-num">Soll {formatDuration(row.target)}</span>
                     </td>
                     {#each section.groupIds as gid (gid)}
                       {@const n = row.counts.get(gid) ?? 0}
-                      <td class="cov-cell" class:cov-missing={n === 0}>
-                        {n === 0 ? '—' : n}
+                      {@const mins = row.minutes.get(gid) ?? 0}
+                      <td
+                        class="cov-cell"
+                        class:cov-missing={n === 0}
+                        class:cov-short={n > 0 && mins < row.target}
+                      >
+                        {#if n === 0}
+                          —
+                        {:else}
+                          <!-- The time is the answer; the instance count is only
+                               how that time was cut up. -->
+                          <span class="cov-mins wk-num">{formatDuration(mins)}</span>
+                          <span class="cov-sub wk-num">{n}×</span>
+                        {/if}
                       </td>
                     {/each}
                     <td class="cov-status">
-                      {#if row.missing > 0}
-                        <span class="pill pill-warn">{row.missing} missing</span>
-                      {:else if row.uneven}
-                        <span class="pill pill-note">uneven</span>
+                      {#if status(row) === 'missing'}
+                        <span class="pill pill-warn">{row.missing} fehlt</span>
+                      {:else if status(row) === 'short'}
+                        <span class="pill pill-note">Zeit fehlt</span>
+                      {:else if status(row) === 'uneven'}
+                        <span class="pill pill-note">ungleich</span>
                       {:else}
-                        <span class="pill pill-ok">complete</span>
+                        <span class="pill pill-ok">vollständig</span>
                       {/if}
                     </td>
                   </tr>
@@ -184,8 +207,9 @@
         {/each}
 
         <p class="foot-note">
-          Each cell counts placed instances of that subject for that group, within its
-          phase. Breaks are excluded.
+          Jede Zelle zeigt, wie viel Zeit diese Gruppe von diesem Thema innerhalb ihrer Phase hat,
+          darunter die Anzahl Lektionen. Das Soll ist die Dauer des Themas — ob sie in einem Stück
+          oder aufgeteilt erbracht wird, spielt keine Rolle. Pausen zählen nicht.
         </p>
 
       <!-- ══ GROUP PLANS ════════════════════════════════════════════════════ -->
@@ -195,16 +219,16 @@
             <header class="plan-head">
               <span class="plan-badge">{plan.group.label}</span>
               <div class="min-w-0">
-                <div class="plan-name">Group {plan.group.label}</div>
+                <div class="plan-name">Gruppe {plan.group.label}</div>
                 <div class="plan-summary">
-                  {plan.lessonCount} lesson{plan.lessonCount === 1 ? '' : 's'}
-                  · {formatDuration(plan.lessonMinutes)} of instruction
+                  {plan.lessonCount} {plan.lessonCount === 1 ? 'Lektion' : 'Lektionen'}
+                  · {formatDuration(plan.lessonMinutes)} Unterricht
                 </div>
               </div>
             </header>
 
             {#if plan.entries.length === 0}
-              <p class="plan-empty">Nothing scheduled.</p>
+              <p class="plan-empty">Nichts geplant.</p>
             {:else}
               {#each byDay(plan.entries) as day (day.dayIndex)}
                 <div class="day-block">
@@ -247,16 +271,17 @@
               <div class="min-w-0">
                 <div class="plan-name">{plan.teacher.name}</div>
                 <div class="plan-summary">
-                  {plan.teachingCount + plan.coveringCount} lesson{plan.teachingCount + plan.coveringCount === 1 ? '' : 's'}
+                  {plan.teachingCount + plan.coveringCount}
+                  {plan.teachingCount + plan.coveringCount === 1 ? 'Lektion' : 'Lektionen'}
                   · {formatDuration(plan.totalMinutes)}
-                  {#if plan.coveringCount > 0}· {plan.coveringCount} as stand-in{/if}
-                  {#if plan.handedOverCount > 0}· {plan.handedOverCount} handed over{/if}
+                  {#if plan.coveringCount > 0}· {plan.coveringCount}× als Stellvertretung{/if}
+                  {#if plan.handedOverCount > 0}· {plan.handedOverCount}× abgegeben{/if}
                 </div>
               </div>
             </header>
 
             {#if plan.blocks.length === 0}
-              <p class="plan-empty">Nothing scheduled.</p>
+              <p class="plan-empty">Nichts geplant.</p>
             {:else}
               {#each plan.blocks as block (block.subject.id)}
                 <div class="day-block">
@@ -272,9 +297,9 @@
                         <span class="cell-people">{e.roomName ?? '—'}</span>
                         <span class="cell-note">
                           {#if e.status === 'handed-over'}
-                            taken by {e.counterparts.map(t => t.name).join(', ') || 'someone else'}
+                            übernommen von {e.counterparts.map(t => t.name).join(', ') || 'jemand anderem'}
                           {:else if e.status === 'covering'}
-                            taken over from {e.counterparts.map(t => t.name).join(', ') || 'default'}
+                            Stellvertretung für {e.counterparts.map(t => t.name).join(', ') || 'die Vorgabe'}
                           {/if}
                         </span>
                       </li>
@@ -295,15 +320,15 @@
               <div class="min-w-0">
                 <div class="plan-name">{plan.room.name}</div>
                 <div class="plan-summary">
-                  {plan.entries.length} booking{plan.entries.length === 1 ? '' : 's'}
+                  {plan.entries.length} {plan.entries.length === 1 ? 'Belegung' : 'Belegungen'}
                   · {formatDuration(plan.bookedMinutes)}
-                  {#if plan.room.excludeFromConflictCheck}· shared space, clashes ignored{/if}
+                  {#if plan.room.excludeFromConflictCheck}· geteilter Raum, Konflikte ignoriert{/if}
                 </div>
               </div>
             </header>
 
             {#if plan.entries.length === 0}
-              <p class="plan-empty">Never booked.</p>
+              <p class="plan-empty">Nie belegt.</p>
             {:else}
               {#each byDay(plan.entries) as day (day.dayIndex)}
                 <div class="day-block">
@@ -505,6 +530,23 @@
 
   .cov-subject-head { text-align: left; padding-left: 0.2rem; }
   .cov-status-head { text-align: right; }
+
+  /* Minutes lead, the instance count is the small print under them. */
+  .cov-mins { display: block; }
+
+  .cov-sub {
+    display: block;
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
+
+  .cov-short { color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text)); }
+
+  .cov-target {
+    margin-left: 0.4rem;
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
 
   .cov-table td {
     padding: 0.45rem 0.4rem;

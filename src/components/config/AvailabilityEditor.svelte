@@ -70,7 +70,7 @@
         {@const preset = windowPreset(w)}
         <div class="window" class:window-void={w.days.length === 0}>
           <div class="window-line">
-            <div class="day-chips" role="group" aria-label="Days">
+            <div class="day-chips" role="group" aria-label="Tage">
               {#each DAY_NAMES as name, d (name)}
                 <button
                   type="button"
@@ -85,13 +85,13 @@
               type="button"
               class="win-x"
               onclick={() => remove(w.id)}
-              aria-label="Remove"
-              title="Remove"
+              aria-label="Entfernen"
+              title="Entfernen"
             ><Icon name="trash" size={13} /></button>
           </div>
 
           <div class="window-line">
-            <div class="preset-chips" role="group" aria-label="Time of day">
+            <div class="preset-chips" role="group" aria-label="Tageszeit">
               {#each PRESET_LABELS as opt (opt.key)}
                 <button
                   type="button"
@@ -105,7 +105,7 @@
                 class="preset-chip"
                 class:preset-chip-on={preset === 'custom'}
                 onclick={() => setPreset(w, 'custom')}
-              >Times…</button>
+              >Zeiten …</button>
             </div>
 
             {#if preset === 'custom'}
@@ -113,14 +113,14 @@
                 <TimeField
                   value={w.startTime}
                   class="w-24"
-                  ariaLabel="From"
+                  ariaLabel="Von"
                   onpick={(v) => patch(w.id, { startTime: v })}
                 />
                 <span class="dash">–</span>
                 <TimeField
                   value={w.endTime}
                   class="w-24"
-                  ariaLabel="To"
+                  ariaLabel="Bis"
                   onpick={(v) => patch(w.id, { endTime: v })}
                 />
               </div>
@@ -136,7 +136,7 @@
           />
 
           {#if w.days.length === 0}
-            <p class="field-hint">Pick at least one day — this entry does nothing yet.</p>
+            <p class="field-hint">Mindestens einen Tag wählen — dieser Eintrag bewirkt noch nichts.</p>
           {/if}
         </div>
       {/each}
@@ -144,7 +144,7 @@
   {/if}
 
   <div class="add-row">
-    <span class="add-label">Add for</span>
+    <span class="add-label">Hinzufügen für</span>
     {#each DAY_NAMES as name, d (name)}
       <button type="button" class="day-chip add-chip" onclick={() => addFor([d])}>{name}</button>
     {/each}
@@ -152,7 +152,7 @@
       type="button"
       class="day-chip add-chip"
       onclick={() => addFor(DAY_NAMES.map((_, i) => i))}
-    >whole week</button>
+    >ganze Woche</button>
   </div>
 
   <p class="field-hint">{hint}</p>

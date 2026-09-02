@@ -1,5 +1,9 @@
-import type { AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, ID } from '../types';
-import { effectiveTeacherIds, effectiveRoomId, eventGroupIds } from '../utils/timeUtils';
+import type {
+  AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, GroupSelector, ID,
+} from '../types';
+import {
+  effectiveTeacherIds, effectiveRoomId, eventGroupIds, isEventActive,
+} from '../utils/timeUtils';
 import { describeWindow, windowOverlaps } from '../utils/availability';
 
 // Arbitrary Monday as reference epoch for time comparisons
@@ -34,8 +38,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     const subject = subjectById.get(ev.subjectId);
     if (!subject) continue;
 
-    // No enabled lane means the event is hidden — hiding it is the whole point
-    // of disabling a group, so it must not raise conflicts either.
+    // A hidden event must not raise conflicts either — see isEventActive.
     const groupIds = eventGroupIds(state, ev);
     if (groupIds.length === 0) continue;
 
@@ -76,7 +79,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
   for (const ev of state.events) {
     const subject = subjectById.get(ev.subjectId);
     if (!subject) continue;
-    if (eventGroupIds(state, ev).length === 0) continue;
+    if (!isEventActive(state, ev)) continue;
 
     for (const tid of effectiveTeacherIds(ev, subject)) {
       const teacher = state.teachers.find(t => t.id === tid);
@@ -88,7 +91,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
           resourceId: tid,
           resourceName: teacher.name,
           involvedEventIds: [ev.id],
-          detail: `away ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
+          detail: `abwesend ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
         });
       }
     }
@@ -105,7 +108,7 @@ export function detectConflicts(state: AppState): ConflictReport[] {
           resourceId: evRoom.id,
           resourceName: evRoom.name,
           involvedEventIds: [ev.id],
-          detail: `blocked ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
+          detail: `gesperrt ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
         });
       }
     }
@@ -183,4 +186,100 @@ export function attachConflicts(state: AppState, reports: ConflictReport[]): App
   });
 
   return { ...state, events: annotatedEvents };
+}
+
+
+// ─── Live preview ─────────────────────────────────────────────────────────────
+
+/**
+ * A placement that has not happened yet: the event under the pointer mid-drag,
+ * or a subject chip that has not been dropped. `eventId` is null for the chip —
+ * nothing to exclude from the comparison then.
+ */
+export interface ClashCandidate {
+  eventId: ID | null;
+  subjectId: ID;
+  groupId: GroupSelector;
+  dayIndex: number;
+  startTime: string;
+  endTime: string;
+  teacherIds: ID[] | 'inherit';
+  roomId: ID | null | 'inherit';
+}
+
+export type ClashLevel = 'hard' | 'soft' | null;
+
+/**
+ * What a drop would cost, by exactly the rules `detectConflicts` uses.
+ *
+ * This lives beside the detector rather than in the calendar component because
+ * it *is* the detector's rule set, only evaluated against one speculative event
+ * instead of the whole week. The calendar used to carry its own copy, which had
+ * drifted: it compared `groupId` literally (so the all-lanes lunch break never
+ * matched), it had no subject to resolve defaults from when the drag came from
+ * the sidebar, and it never looked at availability windows at all.
+ */
+export function previewClash(state: AppState, candidate: ClashCandidate): ClashLevel {
+  const subject = state.subjects.find(s => s.id === candidate.subjectId);
+  if (!subject) return null;
+
+  // A probe event, so every lane/teacher/room resolution is the same code the
+  // real ones go through — ALL_GROUPS included.
+  const probe: CalendarEvent = {
+    id: candidate.eventId ?? '\u0000probe',
+    subjectId: candidate.subjectId,
+    groupId: candidate.groupId,
+    dayIndex: candidate.dayIndex,
+    startTime: candidate.startTime,
+    endTime: candidate.endTime,
+    teacherIds: candidate.teacherIds,
+    roomId: candidate.roomId,
+  };
+
+  const lanes = new Set(eventGroupIds(state, probe));
+  const teacherIds = new Set(effectiveTeacherIds(probe, subject));
+  const roomId = effectiveRoomId(probe, subject);
+  const room = roomId ? state.rooms.find(r => r.id === roomId) ?? null : null;
+
+  const startMs = toMs(probe.dayIndex, probe.startTime);
+  const endMs = toMs(probe.dayIndex, probe.endTime);
+
+  let level: ClashLevel = null;
+  const soft = (): void => { if (level === null) level = 'soft'; };
+
+  // Availability first: it needs no second event, so it can answer immediately.
+  for (const tid of teacherIds) {
+    const teacher = state.teachers.find(t => t.id === tid);
+    const away = (teacher?.unavailable ?? []).some(
+      w => windowOverlaps(w, probe.dayIndex, probe.startTime, probe.endTime),
+    );
+    if (away) return 'hard';
+  }
+  const blocked = (room?.unavailable ?? []).some(
+    w => windowOverlaps(w, probe.dayIndex, probe.startTime, probe.endTime),
+  );
+  if (blocked) soft();
+
+  for (const other of state.events) {
+    if (other.id === probe.id) continue;
+    if (other.dayIndex !== probe.dayIndex) continue;
+    const oStart = toMs(other.dayIndex, other.startTime);
+    const oEnd = toMs(other.dayIndex, other.endTime);
+    if (!overlaps(startMs, endMs, oStart, oEnd)) continue;
+
+    const otherSubject = state.subjects.find(s => s.id === other.subjectId);
+    if (!otherSubject) continue;
+
+    // Lanes are resolved on both sides, so a lesson dropped over the all-lanes
+    // Mittagessen reads as the group clash it is.
+    if (eventGroupIds(state, other).some(gid => lanes.has(gid))) return 'hard';
+    if (effectiveTeacherIds(other, otherSubject).some(tid => teacherIds.has(tid))) return 'hard';
+    if (
+      room &&
+      !room.excludeFromConflictCheck &&
+      effectiveRoomId(other, otherSubject) === room.id
+    ) soft();
+  }
+
+  return level;
 }

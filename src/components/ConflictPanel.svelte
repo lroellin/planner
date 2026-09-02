@@ -3,7 +3,7 @@
   import { highlightEvents, clearHighlight, revealEvent } from '../state/ui.svelte';
   import { DAY_NAMES, eventGroupIds } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
-  import { isHardConflict } from '../types';
+  import { CONFLICT_KIND_LABELS, isHardConflict } from '../types';
   import type { CalendarEvent, ConflictKind, ID } from '../types';
 
   interface Props {
@@ -15,14 +15,6 @@
   const appState = $derived(getState());
   const conflicts = $derived(getConflicts());
   const orphans = $derived(getOrphans());
-
-  const KIND_LABEL: Record<ConflictKind, string> = {
-    teacher: 'Teacher',
-    room: 'Room',
-    group: 'Group',
-    'teacher-absent': 'Away',
-    'room-blocked': 'Blocked',
-  };
 
   interface ConflictGroup {
     key: string;
@@ -99,7 +91,7 @@
 
 <div class="panel">
   <header class="panel-head">
-    <span class="wk-eyebrow flex-1">Conflicts</span>
+    <span class="wk-eyebrow flex-1">Konflikte</span>
     {#if conflicts.length + orphans.length > 0}
       <span class="head-count">{conflicts.length + orphans.length}</span>
     {/if}
@@ -107,10 +99,10 @@
 
   {#if conflicts.length > 0}
     <div class="summary">
-      {#if counts.teacher > 0}<span class="sum sum-hard">{counts.teacher} teacher</span>{/if}
-      {#if counts.group > 0}<span class="sum sum-hard">{counts.group} group</span>{/if}
-      {#if counts.room > 0}<span class="sum sum-soft">{counts.room} room</span>{/if}
-      {#if counts.away > 0}<span class="sum sum-hard">{counts.away} unavailable</span>{/if}
+      {#if counts.teacher > 0}<span class="sum sum-hard">{counts.teacher} Gruppenführer</span>{/if}
+      {#if counts.group > 0}<span class="sum sum-hard">{counts.group} Gruppe</span>{/if}
+      {#if counts.room > 0}<span class="sum sum-soft">{counts.room} Raum</span>{/if}
+      {#if counts.away > 0}<span class="sum sum-hard">{counts.away} abwesend</span>{/if}
     </div>
   {/if}
 
@@ -121,12 +113,12 @@
       <section class="card card-hard">
         <header class="card-head">
           <Icon name="alert" size={13} />
-          <span class="card-title">Not on any calendar</span>
+          <span class="card-title">Auf keinem Kalender</span>
           <span class="card-count">{orphans.length}</span>
         </header>
         <p class="card-note">
-          {orphans.length === 1 ? 'One event sits' : 'These events sit'} outside every phase. Open
-          one to move it back.
+          {orphans.length === 1 ? 'Eine Lektion liegt' : 'Diese Lektionen liegen'} ausserhalb jeder Phase.
+          Einen öffnen, um ihn zurückzuholen.
         </p>
         <div class="rows">
           {#each orphans as ev (ev.id)}
@@ -147,8 +139,8 @@
       <div class="all-clear">
         <Icon name="check" size={15} />
         <div>
-          <div class="all-clear-title">No conflicts</div>
-          <div class="all-clear-note">No group, teacher or room is double-booked.</div>
+          <div class="all-clear-title">Keine Konflikte</div>
+          <div class="all-clear-note">Keine Gruppe, kein Gruppenführer und kein Raum ist doppelt belegt.</div>
         </div>
       </div>
     {/if}
@@ -163,7 +155,7 @@
         onmouseleave={clearHighlight}
       >
         <header class="card-head">
-          <span class="card-kind">{KIND_LABEL[group.kind]}</span>
+          <span class="card-kind">{CONFLICT_KIND_LABELS[group.kind]}</span>
           <span class="card-title">{group.resourceName}</span>
           <span class="card-count">{group.clashes}×</span>
         </header>
@@ -178,7 +170,7 @@
               onmouseenter={() => highlightEvents([ev.id])}
               onmouseleave={() => highlightEvents(group.eventIds)}
               onclick={() => revealEvent(ev.id)}
-              title="Show this on the grid"
+              title="Im Kalender zeigen"
             >
               <span class="row-dot" style="background:{subject?.color ?? '#888'}"></span>
               <span class="row-name">{subject?.name ?? '?'}</span>
@@ -193,8 +185,8 @@
 
     {#if conflicts.length > 0}
       <p class="foot-note">
-        Hover a card to find it on the grid. Room clashes are advisory; teacher, group
-        and "away" clashes are not.
+        Auf eine Karte zeigen, um sie im Kalender zu finden. Raumkonflikte sind nur ein Hinweis;
+        Gruppenführer-, Gruppen- und Abwesenheitskonflikte nicht.
       </p>
     {/if}
   </div>

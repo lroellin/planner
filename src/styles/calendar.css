@@ -176,7 +176,14 @@
   border: 1px solid color-mix(in oklab, var(--ev-color, gray) var(--wk-edge), var(--wk-surface));
   border-left: 3px solid var(--ev-color, gray);
   border-radius: var(--wk-r-sm);
-  box-shadow: var(--wk-shadow-1);
+  /* Two independent layers. The hover lift used to be written straight into
+     box-shadow, and `:hover` outranks `.wk-selected` on specificity, so pointing
+     at a selected card replaced its ring with the plain hover shadow — which
+     reads as "this one is not selected" on exactly the card you are about to
+     act on. Composing them means neither can overwrite the other. */
+  --wk-lift: var(--wk-shadow-1);
+  --wk-ring: 0 0 0 0 transparent;
+  box-shadow: var(--wk-ring), var(--wk-lift);
   color: var(--wk-text);
   overflow: hidden;
   transition: box-shadow 0.12s, transform 0.12s, opacity 0.15s;
@@ -190,8 +197,11 @@
   border-left-color: color-mix(in oklab, var(--ev-color, gray) 85%, white);
 }
 
-.fc-timegrid-event.wk-ev:hover {
-  box-shadow: 0 2px 10px color-mix(in oklab, var(--color-base-content) 18%, transparent);
+/* Selected cards are excluded: they already carry a larger lift and their own
+   stacking order, and letting hover win here shrank the shadow of the very card
+   the pointer was on. */
+.fc-timegrid-event.wk-ev:hover:not(.wk-selected) {
+  --wk-lift: 0 2px 10px color-mix(in oklab, var(--color-base-content) 18%, transparent);
   z-index: 3;
 }
 
@@ -375,10 +385,8 @@
 /* ── Selection, highlight, spotlight ───────────────────────────────────────── */
 
 .fc-timegrid-event.wk-selected {
-  box-shadow:
-    0 0 0 2px var(--wk-surface),
-    0 0 0 4px var(--color-primary),
-    var(--wk-shadow-2);
+  --wk-ring: 0 0 0 2px var(--wk-surface), 0 0 0 4px var(--color-primary);
+  --wk-lift: var(--wk-shadow-2);
   z-index: 6;
 }
 
@@ -455,6 +463,8 @@
   }
 
   .fc-timegrid-event.wk-selected {
+    --wk-ring: 0 0 0 0 transparent;
+    --wk-lift: none;
     box-shadow: none;
   }
 }

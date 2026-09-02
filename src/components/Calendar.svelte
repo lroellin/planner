@@ -5,21 +5,25 @@
   import resourceTimeGridPlugin from '@fullcalendar/resource-timegrid';
   import interactionPlugin, { type EventReceiveArg, type DateClickArg } from '@fullcalendar/interaction';
   import type { EventResizeDoneArg } from '@fullcalendar/interaction';
-    import { getState, updateEvent, placeSubject } from '../state/store.svelte';
+  import { getState, updateEvent, updateEvents, placeSubject } from '../state/store.svelte';
   import {
-    getSelectedEventId, selectEvent, getHighlightedEventIds, getSpotlightSubjectId,
-    openQuickEdit, closeQuickEdit, getReveal, slotHeight,
+    getSelectedEventId, getSelectedEventIds, selectEvent, toggleEventSelection, addToSelection,
+    getHighlightedEventIds, getSpotlightSubjectId,
+    openQuickEdit, closeQuickEdit, getReveal, slotHeight, consumeDateClickGuard,
   } from '../state/ui.svelte';
+  import { previewClash } from '../conflicts/detector';
   import {
-    groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
-    formatTime, isMultiGroupEvent, effectiveTeacherIds, effectiveRoomId, timeDiffMinutes,
+    groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate, clampDayIndex,
+    formatTime, isMultiGroupEvent, addMinutesToTime,
     sortSubjects, type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { escapeHtml } from '../utils/format';
   import { iconSvg } from '../utils/icons';
   import Icon from './Icon.svelte';
-  import { ALL_GROUPS, type EventFilter, type ID, type Phase } from '../types';
+  import {
+    ALL_GROUPS, CONFLICT_KIND_LABELS, type ConflictKind, type EventFilter, type ID, type Phase,
+  } from '../types';
 
   interface Props {
     selectedEventId: string | null;
@@ -62,13 +66,13 @@
   // toggling classes beats rebuilding every event through the store.
   function paintStates(): void {
     if (!calendarEl) return;
-    const selected = getSelectedEventId();
+    const selected = new Set(getSelectedEventIds());
     const highlighted = new Set(getHighlightedEventIds());
     const spotlight = getSpotlightSubjectId();
     for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-event')) {
       const id = el.dataset['wkEventId'];
       const subjectId = el.dataset['wkSubjectId'];
-      el.classList.toggle('wk-selected', id !== undefined && id === selected);
+      el.classList.toggle('wk-selected', id !== undefined && selected.has(id));
       el.classList.toggle('wk-flash', id !== undefined && highlighted.has(id));
       el.classList.toggle('wk-dimmed', spotlight !== null && subjectId !== spotlight);
     }
@@ -80,6 +84,18 @@
 
   function handleEventClick(info: EventClickArg): void {
     const id = info.event.extendedProps['eventId'] as ID;
+
+    // Ctrl/Cmd toggles a card in or out, Shift only adds — the two gestures
+    // people already have for "and this one too". No popover for a set: its
+    // fields edit one block.
+    const toggling = info.jsEvent.metaKey || info.jsEvent.ctrlKey;
+    if (toggling || info.jsEvent.shiftKey) {
+      closeQuickEdit();
+      if (toggling) toggleEventSelection(id);
+      else addToSelection([id]);
+      return;
+    }
+
     // Double click goes straight to the full editor; a single click selects and
     // offers the three fields that actually change day to day.
     if (info.jsEvent.detail >= 2) {
@@ -97,6 +113,21 @@
     const newStart = info.event.start!;
     const newEnd = info.event.end!;
 
+    // Dragging one card of a selection moves the whole set by the same delta.
+    // Lanes are deliberately left alone: dropping five blocks into the one lane
+    // under the pointer would stack them, which is never the intent.
+    const selection = getSelectedEventIds();
+    if (selection.length > 1 && selection.includes(eventId)) {
+      const dayDelta = info.delta.days;
+      const minuteDelta = info.delta.milliseconds / 60_000;
+      updateEvents(selection, ev => ({
+        dayIndex: clampDayIndex(ev.dayIndex + dayDelta),
+        startTime: addMinutesToTime(ev.startTime, minuteDelta),
+        endTime: addMinutesToTime(ev.endTime, minuteDelta),
+      }), 'verschieben');
+      return;
+    }
+
     const storedEv = getState().events.find(e => e.id === eventId);
     const isMulti = storedEv !== undefined && isMultiGroupEvent(storedEv);
 
@@ -111,7 +142,7 @@
       if (resource) patch.groupId = resource.id;
     }
 
-    updateEvent(eventId, patch, `moving ${info.event.title}`);
+    updateEvent(eventId, patch, `${info.event.title} verschieben`);
   }
 
   function handleEventResize(info: EventResizeDoneArg): void {
@@ -123,7 +154,7 @@
       dayIndex: extractDayIndex(newStart),
       startTime: formatTime(newStart),
       endTime: formatTime(newEnd),
-    }, `resizing ${info.event.title}`);
+    }, `${info.event.title} in der Dauer ändern`);
   }
 
   function handleEventReceive(info: EventReceiveArg): void {
@@ -149,7 +180,7 @@
         // A multi-group event keeps the ALL_GROUPS sentinel and simply follows
         // the lanes of whichever phase now owns its day.
         groupId: isMultiGroupEvent(stored) ? ALL_GROUPS : resource?.id ?? stored.groupId,
-      }, `moving ${info.event.title}`);
+      }, `${info.event.title} verschieben`);
       return;
     }
 
@@ -162,6 +193,9 @@
   }
 
   function handleDateClick(info: DateClickArg): void {
+    // A marquee ends on mouseup over an empty slot, which is also what opens the
+    // placement picker. The marquee claims that one click.
+    if (consumeDateClickGuard()) return;
     const resource = info.resource;
     if (!resource) return;
     closeQuickEdit();
@@ -185,44 +219,43 @@
   // FC calls eventAllow continuously while dragging. Nothing is ever refused —
   // conflicts stay advisory — but the mirror can say what the drop would cost
   // before the mouse is released.
-  function previewClash(
+  //
+  // The rules themselves live in the detector: this used to be a second copy of
+  // them here, and the copy had drifted into missing the all-lanes break, the
+  // defaults of a chip dragged from the sidebar, and availability windows.
+  function paintClashPreview(
     span: { start: Date; end: Date; resourceId?: string },
-    movingEventId: ID | null,
+    movingEvent: { extendedProps: Record<string, unknown> } | null,
   ): void {
     const state = getState();
-    const dayIndex = extractDayIndex(span.start);
-    const startMin = span.start.getHours() * 60 + span.start.getMinutes();
-    const endMin = span.end.getHours() * 60 + span.end.getMinutes();
+    const eventId = (movingEvent?.extendedProps['eventId'] as ID | undefined) ?? null;
+    const stored = eventId ? state.events.find(e => e.id === eventId) ?? null : null;
+    const subjectId =
+      stored?.subjectId ?? (movingEvent?.extendedProps['subjectId'] as ID | undefined) ?? null;
 
-    const moving = movingEventId ? state.events.find(e => e.id === movingEventId) : null;
-    const movingSubject = moving ? state.subjects.find(s => s.id === moving.subjectId) : null;
-    const teacherIds = new Set(moving ? effectiveTeacherIds(moving, movingSubject) : []);
-    const roomId = moving ? effectiveRoomId(moving, movingSubject) : null;
-    const laneId = span.resourceId;
-
-    let clash: 'hard' | 'soft' | null = null;
-    for (const other of state.events) {
-      if (other.id === movingEventId) continue;
-      if (other.dayIndex !== dayIndex) continue;
-      const oStart = timeDiffMinutes('00:00', other.startTime);
-      const oEnd = timeDiffMinutes('00:00', other.endTime);
-      if (!(startMin < oEnd && oStart < endMin)) continue;
-
-      const otherSubject = state.subjects.find(s => s.id === other.subjectId);
-      const sameLane = laneId !== undefined && other.groupId === laneId;
-      const sameTeacher = effectiveTeacherIds(other, otherSubject).some(t => teacherIds.has(t));
-      if (sameLane || sameTeacher) {
-        clash = 'hard';
-        break;
-      }
-      const otherRoom = effectiveRoomId(other, otherSubject);
-      if (roomId && otherRoom === roomId) {
-        const room = state.rooms.find(r => r.id === roomId);
-        if (room && !room.excludeFromConflictCheck) clash = 'soft';
-      }
+    if (!subjectId) {
+      delete calendarEl.dataset['clash'];
+      return;
     }
 
-    if (clash) calendarEl.dataset['clash'] = clash;
+    // A chip has no stored event yet, so its lane comes from the subject's own
+    // "all lanes" flag and from whichever column the pointer is over.
+    const subject = state.subjects.find(s => s.id === subjectId);
+    const multi = stored ? isMultiGroupEvent(stored) : subject?.isMultiGroup === true;
+    const groupId = multi ? ALL_GROUPS : span.resourceId ?? stored?.groupId ?? '';
+
+    const level = previewClash(state, {
+      eventId,
+      subjectId,
+      groupId,
+      dayIndex: extractDayIndex(span.start),
+      startTime: formatTime(span.start),
+      endTime: formatTime(span.end),
+      teacherIds: stored?.teacherIds ?? 'inherit',
+      roomId: stored?.roomId ?? 'inherit',
+    });
+
+    if (level) calendarEl.dataset['clash'] = level;
     else delete calendarEl.dataset['clash'];
   }
 
@@ -279,10 +312,7 @@
       eventResize: handleEventResize,
       eventReceive: handleEventReceive,
       eventAllow(span, movingEvent) {
-        previewClash(
-          span as { start: Date; end: Date; resourceId?: string },
-          (movingEvent?.extendedProps['eventId'] as ID | undefined) ?? null,
-        );
+        paintClashPreview(span as { start: Date; end: Date; resourceId?: string }, movingEvent);
         return true;
       },
       eventDragStop() { delete calendarEl.dataset['clash']; },
@@ -307,13 +337,13 @@
         // A clamped title still has to be readable in full somewhere.
         const teachers = (arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined) ?? [];
         const room = arg.event.extendedProps['room'] as FCEventRoom | null | undefined;
-        const kinds = (arg.event.extendedProps['conflictKinds'] as string[] | undefined) ?? [];
+        const kinds = (arg.event.extendedProps['conflictKinds'] as ConflictKind[] | undefined) ?? [];
         arg.el.title = [
           arg.event.title,
           arg.timeText,
           teachers.map(t => t.name).join(', '),
           room?.name,
-          kinds.length > 0 ? `⚠ ${kinds.join(' + ')} conflict` : null,
+          kinds.length > 0 ? `⚠ Konflikt: ${kinds.map(k => CONFLICT_KIND_LABELS[k]).join(' + ')}` : null,
         ].filter(Boolean).join(' · ');
       },
       eventContent(arg) {
@@ -338,13 +368,13 @@
 
         const flags = [
           isMulti
-            ? `<span class="wk-ev-flag" title="Every lane of this phase">${iconSvg('layers', 11)}</span>`
+            ? `<span class="wk-ev-flag" title="Jede Gruppe dieser Phase">${iconSvg('layers', 11)}</span>`
             : '',
           overrides.length > 0
-            ? `<span class="wk-ev-flag" title="Differs from the subject default: ${escapeHtml(overrides.join(', '))}">${iconSvg('pencil', 11)}</span>`
+            ? `<span class="wk-ev-flag" title="Weicht von der Themenvorgabe ab: ${escapeHtml(overrides.join(', '))}">${iconSvg('pencil', 11)}</span>`
             : '',
           hasConflict
-            ? `<span class="wk-ev-flag ${hard ? 'wk-ev-flag-hard' : 'wk-ev-flag-soft'}" title="${hard ? 'Hard conflict' : 'Room double-booked'}">${iconSvg('alert', 12)}</span>`
+            ? `<span class="wk-ev-flag ${hard ? 'wk-ev-flag-hard' : 'wk-ev-flag-soft'}" title="${hard ? 'Harter Konflikt' : 'Raum doppelt belegt'}">${iconSvg('alert', 12)}</span>`
             : '',
         ].join('');
 
@@ -443,8 +473,8 @@
     class="place-picker"
     style="left: {Math.min(placePending.x, window.innerWidth - 240)}px; top: {Math.min(placePending.y, window.innerHeight - 340)}px"
   >
-    <div class="place-picker-header wk-eyebrow">Place at {formatTime(placePending.date)}</div>
-    {#each [{ isBreak: false, label: 'Lessons' }, { isBreak: true, label: 'Breaks' }] as group (group.label)}
+    <div class="place-picker-header wk-eyebrow">Platzieren um {formatTime(placePending.date)}</div>
+    {#each [{ isBreak: false, label: 'Themen' }, { isBreak: true, label: 'Pausen' }] as group (group.label)}
       {@const items = sortSubjects(getState().subjects.filter(s => s.isBreak === group.isBreak))}
       {#if items.length > 0}
         <div class="place-group-label wk-eyebrow">{group.label}</div>

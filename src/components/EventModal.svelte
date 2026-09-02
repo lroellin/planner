@@ -1,18 +1,17 @@
 <script lang="ts">
-  import { nanoid } from 'nanoid';
   import {
-    getState, addEvent, updateEvent, removeEvent, splitEvent, copyEventToLanes, lanesWithoutEvent,
+    getState, duplicateEvents, updateEvent, removeEvent, splitEvent, copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
   import { selectEvent } from '../state/ui.svelte';
   import {
-    snapToSlot, timeDiffMinutes, addMinutesToTime, DAY_NAMES, phaseGroups,
+    snapToSlot, timeDiffMinutes, addMinutesToTime, splitRange, DAY_NAMES, phaseGroups,
     resolveTeacherIds, resolveRoomId, isMultiGroupEvent, dayDateLabel,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import TimeField from './TimeField.svelte';
-  import { ALL_GROUPS, isHardConflict, type ConflictKind, type ID } from '../types';
+  import { ALL_GROUPS, CONFLICT_KIND_LABELS, isHardConflict, type ID } from '../types';
 
   interface Props {
     eventId: ID;
@@ -57,14 +56,6 @@
 
   const spareLanes = $derived(ev ? lanesWithoutEvent(ev.id) : []);
 
-  const KIND_LABEL: Record<ConflictKind, string> = {
-    teacher: 'Teacher',
-    room: 'Room',
-    group: 'Group',
-    'teacher-absent': 'Away:',
-    'room-blocked': 'Blocked:',
-  };
-
   /** Named clashes, so the editor says what it is you came here to fix. */
   const conflictNotes = $derived.by(() => {
     if (!ev?.conflicts) return [];
@@ -93,6 +84,13 @@
     localDuration = totalMin;
     splitTime = snapToSlot(addMinutesToTime(current.startTime, Math.round(totalMin / 2)));
   });
+
+  // The split picker offers only the slots that actually cut the event in two,
+  // so there is no invalid choice to warn about afterwards. An event of one slot
+  // has none, which is why Split is hidden for it.
+  const split = $derived(
+    ev ? splitRange(ev.startTime, ev.endTime) : { from: '00:00', to: '00:00', canSplit: false },
+  );
 
   const defaultDuration = $derived(subject?.defaultDurationMinutes ?? 60);
   const durationOverridden = $derived(localDuration !== defaultDuration);
@@ -125,7 +123,7 @@
   function duplicateEvent(): void {
     if (!ev) return;
     const { conflicts: _, ...copy } = ev;
-    addEvent({ ...copy, id: nanoid() }, `duplicating ${subject?.name ?? 'event'}`);
+    duplicateEvents([ev.id]);
     onclose();
   }
 
@@ -176,7 +174,7 @@
             · {ev.startTime}–{ev.endTime}
           </p>
         </div>
-        <button class="sheet-x" onclick={onclose} aria-label="Close">
+        <button class="sheet-x" onclick={onclose} aria-label="Schliessen">
           <Icon name="x" size={16} />
         </button>
       </header>
@@ -186,7 +184,7 @@
           {#each conflictNotes as note (note.kind + note.name)}
             <span class="clash" class:clash-hard={note.hard}>
               <Icon name="alert" size={11} />
-              {KIND_LABEL[note.kind]} {note.name}
+              {CONFLICT_KIND_LABELS[note.kind]} {note.name}
             </span>
           {/each}
         </div>
@@ -195,7 +193,7 @@
       <div class="sheet-body">
         <!-- Placement -->
         <div class="field">
-          <span class="field-name">Placement</span>
+          <span class="field-name">Platzierung</span>
           <div class="field-control">
             <div class="row-2">
               <select class="select select-bordered select-sm flex-1" bind:value={localDayIndex}>
@@ -204,7 +202,7 @@
                 {/each}
               </select>
               {#if isMultiGroup}
-                <span class="inline-note flex-1">all lanes</span>
+                <span class="inline-note flex-1">alle Gruppen</span>
               {:else}
                 <select
                   class="select select-bordered select-sm flex-1"
@@ -220,11 +218,11 @@
             </div>
             {#if targetPhase === null}
               <p class="warn">
-                No phase covers {DAY_NAMES[localDayIndex]} — the event would not appear on any calendar.
+                Keine Phase deckt {DAY_NAMES[localDayIndex]} ab — die Lektion würde auf keinem Kalender erscheinen.
               </p>
             {:else if laneOptions.length === 0}
               <p class="warn">
-                {targetPhase.label} has no active lanes — the event would not appear on any calendar.
+                {targetPhase.label} hat keine aktiven Gruppen — die Lektion würde auf keinem Kalender erscheinen.
               </p>
             {:else}
               <p class="hint">
@@ -236,7 +234,7 @@
 
         <!-- Teachers -->
         <div class="field">
-          <span class="field-name">Teachers</span>
+          <span class="field-name">Gruppenführer</span>
           <div class="field-control">
             <div class="teacher-grid">
               {#each appState.teachers as t (t.id)}
@@ -256,22 +254,22 @@
                 </button>
               {/each}
               {#if appState.teachers.length === 0}
-                <span class="hint">No teachers configured.</span>
+                <span class="hint">Keine Gruppenführer erfasst.</span>
               {/if}
             </div>
             {#if localTeacherIds !== 'inherit'}
               <button class="reset" onclick={resetTeachers}>
-                <Icon name="reset" size={11} /> back to subject default
+                <Icon name="reset" size={11} /> zurück zur Themenvorgabe
               </button>
             {:else}
-              <span class="hint">from the subject default</span>
+              <span class="hint">aus der Themenvorgabe</span>
             {/if}
           </div>
         </div>
 
         <!-- Room -->
         <div class="field">
-          <span class="field-name">Room</span>
+          <span class="field-name">Raum</span>
           <div class="field-control">
             <select
               class="select select-bordered select-sm w-full"
@@ -281,27 +279,27 @@
                 localRoomId = v === '' ? null : v;
               }}
             >
-              <option value="">No room</option>
+              <option value="">Kein Raum</option>
               {#each appState.rooms as r (r.id)}
                 <option value={r.id}>{r.name}</option>
               {/each}
             </select>
             {#if localRoomId !== 'inherit'}
               <button class="reset" onclick={resetRoom}>
-                <Icon name="reset" size={11} /> back to subject default
+                <Icon name="reset" size={11} /> zurück zur Themenvorgabe
               </button>
             {:else}
-              <span class="hint">from the subject default</span>
+              <span class="hint">aus der Themenvorgabe</span>
             {/if}
           </div>
         </div>
 
         <!-- Time + duration -->
         <div class="field">
-          <span class="field-name">Time</span>
+          <span class="field-name">Zeit</span>
           <div class="field-control">
             <div class="row-2">
-              <TimeField bind:value={localStartTime} ariaLabel="Start time" />
+              <TimeField bind:value={localStartTime} ariaLabel="Startzeit" />
               <input
                 type="number"
                 min="15"
@@ -313,18 +311,18 @@
                   if (Number.isFinite(n) && n > 0) localDuration = n;
                 }}
               />
-              <span class="inline-note wk-num">min · ends {previewEnd}</span>
+              <span class="inline-note wk-num">min · endet {previewEnd}</span>
             </div>
             <div class="flex items-center gap-3 flex-wrap">
               {#if startTimeMoved}
-                <span class="hint wk-num">moved from {ev.startTime}</span>
+                <span class="hint wk-num">verschoben von {ev.startTime}</span>
               {/if}
               {#if durationOverridden}
                 <button class="reset" onclick={resetDuration}>
-                  <Icon name="reset" size={11} /> back to {defaultDuration} min
+                  <Icon name="reset" size={11} /> zurück auf {defaultDuration} min
                 </button>
               {:else}
-                <span class="hint">duration from the subject default</span>
+                <span class="hint">Dauer aus der Themenvorgabe</span>
               {/if}
             </div>
           </div>
@@ -333,10 +331,16 @@
         <!-- Split -->
         {#if showSplit}
           <div class="inset">
-            <span class="inset-label">Split at</span>
-            <TimeField bind:value={splitTime} class="flex-1" ariaLabel="Split at" />
-            <button class="btn btn-sm btn-primary" onclick={doSplit}>Split</button>
-            <button class="btn btn-sm btn-ghost" onclick={() => showSplit = false}>Cancel</button>
+            <span class="inset-label">Teilen um</span>
+            <TimeField
+              bind:value={splitTime}
+              from={split.from}
+              to={split.to}
+              class="flex-1"
+              ariaLabel="Teilen um"
+            />
+            <button class="btn btn-sm btn-primary" onclick={doSplit}>Teilen</button>
+            <button class="btn btn-sm btn-ghost" onclick={() => showSplit = false}>Abbrechen</button>
           </div>
         {/if}
 
@@ -344,9 +348,9 @@
         {#if showCopy}
           <div class="inset inset-col">
             <div class="flex items-center gap-2 w-full">
-              <span class="inset-label">Copy to</span>
+              <span class="inset-label">Kopieren auf</span>
               {#if spareLanes.length === 0}
-                <span class="hint">Every other lane already has this at this time.</span>
+                <span class="hint">Alle anderen Gruppen haben das zu dieser Zeit bereits.</span>
               {:else}
                 <div class="flex gap-1.5 flex-wrap flex-1">
                   {#each spareLanes as g (g.id)}
@@ -365,12 +369,12 @@
                 </div>
               {/if}
               <button class="btn btn-sm btn-primary" disabled={copyLanes.length === 0} onclick={doCopy}>
-                Copy
+                Kopieren
               </button>
-              <button class="btn btn-sm btn-ghost" onclick={() => (showCopy = false)}>Cancel</button>
+              <button class="btn btn-sm btn-ghost" onclick={() => (showCopy = false)}>Abbrechen</button>
             </div>
             <p class="hint">
-              Same day and time on each chosen lane. Clashes are reported, never blocked.
+              Gleicher Tag und gleiche Zeit auf jeder gewählten Gruppe. Konflikte werden gemeldet, nie blockiert.
             </p>
           </div>
         {/if}
@@ -385,8 +389,8 @@
           <button
             class="act act-danger"
             onclick={deleteEvent}
-            title="Delete this event"
-            aria-label="Delete this event"
+            title="Diese Lektion löschen"
+            aria-label="Diese Lektion löschen"
           >
             <Icon name="trash" size={15} />
           </button>
@@ -395,16 +399,17 @@
             <button
               class="act"
               onclick={() => (showSplit = true)}
-              title="Split into two events"
-              aria-label="Split into two events"
+              disabled={!split.canSplit}
+              title={split.canSplit ? 'In zwei Lektionen teilen' : 'Zu kurz zum Teilen — beide Hälften brauchen ein Feld'}
+              aria-label="In zwei Lektionen teilen"
             >
               <Icon name="scissors" size={15} />
             </button>
             <button
               class="act"
               onclick={duplicateEvent}
-              title="Duplicate"
-              aria-label="Duplicate"
+              title="Duplizieren"
+              aria-label="Duplizieren"
             >
               <Icon name="copy" size={15} />
             </button>
@@ -413,8 +418,8 @@
                 class="act"
                 disabled={spareLanes.length === 0}
                 onclick={() => { showCopy = true; copyLanes = spareLanes.map(g => g.id); }}
-                title="Copy to the other lanes"
-                aria-label="Copy to the other lanes"
+                title="Auf die anderen Gruppen kopieren"
+                aria-label="Auf die anderen Gruppen kopieren"
               >
                 <Icon name="layers" size={15} />
               </button>
@@ -422,12 +427,12 @@
           {/if}
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-ghost btn-sm" onclick={onclose}>Cancel</button>
-          <button class="btn btn-primary btn-sm" onclick={save}>Save</button>
+          <button class="btn btn-ghost btn-sm" onclick={onclose}>Abbrechen</button>
+          <button class="btn btn-primary btn-sm" onclick={save}>Speichern</button>
         </div>
       </footer>
     {:else}
-      <div class="p-6 text-sm">Event not found.</div>
+      <div class="p-6 text-sm">Lektion nicht gefunden.</div>
     {/if}
   </div>
 </dialog>

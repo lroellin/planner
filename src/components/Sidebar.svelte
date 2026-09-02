@@ -44,12 +44,22 @@
     placingSubjectId = subjectId;
   }
 
+  // Says *where* it is still missing — the question the counter only raises.
+  // "Uneven" has no missing lane to name, so it gets its own sentence rather
+  // than an empty list.
   function chipTitle(subject: Subject): string {
-    if (subject.isBreak) return `${subject.name} — drag onto the calendar, or click to place it`;
+    if (subject.isBreak) return `${subject.name} — auf den Kalender ziehen oder anklicken`;
+    const cov = coverageForSubject(appState, subject.id);
     const missing = missingLanesForSubject(appState, subject.id);
-    return missing.length === 0
-      ? `${subject.name} — every lane has it`
-      : `${subject.name} — still missing: ${missing.join(', ')}`;
+    if (missing.length > 0) {
+      return cov.short
+        ? `${subject.name} — Zeit fehlt noch bei: ${missing.join(', ')}`
+        : `${subject.name} — fehlt noch bei: ${missing.join(', ')}`;
+    }
+    if (cov.uneven) {
+      return `${subject.name} — alle Gruppen haben die volle Dauer, mindestens eine aber mehr als nötig`;
+    }
+    return `${subject.name} — jede Gruppe hat die volle Dauer`;
   }
 
   onMount(() => {
@@ -76,9 +86,9 @@
   {#if showSearch}
     <label class="search">
       <Icon name="search" size={13} />
-      <input placeholder="Filter subjects" bind:value={query} />
+      <input placeholder="Themen filtern" bind:value={query} />
       {#if query}
-        <button class="search-clear" onclick={() => (query = '')} aria-label="Clear filter">
+        <button class="search-clear" onclick={() => (query = '')} aria-label="Filter löschen">
           <Icon name="x" size={12} />
         </button>
       {/if}
@@ -86,7 +96,7 @@
   {/if}
 
   <div bind:this={chipContainer} class="chips">
-    {#each [{ items: lessons, label: 'Subjects', coverage: true }, { items: breaks, label: 'Breaks', coverage: false }] as section (section.label)}
+    {#each [{ items: lessons, label: 'Themen', coverage: true }, { items: breaks, label: 'Pausen', coverage: false }] as section (section.label)}
       {#if section.items.length > 0}
         <div class="section">
           <p class="wk-eyebrow section-label">{section.label}</p>
@@ -114,9 +124,14 @@
                 {/if}
                 {#if section.coverage}
                   {@const cov = coverageForSubject(appState, subject.id)}
+                  {@const covered = cov.placed === cov.total && cov.total > 0}
+                  <!-- A green "3/3" while the coverage report calls the same row
+                       uneven is the badge people look at all day being the one
+                       that is wrong, so the chip carries the report's verdict. -->
                   <span
                     class="chip-cov wk-num"
-                    class:cov-done={cov.placed === cov.total && cov.total > 0}
+                    class:cov-done={covered && !cov.uneven && !cov.short}
+                    class:cov-warn={covered && (cov.uneven || cov.short)}
                   >{cov.placed}/{cov.total}</span>
                 {/if}
               </button>
@@ -127,12 +142,12 @@
     {/each}
 
     {#if matching.length === 0}
-      <p class="empty">No subject matches “{query}”.</p>
+      <p class="empty">Kein Thema passt zu «{query}».</p>
     {/if}
   </div>
 
   <p class="hint">
-    Drag onto the grid, or click a chip to place it by day and time.
+    Auf den Kalender ziehen, oder ein Thema anklicken, um es nach Tag und Zeit zu platzieren.
   </p>
 </div>
 
@@ -285,6 +300,12 @@
   .cov-done {
     background: color-mix(in oklab, var(--color-success) 18%, transparent);
     color: var(--color-success);
+  }
+
+  /* Every lane has it, but not equally — or not yet for the full target time. */
+  .cov-warn {
+    background: color-mix(in oklab, var(--color-warning) 22%, transparent);
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
   }
 
   .empty,

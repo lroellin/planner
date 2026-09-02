@@ -1,5 +1,6 @@
 <script lang="ts" generics="T extends { id: string }">
   import type { Snippet } from 'svelte';
+  import AddRow from './AddRow.svelte';
   import Icon from '../Icon.svelte';
 
   interface Props {
@@ -28,16 +29,6 @@
     items, selectedId, addLabel, emptyListText, onselect,
     onquickadd, onadd, adding = false, placeholder = 'Name', row, detail,
   }: Props = $props();
-
-  let draftName = $state('');
-
-  function submit(e: Event): void {
-    e.preventDefault();
-    const name = draftName.trim();
-    if (!name || !onquickadd) return;
-    onquickadd(name);
-    draftName = '';
-  }
 </script>
 
 <div class="list-panel">
@@ -57,21 +48,10 @@
       </p>
     {/if}
   </div>
-  <div class="list-add-row">
-    {#if onquickadd}
-      <form class="quick-add" onsubmit={submit}>
-        <input
-          class="input input-bordered input-sm flex-1 min-w-0"
-          type="text"
-          bind:value={draftName}
-          {placeholder}
-          aria-label={addLabel}
-        />
-        <button type="submit" class="btn btn-sm btn-primary px-2" disabled={!draftName.trim()} title={addLabel}>
-          <Icon name="plus" size={14} />
-        </button>
-      </form>
-    {:else}
+  {#if onquickadd}
+    <AddRow label={addLabel} {placeholder} onadd={onquickadd} stacked />
+  {:else}
+    <div class="list-add-row">
       <button
         class="btn btn-sm w-full justify-start gap-1.5 font-medium"
         class:btn-primary={adding}
@@ -81,18 +61,10 @@
         <Icon name="plus" size={13} />
         {addLabel}
       </button>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <div class="detail-panel">
   {@render detail()}
 </div>
-
-<style>
-  .quick-add {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-</style>

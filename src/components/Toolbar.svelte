@@ -1,11 +1,11 @@
 <script lang="ts">
   import {
-    getState, undo, redo, canUndo, canRedo, setWkStartDate, getIssueCount,
-    undoLabel, redoLabel,
+    getState, undo, redo, undoSteps, canUndo, canRedo, setWkStartDate, getIssueCount,
+    undoLabel, redoLabel, undoHistory,
   } from "../state/store.svelte";
   import { getDensity, setDensity, type Density } from "../state/ui.svelte";
   import { formatDate, dayDateLabel, sortSubjects } from "../utils/timeUtils";
-  import { teacherShort } from "../utils/format";
+  import { teacherShort, isEditingTarget } from "../utils/format";
   import Icon from "./Icon.svelte";
   import type { EventFilter, ReportTab } from "../types";
 
@@ -13,9 +13,15 @@
     configOpen: boolean;
     filter: EventFilter | null;
     onreport: (tab: ReportTab) => void;
+    /** The issue badge is the one place that says something is wrong; it has to
+     *  be able to open the panel that says what. */
+    onshowissues: () => void;
+    onshowshortcuts: () => void;
   }
 
-  let { configOpen = $bindable(), filter = $bindable(), onreport }: Props = $props();
+  let {
+    configOpen = $bindable(), filter = $bindable(), onreport, onshowissues, onshowshortcuts,
+  }: Props = $props();
 
   const appState = $derived(getState());
   // Conflicts *and* orphans — the same number the conflict panel shows, so the
@@ -35,21 +41,28 @@
     `${dayDateLabel(appState.wkStartDate, 0)}–${dayDateLabel(appState.wkStartDate, 4)}`,
   );
 
-  let menu: 'print' | 'legend' | 'week' | null = $state(null);
+  let menu: 'print' | 'legend' | 'week' | 'history' | null = $state(null);
+
+  const history = $derived(undoHistory());
+
+  function undoTo(index: number): void {
+    menu = null;
+    undoSteps(index + 1);
+  }
 
   // S/M/L rather than initials: "Compact" and "Comfortable" both start with C.
   const DENSITIES: { key: Density; label: string; short: string }[] = [
-    { key: 'compact', label: 'Compact', short: 'S' },
+    { key: 'compact', label: 'Kompakt', short: 'S' },
     { key: 'normal', label: 'Normal', short: 'M' },
-    { key: 'comfortable', label: 'Comfortable', short: 'L' },
+    { key: 'comfortable', label: 'Weit', short: 'L' },
   ];
 
   const PRINT_TARGETS: { tab: ReportTab | 'grid'; label: string; hint: string }[] = [
-    { tab: 'grid', label: 'Week grid', hint: 'The timetable as shown' },
-    { tab: 'groups', label: 'Group plans', hint: 'One page per group' },
-    { tab: 'teachers', label: 'Teacher plans', hint: 'One page per teacher' },
-    { tab: 'rooms', label: 'Room plans', hint: 'One page per room' },
-    { tab: 'coverage', label: 'Coverage', hint: 'Who still needs what' },
+    { tab: 'grid', label: 'Wochenraster', hint: 'Der Stundenplan wie angezeigt' },
+    { tab: 'groups', label: 'Gruppenpläne', hint: 'Eine Seite pro Gruppe' },
+    { tab: 'teachers', label: 'Gruppenführerpläne', hint: 'Eine Seite pro Gruppenführer' },
+    { tab: 'rooms', label: 'Raumpläne', hint: 'Eine Seite pro Raum' },
+    { tab: 'coverage', label: 'Abdeckung', hint: 'Wer noch was braucht' },
   ];
 
   function applyFilter(raw: string): void {
@@ -81,18 +94,12 @@
     setTimeout(() => window.print(), 350);
   }
 
-  // Ctrl+Z belongs to the focused field while text is being edited — taking it
-  // for app-level undo there would revert the whole schedule instead of a typo.
-  function isEditing(target: EventTarget | null): boolean {
-    const el = target as HTMLElement | null;
-    if (!el?.tagName) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable;
-  }
-
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') menu = null;
     if (!(e.ctrlKey || e.metaKey)) return;
-    if (isEditing(e.target)) return;
+    // Ctrl+Z belongs to the focused field while text is being edited — taking it
+    // for app-level undo there would revert the whole schedule instead of a typo.
+    if (isEditingTarget(e.target)) return;
     if (e.key === "z" && !e.shiftKey) {
       e.preventDefault();
       undo();
@@ -118,29 +125,29 @@
     <button
       class="plan-name"
       onclick={() => (configOpen = true)}
-      title="Rename in Config → Plan &amp; data"
+      title="Umbenennen unter Konfiguration → Plan &amp; Daten"
     >{appState.name}</button>
 
-    <label class="filter" title="Show only events involving…">
+    <label class="filter" title="Nur Lektionen zeigen, die … betreffen">
       <Icon name="filter" size={13} />
       <select
         class="filter-select"
         value={filterValue}
         onchange={(e) => applyFilter((e.currentTarget as HTMLSelectElement).value)}
-        aria-label="Filter events"
+        aria-label="Lektionen filtern"
       >
-        <option value="">All events</option>
-        <optgroup label="Teachers">
+        <option value="">Alle Lektionen</option>
+        <optgroup label="Gruppenführer">
           {#each appState.teachers as t (t.id)}
             <option value="teacher:{t.id}">{t.name}</option>
           {/each}
         </optgroup>
-        <optgroup label="Rooms">
+        <optgroup label="Räume">
           {#each appState.rooms as r (r.id)}
             <option value="room:{r.id}">{r.name}</option>
           {/each}
         </optgroup>
-        <optgroup label="Groups">
+        <optgroup label="Gruppen">
           {#each appState.groups.filter(g => g.enabled) as g (g.id)}
             <option value="group:{g.id}">{g.label}</option>
           {/each}
@@ -153,34 +160,34 @@
         class="tb-btn"
         class:tb-btn-on={menu === 'legend'}
         onclick={() => (menu = menu === 'legend' ? null : 'legend')}
-        title="What the colours mean"
+        title="Was die Farben bedeuten"
       >
-        <Icon name="palette" size={15} /> Legend
+        <Icon name="palette" size={15} /> Legende
       </button>
       {#if menu === 'legend'}
         <div class="pop pop-left">
-          <div class="pop-title wk-eyebrow">Teachers</div>
+          <div class="pop-title wk-eyebrow">Gruppenführer</div>
           {#each appState.teachers as t (t.id)}
             <div class="legend-row">
               <span class="legend-av" style="background:{t.color}">{teacherShort(t)}</span>
               <span class="truncate">{t.name}</span>
             </div>
           {:else}
-            <p class="pop-empty">No teachers yet.</p>
+            <p class="pop-empty">Noch keine Gruppenführer.</p>
           {/each}
-          <div class="pop-title wk-eyebrow">Rooms</div>
+          <div class="pop-title wk-eyebrow">Räume</div>
           {#each appState.rooms as r (r.id)}
             <div class="legend-row">
               <span class="legend-tag" style="background:{r.color}"></span>
               <span class="truncate">{r.name}</span>
               {#if r.excludeFromConflictCheck}
-                <span class="legend-note">shared</span>
+                <span class="legend-note">geteilt</span>
               {/if}
             </div>
           {:else}
-            <p class="pop-empty">No rooms yet.</p>
+            <p class="pop-empty">Noch keine Räume.</p>
           {/each}
-          <div class="pop-title wk-eyebrow">Subjects</div>
+          <div class="pop-title wk-eyebrow">Themen</div>
           {#each legendSubjects as s (s.id)}
             <div class="legend-row">
               <span class="legend-dot" style="background:{s.color}"></span>
@@ -194,7 +201,7 @@
 
   <!-- ── The week ─────────────────────────────────────────────────────────── -->
   <div class="bar-center">
-    <button class="tb-icon" onclick={() => shiftWeek(-1)} title="Previous week" aria-label="Previous week">
+    <button class="tb-icon" onclick={() => shiftWeek(-1)} title="Vorherige Woche" aria-label="Vorherige Woche">
       <Icon name="chevronLeft" size={16} />
     </button>
     <div class="week-wrap">
@@ -202,14 +209,14 @@
         class="week-btn"
         class:tb-btn-on={menu === 'week'}
         onclick={() => (menu = menu === 'week' ? null : 'week')}
-        title="Pick the WK week"
+        title="WK-Woche wählen"
       >
         <Icon name="calendar" size={14} />
         <span class="wk-num">{weekLabel}</span>
       </button>
       {#if menu === 'week'}
         <div class="pop pop-center">
-          <div class="pop-title wk-eyebrow">WK week (Monday)</div>
+          <div class="pop-title wk-eyebrow">WK-Woche (Montag)</div>
           <input
             type="date"
             class="input input-bordered input-sm w-full"
@@ -219,25 +226,25 @@
               menu = null;
             }}
           />
-          <p class="pop-empty">Any date snaps back to its Monday.</p>
+          <p class="pop-empty">Jedes Datum rastet auf seinen Montag ein.</p>
         </div>
       {/if}
     </div>
-    <button class="tb-icon" onclick={() => shiftWeek(1)} title="Next week" aria-label="Next week">
+    <button class="tb-icon" onclick={() => shiftWeek(1)} title="Nächste Woche" aria-label="Nächste Woche">
       <Icon name="chevronRight" size={16} />
     </button>
   </div>
 
   <!-- ── Actions ──────────────────────────────────────────────────────────── -->
   <div class="bar-right">
-    <div class="density" role="group" aria-label="Row height">
+    <div class="density" role="group" aria-label="Zeilenhöhe">
       <Icon name="rows" size={13} class="density-icon" />
       {#each DENSITIES as d (d.key)}
         <button
           class="density-btn"
           class:density-btn-on={getDensity() === d.key}
           onclick={() => setDensity(d.key)}
-          title="{d.label} rows"
+          title="Zeilenhöhe: {d.label}"
           aria-pressed={getDensity() === d.key}
         >{d.short}</button>
       {/each}
@@ -249,28 +256,57 @@
       class="tb-icon"
       disabled={!canUndo()}
       onclick={undo}
-      title={canUndo() ? `Undo ${undoLabel() ?? ''} (Ctrl+Z)` : 'Nothing to undo'}
-      aria-label="Undo"
+      title={canUndo() ? `Rückgängig: ${undoLabel() ?? ''} (Ctrl+Z)` : 'Nichts rückgängig zu machen'}
+      aria-label="Rückgängig"
     ><Icon name="undo" size={15} /></button>
+
+    <!-- Ctrl+Z five times and then reading the grid to work out where you have
+         landed is not a way to get back to before lunch was moved. -->
+    <div class="legend-wrap">
+      <button
+        class="tb-caret"
+        class:tb-btn-on={menu === 'history'}
+        disabled={!canUndo()}
+        onclick={() => (menu = menu === 'history' ? null : 'history')}
+        title="Verlauf"
+        aria-label="Verlauf"
+      ><Icon name="chevronDown" size={12} /></button>
+      {#if menu === 'history'}
+        <div class="pop pop-right">
+          <div class="pop-title wk-eyebrow">Rückgängig bis …</div>
+          {#each history as label, i (i)}
+            <button class="pop-item pop-item-row" onclick={() => undoTo(i)}>
+              <span class="pop-item-label">{label}</span>
+              <span class="pop-item-hint wk-num">{i + 1}×</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
     <button
       class="tb-icon"
       disabled={!canRedo()}
       onclick={redo}
-      title={canRedo() ? `Redo ${redoLabel() ?? ''} (Ctrl+Shift+Z)` : 'Nothing to redo'}
-      aria-label="Redo"
+      title={canRedo() ? `Wiederholen: ${redoLabel() ?? ''} (Ctrl+Shift+Z)` : 'Nichts zu wiederholen'}
+      aria-label="Wiederholen"
     ><Icon name="redo" size={15} /></button>
 
     {#if conflictCount > 0}
-      <span class="issues" title="Conflicts and events that no calendar draws">
+      <button
+        class="issues"
+        onclick={onshowissues}
+        title="Konflikte und Lektionen, die kein Kalender zeichnet — Liste öffnen"
+      >
         <Icon name="alert" size={13} />
-        {conflictCount} issue{conflictCount !== 1 ? "s" : ""}
-      </span>
+        {conflictCount} {conflictCount === 1 ? "Problem" : "Probleme"}
+      </button>
     {/if}
 
     <div class="tb-divider"></div>
 
-    <button class="tb-btn" onclick={() => onreport('coverage')} title="Coverage and plans">
-      <Icon name="report" size={15} /> Reports
+    <button class="tb-btn" onclick={() => onreport('coverage')} title="Abdeckung und Pläne">
+      <Icon name="report" size={15} /> Auswertungen
     </button>
 
     <div class="legend-wrap">
@@ -279,12 +315,12 @@
         class:tb-btn-on={menu === 'print'}
         onclick={() => (menu = menu === 'print' ? null : 'print')}
       >
-        <Icon name="printer" size={15} /> Print
+        <Icon name="printer" size={15} /> Drucken
         <Icon name="chevronDown" size={12} />
       </button>
       {#if menu === 'print'}
         <div class="pop pop-right">
-          <div class="pop-title wk-eyebrow">Print…</div>
+          <div class="pop-title wk-eyebrow">Drucken …</div>
           {#each PRINT_TARGETS as target (target.tab)}
             <button class="pop-item" onclick={() => print(target.tab)}>
               <span class="pop-item-label">{target.label}</span>
@@ -295,14 +331,21 @@
       {/if}
     </div>
 
+    <button
+      class="tb-icon"
+      onclick={onshowshortcuts}
+      title="Tastenkürzel (?)"
+      aria-label="Tastenkürzel"
+    ><Icon name="keyboard" size={15} /></button>
+
     <button class="btn btn-primary btn-sm gap-1.5" onclick={() => (configOpen = true)}>
-      <Icon name="settings" size={15} /> Config
+      <Icon name="settings" size={15} /> Konfiguration
     </button>
   </div>
 </div>
 
 {#if menu}
-  <button class="menu-backdrop" aria-label="Close menu" onclick={() => (menu = null)}></button>
+  <button class="menu-backdrop" aria-label="Menü schliessen" onclick={() => (menu = null)}></button>
 {/if}
 
 <style>
@@ -482,6 +525,35 @@
     color: var(--color-primary);
   }
 
+  /* The undo split-button's second half. */
+  .tb-caret {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 26px;
+    margin-left: -4px;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .tb-caret:hover:not(:disabled) {
+    background: var(--wk-surface-alt);
+    color: var(--wk-text);
+  }
+  .tb-caret:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .pop-item-row {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   /* ── Issue badge ────────────────────────────────────────────────────────── */
   .issues {
     display: flex;
@@ -489,12 +561,18 @@
     gap: 0.3rem;
     height: 24px;
     padding: 0 0.5rem;
+    border: none;
     border-radius: var(--wk-r-sm);
     background: color-mix(in oklab, var(--color-error) 13%, transparent);
     color: var(--color-error);
     font-size: var(--wk-fs-xs);
     font-weight: 650;
     white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .issues:hover {
+    background: color-mix(in oklab, var(--color-error) 22%, transparent);
   }
 
   /* ── Popovers ───────────────────────────────────────────────────────────── */

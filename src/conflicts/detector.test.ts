@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectConflicts, attachConflicts } from './detector';
+import { detectConflicts, attachConflicts, previewClash } from './detector';
 import { ALL, makeEvent, makeState, makeSubject, makeWindow } from '../test/fixtures';
 
 const kinds = (state: Parameters<typeof detectConflicts>[0]) =>
@@ -154,7 +154,7 @@ describe('availability', () => {
     const reports = detectConflicts(state);
     expect(reports.map(r => r.kind)).toEqual(['teacher-absent']);
     expect(reports[0]!.involvedEventIds).toHaveLength(1);
-    expect(reports[0]!.detail).toContain('Wed');
+    expect(reports[0]!.detail).toContain('Mi');
   });
 
   it('leaves a lesson on another day alone', () => {
@@ -240,5 +240,76 @@ describe('availability', () => {
       kind: 'teacher-absent',
       collidingEventIds: [],
     });
+  });
+});
+
+describe('previewClash', () => {
+  // The drag preview used to be a second, separate copy of these rules inside
+  // the calendar component; each case below is one way that copy was wrong.
+  const candidate = (over: Partial<Parameters<typeof previewClash>[1]> = {}) => ({
+    eventId: null,
+    subjectId: 'lesson',
+    groupId: 'g1',
+    dayIndex: 2,
+    startTime: '12:00',
+    endTime: '13:00',
+    teacherIds: 'inherit' as const,
+    roomId: 'inherit' as const,
+    ...over,
+  });
+
+  it('sees the all-lanes break a lesson would be dropped onto', () => {
+    const state = makeState({
+      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate())).toBe('hard');
+  });
+
+  it('resolves the subject defaults for a chip that has not been dropped yet', () => {
+    // Nothing is placed for the candidate, so only its *defaults* can clash —
+    // which is exactly what the old preview could not see.
+    const state = makeState({
+      events: [makeEvent({ groupId: 'g2', startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate())).toBe('hard'); // shared default teacher t1
+  });
+
+  it('reports a shared room as soft and an excluded room as no clash at all', () => {
+    const base = makeState({
+      subjects: [
+        ...makeState().subjects,
+        makeSubject({ id: 'other-teacher', defaultTeacherIds: ['t2'], defaultRoomId: 'r1' }),
+        makeSubject({ id: 'outside-lesson', defaultTeacherIds: ['t2'], defaultRoomId: 'outside' }),
+      ],
+      events: [makeEvent({ groupId: 'g2', startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(base, candidate({ subjectId: 'other-teacher' }))).toBe('soft');
+
+    const outside = {
+      ...base,
+      // No teacher on the placed one, so the shared room is the only thing left
+      // that could clash — and "outside" is excluded from that check.
+      events: [makeEvent({
+        subjectId: 'outside-lesson', groupId: 'g2', teacherIds: [],
+        startTime: '12:00', endTime: '13:00',
+      })],
+    };
+    expect(previewClash(outside, candidate({ subjectId: 'outside-lesson' }))).toBe(null);
+  });
+
+  it('sees an availability window, which the old preview ignored entirely', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      teachers: base.teachers.map(t => (t.id === 't1' ? { ...t, unavailable: [makeWindow([2])] } : t)),
+    };
+    expect(previewClash(state, candidate())).toBe('hard');
+  });
+
+  it('does not clash the moving event with itself', () => {
+    const state = makeState({
+      events: [makeEvent({ id: 'moving', groupId: 'g1', startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate({ eventId: 'moving' }))).toBe(null);
   });
 });

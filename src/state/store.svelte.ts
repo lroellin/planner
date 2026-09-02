@@ -7,7 +7,7 @@ import type {
 import { saveState, loadState, createDefaultState, flushSave } from './persistence';
 import {
   pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo,
-  peekUndoLabel, peekRedoLabel,
+  peekUndoLabel, peekRedoLabel, undoLabels,
 } from './undo';
 import { detectConflicts, attachConflicts } from '../conflicts/detector';
 import { toast } from './ui.svelte';
@@ -29,10 +29,21 @@ let _orphans: CalendarEvent[] = $state(orphanEvents(_loaded));
 
 let _canUndoState: boolean = $state(false);
 let _canRedoState: boolean = $state(false);
+// Mirrored into reactive state: the undo module's own peek functions are plain
+// module variables, so a tooltip reading them re-rendered only by accident and
+// sat one action behind the history menu next to it.
+let _undoHistory: string[] = $state([]);
+let _undoLabel: string | null = $state(null);
+let _redoLabel: string | null = $state(null);
+
+const HISTORY_DEPTH = 12;
 
 function syncUndoState(): void {
   _canUndoState = _canUndo();
   _canRedoState = _canRedo();
+  _undoHistory = undoLabels(HISTORY_DEPTH);
+  _undoLabel = peekUndoLabel();
+  _redoLabel = peekRedoLabel();
 }
 
 // ─── Getters ──────────────────────────────────────────────────────────────────
@@ -44,6 +55,8 @@ export function getOrphans(): CalendarEvent[] { return _orphans; }
 export function getIssueCount(): number { return _conflicts.length + _orphans.length; }
 export function canUndo(): boolean { return _canUndoState; }
 export function canRedo(): boolean { return _canRedoState; }
+/** The actions undo would take back, most recent first — feeds the history menu. */
+export function undoHistory(): string[] { return _undoHistory; }
 
 // ─── State mutations ──────────────────────────────────────────────────────────
 
@@ -77,7 +90,7 @@ export interface MutateOptions {
 let lastCoalesceKey: string | null = null;
 
 export function setState(next: AppState, opts: MutateOptions = {}): void {
-  const { recordUndo = true, coalesceKey, label = 'change' } = opts;
+  const { recordUndo = true, coalesceKey, label = 'Änderung' } = opts;
   if (recordUndo && !(coalesceKey !== undefined && coalesceKey === lastCoalesceKey)) {
     pushUndo(snapshot(), label);
   }
@@ -86,11 +99,28 @@ export function setState(next: AppState, opts: MutateOptions = {}): void {
 }
 
 /** What Undo/Redo would act on next — shown in their tooltips. */
-export function undoLabel(): string | null { return peekUndoLabel(); }
-export function redoLabel(): string | null { return peekRedoLabel(); }
+export function undoLabel(): string | null { return _undoLabel; }
+export function redoLabel(): string | null { return _redoLabel; }
 
-export function undo(): void {
-  const entry = undoState(snapshot());
+export function undo(): void { undoSteps(1); }
+
+/**
+ * Take back `steps` actions at once — what picking an entry from the history
+ * menu does. Each hop still goes through `undoState`, so the redo stack is
+ * built exactly as it would be by pressing Ctrl+Z that many times; only the
+ * commit and the toast happen once, at the end.
+ */
+export function undoSteps(steps: number): void {
+  let current = snapshot();
+  let entry = null as ReturnType<typeof undoState>;
+  let taken = 0;
+  for (let i = 0; i < steps; i++) {
+    const next = undoState(current);
+    if (!next) break;
+    entry = next;
+    current = next.state;
+    taken++;
+  }
   lastCoalesceKey = null;
   if (!entry) {
     syncUndoState();
@@ -99,7 +129,10 @@ export function undo(): void {
   commit(entry.state);
   // Undo used to change the schedule with no acknowledgement at all, which is
   // unnerving on a grid where the affected card may be off-screen.
-  toast(`Undid ${entry.label}`, { label: 'Redo', run: redo });
+  const message = taken === 1
+    ? `Rückgängig: ${entry.label}`
+    : `${taken} Schritte rückgängig, zurück vor «${entry.label}»`;
+  toast(message, { label: 'Wiederholen', run: redo });
 }
 
 export function redo(): void {
@@ -110,7 +143,7 @@ export function redo(): void {
     return;
   }
   commit(entry.state);
-  toast(`Redid ${entry.label}`, { label: 'Undo', run: undo });
+  toast(`Wiederhergestellt: ${entry.label}`, { label: 'Rückgängig', run: undo });
 }
 
 // ─── Event mutations ──────────────────────────────────────────────────────────
@@ -119,14 +152,20 @@ export function redo(): void {
 function eventLabel(id: ID, verb: string): string {
   const ev = _state.events.find(e => e.id === id);
   const name = ev ? _state.subjects.find(s => s.id === ev.subjectId)?.name : undefined;
-  return name ? `${verb} ${name}` : verb;
+  return name ? `${name} ${verb}` : `Lektion ${verb}`;
+}
+
+/** The same, for a batch: naming twelve blocks individually says nothing. */
+function eventsLabel(ids: ID[], verb: string): string {
+  if (ids.length === 1) return eventLabel(ids[0]!, verb);
+  return `${ids.length} Lektionen ${verb}`;
 }
 
 export function addEvent(ev: CalendarEvent, label?: string): void {
   const name = _state.subjects.find(s => s.id === ev.subjectId)?.name;
   setState(
     { ..._state, events: [..._state.events, ev] },
-    { label: label ?? (name ? `placing ${name}` : 'placing an event') },
+    { label: label ?? (name ? `${name} platzieren` : 'Lektion platzieren') },
   );
 }
 
@@ -138,12 +177,56 @@ export function updateEvent(
   setState({
     ..._state,
     events: _state.events.map(ev => ev.id === id ? { ...ev, ...patch } : ev),
-  }, { label: label ?? eventLabel(id, 'editing') });
+  }, { label: label ?? eventLabel(id, 'bearbeiten') });
 }
 
 export function removeEvent(id: ID): void {
-  const label = eventLabel(id, 'deleting');
+  const label = eventLabel(id, 'löschen');
   setState({ ..._state, events: _state.events.filter(ev => ev.id !== id) }, { label });
+}
+
+/**
+ * Apply the same edit to a set of events as one action. The patch is a function
+ * because a nudge is relative: every block moves by its own 15 minutes, not to a
+ * shared time. One undo entry covers the whole batch — taking back a move of
+ * twelve blocks twelve times is not undo.
+ */
+export function updateEvents(
+  ids: ID[],
+  patch: (ev: CalendarEvent) => Partial<Omit<CalendarEvent, 'id' | 'conflicts'>>,
+  verb: string,
+): void {
+  if (ids.length === 0) return;
+  const targets = new Set(ids);
+  setState({
+    ..._state,
+    events: _state.events.map(ev => (targets.has(ev.id) ? { ...ev, ...patch(ev) } : ev)),
+  }, { label: eventsLabel(ids, verb) });
+}
+
+export function removeEvents(ids: ID[]): void {
+  if (ids.length === 0) return;
+  const label = eventsLabel(ids, 'löschen');
+  const targets = new Set(ids);
+  setState({ ..._state, events: _state.events.filter(ev => !targets.has(ev.id)) }, { label });
+}
+
+/**
+ * Duplicate a set of events in place, returning the new ids so the caller can
+ * select the copies — a duplicate that leaves the originals selected sends the
+ * next arrow key to the wrong blocks.
+ */
+export function duplicateEvents(ids: ID[]): ID[] {
+  const targets = new Set(ids);
+  const copies: CalendarEvent[] = _state.events
+    .filter(ev => targets.has(ev.id))
+    .map(({ conflicts: _omit, ...ev }) => ({ ...ev, id: nanoid() }));
+  if (copies.length === 0) return [];
+  setState(
+    { ..._state, events: [..._state.events, ...copies] },
+    { label: eventsLabel(ids, 'duplizieren') },
+  );
+  return copies.map(c => c.id);
 }
 
 /**
@@ -161,10 +244,10 @@ export function copyEventToLanes(id: ID, groupIds: ID[]): void {
     id: nanoid(),
     groupId,
   }));
-  const name = _state.subjects.find(s => s.id === source.subjectId)?.name ?? 'event';
+  const name = _state.subjects.find(s => s.id === source.subjectId)?.name ?? 'Lektion';
   setState(
     { ..._state, events: [..._state.events, ...copies] },
-    { label: `copying ${name} to ${copies.length} lane${copies.length === 1 ? '' : 's'}` },
+    { label: `${name} auf ${copies.length} Gruppe${copies.length === 1 ? '' : 'n'} kopieren` },
   );
 }
 
@@ -225,14 +308,14 @@ export function splitEvent(id: ID, atTime: string): void {
   setState({
     ..._state,
     events: _state.events.filter(e => e.id !== id).concat([first, second]),
-  }, { label: eventLabel(id, 'splitting') });
+  }, { label: eventLabel(id, 'teilen') });
 }
 
 // ─── Teacher mutations ────────────────────────────────────────────────────────
 
 export function addTeacher(name: string, shortName: string, color: string): ID {
   const teacher: Teacher = { id: nanoid(), name, shortName, color, unavailable: [] };
-  setState({ ..._state, teachers: [..._state.teachers, teacher] }, { label: `adding ${name}` });
+  setState({ ..._state, teachers: [..._state.teachers, teacher] }, { label: `${name} hinzufügen` });
   return teacher.id;
 }
 
@@ -240,11 +323,11 @@ export function updateTeacher(id: ID, patch: Partial<Omit<Teacher, 'id'>>, opts:
   setState({
     ..._state,
     teachers: _state.teachers.map(t => t.id === id ? { ...t, ...patch } : t),
-  }, { label: `editing ${_state.teachers.find(t => t.id === id)?.name ?? 'teacher'}`, ...opts });
+  }, { label: `${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} bearbeiten`, ...opts });
 }
 
 export function removeTeacher(id: ID): void {
-  const label = `deleting ${_state.teachers.find(t => t.id === id)?.name ?? 'teacher'}`;
+  const label = `${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} löschen`;
   setState({
     ..._state,
     teachers: _state.teachers.filter(t => t.id !== id),
@@ -265,7 +348,7 @@ export function removeTeacher(id: ID): void {
 
 export function addRoom(name: string, color: string, excludeFromConflictCheck: boolean): ID {
   const room: Room = { id: nanoid(), name, color, excludeFromConflictCheck, unavailable: [] };
-  setState({ ..._state, rooms: [..._state.rooms, room] }, { label: `adding ${name}` });
+  setState({ ..._state, rooms: [..._state.rooms, room] }, { label: `${name} hinzufügen` });
   return room.id;
 }
 
@@ -273,11 +356,11 @@ export function updateRoom(id: ID, patch: Partial<Omit<Room, 'id'>>, opts: Mutat
   setState({
     ..._state,
     rooms: _state.rooms.map(r => r.id === id ? { ...r, ...patch } : r),
-  }, { label: `editing ${_state.rooms.find(r => r.id === id)?.name ?? 'room'}`, ...opts });
+  }, { label: `${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} bearbeiten`, ...opts });
 }
 
 export function removeRoom(id: ID): void {
-  const label = `deleting ${_state.rooms.find(r => r.id === id)?.name ?? 'room'}`;
+  const label = `${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} löschen`;
   setState({
     ..._state,
     rooms: _state.rooms.filter(r => r.id !== id),
@@ -298,7 +381,7 @@ export function addSubject(s: Omit<Subject, 'id'>): ID {
   const id = nanoid();
   setState(
     { ..._state, subjects: [..._state.subjects, { id, ...s }] },
-    { label: `adding ${s.name}` },
+    { label: `${s.name} hinzufügen` },
   );
   return id;
 }
@@ -326,11 +409,11 @@ export function updateSubject(id: ID, patch: Partial<Omit<Subject, 'id'>>, opts:
     ..._state,
     subjects: _state.subjects.map(s => s.id === id ? { ...s, ...patch } : s),
     events,
-  }, { label: `editing ${oldSubject?.name ?? 'subject'}`, ...opts });
+  }, { label: `${oldSubject?.name ?? 'Thema'} bearbeiten`, ...opts });
 }
 
 export function removeSubject(id: ID): void {
-  const label = `deleting ${_state.subjects.find(s => s.id === id)?.name ?? 'subject'}`;
+  const label = `${_state.subjects.find(s => s.id === id)?.name ?? 'Thema'} löschen`;
   setState({
     ..._state,
     subjects: _state.subjects.filter(s => s.id !== id),
@@ -344,7 +427,7 @@ export function addGroup(label: string): void {
   const maxOrder = _state.groups.reduce((m, g) => Math.max(m, g.order), -1);
   setState(
     { ..._state, groups: [..._state.groups, { id: nanoid(), label, enabled: true, order: maxOrder + 1 }] },
-    { label: `adding group ${label}` },
+    { label: `Gruppe ${label} hinzufügen` },
   );
 }
 
@@ -352,7 +435,7 @@ export function updateGroup(id: ID, patch: Partial<Omit<Group, 'id'>>): void {
   setState({
     ..._state,
     groups: _state.groups.map(g => g.id === id ? { ...g, ...patch } : g),
-  }, { label: `editing group ${_state.groups.find(g => g.id === id)?.label ?? ''}`.trimEnd() });
+  }, { label: `Gruppe ${_state.groups.find(g => g.id === id)?.label ?? ''} bearbeiten`.replace('  ', ' ') });
 }
 
 function reorderGroups(id: ID, delta: number): void {
@@ -365,7 +448,7 @@ function reorderGroups(id: ID, delta: number): void {
   sorted[idx] = tmp;
   setState(
     { ..._state, groups: _state.groups.map(g => ({ ...g, order: sorted.findIndex(s => s.id === g.id) })) },
-    { label: 'reordering groups' },
+    { label: 'Gruppen neu ordnen' },
   );
 }
 
@@ -381,7 +464,7 @@ export function moveGroupToIndex(id: ID, index: number): void {
   sorted.splice(index, 0, moved!);
   setState(
     { ..._state, groups: _state.groups.map(g => ({ ...g, order: sorted.findIndex(s => s.id === g.id) })) },
-    { label: 'reordering groups' },
+    { label: 'Gruppen neu ordnen' },
   );
 }
 
@@ -391,7 +474,7 @@ export function eventCountForGroup(id: ID): number {
 }
 
 export function removeGroup(id: ID): void {
-  const label = `deleting group ${_state.groups.find(g => g.id === id)?.label ?? ''}`.trimEnd();
+  const label = `Gruppe ${_state.groups.find(g => g.id === id)?.label ?? ''} löschen`.replace('  ', ' ');
   setState({
     ..._state,
     groups: _state.groups.filter(g => g.id !== id),
@@ -408,14 +491,14 @@ export function addPhase(label: string, startDay: number, endDay: number, groupI
   setState({
     ..._state,
     phases: [..._state.phases, { id: nanoid(), label, startDay, endDay, groupIds }],
-  }, { label: `adding phase ${label}` });
+  }, { label: `Phase ${label} hinzufügen` });
 }
 
 export function updatePhase(id: ID, patch: Partial<Omit<Phase, 'id'>>): void {
   setState({
     ..._state,
     phases: _state.phases.map(p => p.id === id ? { ...p, ...patch } : p),
-  }, { label: `editing phase ${_state.phases.find(p => p.id === id)?.label ?? ''}`.trimEnd() });
+  }, { label: `Phase ${_state.phases.find(p => p.id === id)?.label ?? ''} bearbeiten`.replace('  ', ' ') });
 }
 
 /** Events that would stop being drawn if this phase went away. */
@@ -426,7 +509,7 @@ export function eventCountForPhase(id: ID): number {
 }
 
 export function removePhase(id: ID): void {
-  const label = `deleting phase ${_state.phases.find(p => p.id === id)?.label ?? ''}`.trimEnd();
+  const label = `Phase ${_state.phases.find(p => p.id === id)?.label ?? ''} löschen`.replace('  ', ' ');
   setState({
     ..._state,
     phases: _state.phases.filter(p => p.id !== id),
@@ -455,18 +538,18 @@ function snapToMonday(dateStr: string): string | null {
  * and the undo label — out of the config components.
  */
 export function setTeacherUnavailable(id: ID, unavailable: TimeWindow[]): void {
-  updateTeacher(id, { unavailable }, { label: `editing ${_state.teachers.find(t => t.id === id)?.name ?? 'teacher'}'s absences` });
+  updateTeacher(id, { unavailable }, { label: `Abwesenheiten von ${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} bearbeiten` });
 }
 
 export function setRoomUnavailable(id: ID, unavailable: TimeWindow[]): void {
-  updateRoom(id, { unavailable }, { label: `editing ${_state.rooms.find(r => r.id === id)?.name ?? 'room'}'s blocked times` });
+  updateRoom(id, { unavailable }, { label: `Sperrzeiten von ${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} bearbeiten` });
 }
 
 // ─── Plan-level mutations ─────────────────────────────────────────────────────
 
 export function setPlanName(name: string): void {
   if (name === _state.name) return;
-  setState({ ..._state, name }, { label: 'renaming the plan', coalesceKey: 'plan-name' });
+  setState({ ..._state, name }, { label: 'Plan umbenennen', coalesceKey: 'plan-name' });
 }
 
 /**
@@ -490,5 +573,5 @@ export function resetToDefaults(): void {
 export function setWkStartDate(date: string): void {
   const monday = snapToMonday(date);
   if (!monday || monday === _state.wkStartDate) return;
-  setState({ ..._state, wkStartDate: monday }, { label: 'changing the week' });
+  setState({ ..._state, wkStartDate: monday }, { label: 'Woche ändern' });
 }

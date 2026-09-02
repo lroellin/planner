@@ -1,6 +1,7 @@
 <script lang="ts">
   import { addSubject, updateSubject, removeSubject, getState } from '../../state/store.svelte';
   import { coverageForSubject, missingLanesForSubject } from '../../reports/reports';
+  import { formatDuration, orderedPhases } from '../../utils/timeUtils';
   import ColorPicker from './ColorPicker.svelte';
   import GoalsEditor from './GoalsEditor.svelte';
   import Icon from '../Icon.svelte';
@@ -23,14 +24,14 @@
     {
       value: false,
       icon: 'rows' as const,
-      title: 'Lesson',
-      sub: 'Counted towards each lane’s coverage.',
+      title: 'Lektion',
+      sub: 'Zählt an die Abdeckung jeder Gruppe.',
     },
     {
       value: true,
       icon: 'clock' as const,
-      title: 'Break',
-      sub: 'Meals and pauses. Drawn as a break, never counted.',
+      title: 'Pause',
+      sub: 'Essen und Pausen. Wird als Pause gezeichnet, nie gezählt.',
     },
   ];
 
@@ -38,19 +39,19 @@
     {
       value: false,
       icon: 'pin' as const,
-      title: 'One lane',
-      sub: 'Each group gets its own placement.',
+      title: 'Einzelne Gruppe',
+      sub: 'Jede Gruppe erhält eine eigene Platzierung.',
     },
     {
       value: true,
       icon: 'users' as const,
-      title: 'All lanes at once',
-      sub: 'One placement covers every active lane of the phase.',
+      title: 'Alle Gruppen aufs Mal',
+      sub: 'Eine Platzierung deckt jede aktive Gruppe der Phase ab.',
     },
   ];
 
   const appState = $derived(getState());
-  const orderedPhases = $derived([...appState.phases].sort((a, b) => a.startDay - b.startDay));
+  const phases = $derived(orderedPhases(appState));
 
   // Seeded once — see TeacherDetail.
   // svelte-ignore state_referenced_locally
@@ -105,7 +106,7 @@
 
   function remove(): void {
     if (!subject) return;
-    if (!window.confirm(`Delete "${subject.name}"?\nAll placed events will be removed.`)) return;
+    if (!window.confirm(`«${subject.name}» löschen?\nAlle platzierten Lektionen werden entfernt.`)) return;
     const index = getState().subjects.findIndex(s => s.id === subject.id);
     removeSubject(subject.id);
     ondeleted(index);
@@ -114,9 +115,9 @@
 
 <form class="detail-form" onsubmit={create}>
   <div class="detail-header">
-    <span class="detail-title">{isNew ? 'New subject' : view.name}</span>
+    <span class="detail-title">{isNew ? 'Neues Thema' : view.name}</span>
     {#if !isNew}
-      <span class="autosave-pill"><Icon name="check" size={12} /> Autosaved</span>
+      <span class="autosave-pill"><Icon name="check" size={12} /> Automatisch gespeichert</span>
     {/if}
   </div>
 
@@ -128,7 +129,7 @@
       class:pane-tab-on={pane === 'setup'}
       aria-selected={pane === 'setup'}
       onclick={() => (pane = 'setup')}
-    >Setup</button>
+    >Einrichtung</button>
     <button
       type="button"
       role="tab"
@@ -137,7 +138,7 @@
       aria-selected={pane === 'content'}
       onclick={() => (pane = 'content')}
     >
-      Content
+      Inhalt
       {#if contentCount > 0}<span class="pane-badge wk-num">{contentCount}</span>{/if}
     </button>
   </div>
@@ -145,19 +146,19 @@
   {#if pane === 'content'}
     <div class="flex flex-col gap-5 pt-1">
       <section class="section">
-        <h4 class="section-title">Goals</h4>
+        <h4 class="section-title">Lernziele</h4>
         <p class="field-hint">
-          One per line — what the group should be able to do at the end of the lesson.
+          Eines pro Zeile — was die Gruppe am Ende der Lektion können soll.
         </p>
         <GoalsEditor goals={view.content.goals} onchange={(goals) => setContent({ goals })} />
       </section>
 
       <section class="section">
-        <h4 class="section-title">Notes</h4>
+        <h4 class="section-title">Notizen</h4>
         <textarea
           class="textarea textarea-bordered w-full"
           rows="8"
-          placeholder="Material, preparation, anything the instructor needs on the day."
+          placeholder="Material, Vorbereitung, alles was der Gruppenführer am Tag selbst braucht."
           value={view.content.notes}
           onchange={(e) => setContent({ notes: (e.currentTarget as HTMLTextAreaElement).value })}
         ></textarea>
@@ -167,7 +168,7 @@
   <div class="flex flex-col gap-5 pt-1">
 
     <section class="section">
-      <h4 class="section-title">Identity</h4>
+      <h4 class="section-title">Bezeichnung</h4>
       <div class="form-field">
         <span class="field-label">Name</span>
         <div class="flex items-center gap-3 max-w-md">
@@ -179,7 +180,7 @@
             class="input input-bordered input-sm flex-1"
             type="text"
             value={view.name}
-            placeholder="e.g. Karteneröffnung"
+            placeholder="z. B. Karteneröffnung"
             oninput={isNew ? (e) => set({ name: (e.currentTarget as HTMLInputElement).value }) : undefined}
             onchange={isNew ? undefined : (e) => set({ name: (e.currentTarget as HTMLInputElement).value })}
           />
@@ -191,14 +192,14 @@
          to sit under Behaviour and Coverage, below the fold, where the two
          settings you actually reach for every day could not be seen at all. -->
     <section class="section">
-      <h4 class="section-title">Defaults for new placements</h4>
+      <h4 class="section-title">Vorgaben für neue Platzierungen</h4>
 
       {#if appState.teachers.length > 0}
         <div class="form-field">
           <div class="flex items-center gap-2">
-            <span class="field-label">Teachers</span>
+            <span class="field-label">Gruppenführer</span>
             <span class="count-pill" class:count-pill-empty={view.defaultTeacherIds.length === 0}>
-              {view.defaultTeacherIds.length} of {appState.teachers.length} selected
+              {view.defaultTeacherIds.length} von {appState.teachers.length} ausgewählt
             </span>
           </div>
           <div class="picker-grid">
@@ -223,7 +224,7 @@
 
       {#if appState.rooms.length > 0}
         <div class="form-field">
-          <span class="field-label">Room</span>
+          <span class="field-label">Raum</span>
           <select
             class="select select-bordered select-sm w-56"
             value={view.defaultRoomId ?? ''}
@@ -232,7 +233,7 @@
               set({ defaultRoomId: v === '' ? null : v });
             }}
           >
-            <option value="">No default</option>
+            <option value="">Keine Vorgabe</option>
             {#each appState.rooms as r (r.id)}
               <option value={r.id}>{r.name}</option>
             {/each}
@@ -241,7 +242,11 @@
       {/if}
 
       <div class="form-field">
-        <span class="field-label">Duration</span>
+        <span class="field-label">Dauer</span>
+        <p class="field-hint">
+          Zugleich das Soll pro Gruppe: Jede Gruppe braucht diese Zeit von diesem Thema — als eine
+          Lektion oder aufgeteilt, etwa 1 h 30 min + 1 h für 2 h 30 min.
+        </p>
         <div class="flex items-center gap-2 flex-wrap">
         {#each DURATION_PRESETS as preset (preset)}
           <button
@@ -274,11 +279,11 @@
          side was. As a pair of named options each setting reads as the choice
          it actually is. -->
     <section class="section">
-      <h4 class="section-title">Kind</h4>
+      <h4 class="section-title">Art</h4>
 
       <div class="form-field">
-        <span class="field-label">Counts as</span>
-        <div class="choice" role="radiogroup" aria-label="Counts as">
+        <span class="field-label">Zählt als</span>
+        <div class="choice" role="radiogroup" aria-label="Zählt als">
           {#each KIND_OPTIONS as opt (opt.value)}
             <button
               type="button"
@@ -296,8 +301,8 @@
       </div>
 
       <div class="form-field">
-        <span class="field-label">Placed for</span>
-        <div class="choice" role="radiogroup" aria-label="Placed for">
+        <span class="field-label">Platziert für</span>
+        <div class="choice" role="radiogroup" aria-label="Platziert für">
           {#each SCOPE_OPTIONS as opt (opt.value)}
             <button
               type="button"
@@ -314,8 +319,8 @@
         </div>
         {#if view.isMultiGroup}
           <p class="field-hint">
-            It keeps following the phase, so a lane added or switched on later is included
-            automatically.
+            Es folgt weiterhin der Phase: eine später hinzugefügte oder eingeschaltete Gruppe ist
+            automatisch dabei.
           </p>
         {/if}
       </div>
@@ -325,13 +330,13 @@
          until it isn't, so the override stays out of the way. -->
     <details class="advanced">
       <summary class="advanced-summary">
-        <Icon name="chevronRight" size={12} /> Advanced
+        <Icon name="chevronRight" size={12} /> Erweitert
       </summary>
       <div class="advanced-body form-field">
-        <span class="field-label">Belongs to phase</span>
+        <span class="field-label">Gehört zu Phase</span>
         <p class="field-hint">
-          Coverage is measured per phase — a Kader lesson must not be judged against the group lanes.
-          Left on "infer", the phase is read from wherever the subject is placed.
+          Die Abdeckung wird pro Phase gemessen — eine Kaderlektion darf nicht an den Gruppen
+          gemessen werden. Bei «ableiten» wird die Phase aus den Platzierungen gelesen.
         </p>
         <select
           class="select select-bordered select-sm w-56"
@@ -341,8 +346,8 @@
             set({ phaseId: v === '' ? null : v });
           }}
         >
-          <option value="">Infer from placements</option>
-          {#each orderedPhases as p (p.id)}
+          <option value="">Aus Platzierungen ableiten</option>
+          {#each phases as p (p.id)}
             <option value={p.id}>{p.label}</option>
           {/each}
         </select>
@@ -355,24 +360,30 @@
     {@const cov = coverageForSubject(appState, subject.id)}
     {@const missing = missingLanesForSubject(appState, subject.id)}
     <section class="usage">
-      <h4 class="section-title">Placement</h4>
+      <h4 class="section-title">Platzierung</h4>
       <div class="wk-stat-row">
         <div class="wk-stat">
           <span class="wk-stat-value wk-num">{appState.events.filter(e => e.subjectId === subject.id).length}</span>
-          <span class="wk-stat-label">placed on the grid</span>
+          <span class="wk-stat-label">im Kalender platziert</span>
         </div>
         {#if !view.isBreak}
           <div class="wk-stat">
             <span class="wk-stat-value wk-num">{cov.placed}/{cov.total}</span>
-            <span class="wk-stat-label">lanes covered</span>
+            <span class="wk-stat-label">Gruppen abgedeckt</span>
+          </div>
+          <div class="wk-stat">
+            <span class="wk-stat-value wk-num">{formatDuration(view.defaultDurationMinutes)}</span>
+            <span class="wk-stat-label">Soll pro Gruppe</span>
           </div>
         {/if}
       </div>
       {#if !view.isBreak}
         <p class="usage-note">
-          {missing.length === 0
-            ? 'Every lane of its phase has this subject.'
-            : `Still missing on: ${missing.join(', ')}.`}
+          {#if missing.length === 0}
+            Jede Gruppe der Phase hat dieses Thema{cov.short ? '' : ' vollständig'}.
+          {:else}
+            Fehlt noch bei: {missing.join(', ')}.
+          {/if}
         </p>
       {/if}
     </section>
@@ -380,11 +391,11 @@
 
   <div class="detail-footer">
     {#if isNew}
-      <button type="button" class="btn btn-ghost btn-sm" onclick={oncancel}>Cancel</button>
-      <button type="submit" class="btn btn-primary btn-sm" disabled={!draft.name.trim()}>Create subject</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick={oncancel}>Abbrechen</button>
+      <button type="submit" class="btn btn-primary btn-sm" disabled={!draft.name.trim()}>Thema erstellen</button>
     {:else}
       <button type="button" class="btn btn-ghost btn-sm text-error gap-1.5" onclick={remove}>
-        <Icon name="trash" size={13} /> Delete subject
+        <Icon name="trash" size={13} /> Thema löschen
       </button>
     {/if}
   </div>

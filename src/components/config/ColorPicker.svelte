@@ -37,8 +37,8 @@
     class="swatch"
     style="background:{value}; width:{size}px; height:{size}px"
     onclick={() => (open = !open)}
-    title="Change colour"
-    aria-label="Change colour"
+    title="Farbe ändern"
+    aria-label="Farbe ändern"
   >
     {#if initials}
       <span class="swatch-initials">{initials}</span>
@@ -48,7 +48,7 @@
   </button>
 
   {#if open}
-    <button type="button" class="backdrop" aria-label="Close colour picker" onclick={() => (open = false)}></button>
+    <button type="button" class="backdrop" aria-label="Farbwahl schliessen" onclick={() => (open = false)}></button>
     <div class="pop">
       <div class="grid">
         {#each PALETTE as color (color)}
@@ -67,7 +67,7 @@
         {/each}
       </div>
       <label class="custom">
-        <span>Custom</span>
+        <span>Eigene</span>
         <input
           type="color"
           value={value}

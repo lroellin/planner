@@ -5,7 +5,7 @@ import type { ResourceInput } from '@fullcalendar/resource';
 import { teacherShort } from './format';
 
 // Weekday labels, 0=Mon … 4=Fri (matches CalendarEvent.dayIndex)
-export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'] as const;
+export const DAY_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr'] as const;
 
 export function pad(n: number): string {
   return String(n).padStart(2, '0');
@@ -79,9 +79,9 @@ export function addMinutesToTime(time: string, minutes: number): string {
 export function formatDuration(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  if (h === 0) return `${m}min`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}min`;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
 }
 
 export function snapToSlot(time: string, slotMinutes = 15): string {
@@ -94,6 +94,28 @@ export function snapToSlot(time: string, slotMinutes = 15): string {
 export function extractDayIndex(date: Date): number {
   const d = date.getDay();
   return d === 0 ? 4 : d - 1;
+}
+
+/**
+ * Where an event may be cut. Both halves need a slot of their own, so the only
+ * legal cuts are the ones strictly inside it — which is also why an event of a
+ * single slot cannot be split at all.
+ */
+export function splitRange(startTime: string, endTime: string): {
+  from: string;
+  to: string;
+  canSplit: boolean;
+} {
+  return {
+    from: addMinutesToTime(startTime, 15),
+    to: addMinutesToTime(endTime, -15),
+    canSplit: timeDiffMinutes(startTime, endTime) >= 30,
+  };
+}
+
+/** Keep a day index inside the planned week. */
+export function clampDayIndex(dayIndex: number): number {
+  return Math.min(DAY_NAMES.length - 1, Math.max(0, dayIndex));
 }
 
 /**
@@ -120,6 +142,11 @@ export function phaseGroups(state: AppState, phase: Phase): Group[] {
     .sort((a, b) => a.order - b.order);
 }
 
+// Stored order is insertion order; the week always has to read left to right.
+export function orderedPhases(state: AppState): Phase[] {
+  return [...state.phases].sort((a, b) => a.startDay - b.startDay);
+}
+
 // The phase that owns a weekday. Phases are non-overlapping by contract; when
 // they aren't, the first match wins and the config panel warns about it.
 export function phaseForDay(state: AppState, dayIndex: number): Phase | null {
@@ -139,6 +166,15 @@ export function eventGroupIds(state: AppState, ev: CalendarEvent): ID[] {
 
 export function isMultiGroupEvent(ev: CalendarEvent): boolean {
   return ev.groupId === ALL_GROUPS;
+}
+
+/**
+ * Is this event on the plan at all? An event whose every lane is switched off is
+ * drawn nowhere and raises no conflicts — hiding it is the point of disabling a
+ * group — so nothing that counts a week's work should count it either.
+ */
+export function isEventActive(state: AppState, ev: CalendarEvent): boolean {
+  return eventGroupIds(state, ev).length > 0;
 }
 
 // Clamped: FullCalendar throws on a zero/negative `duration`, which blanks the
@@ -196,10 +232,10 @@ export function eventOverrides(
   subject: Subject | null | undefined,
 ): string[] {
   const out: string[] = [];
-  if (ev.teacherIds !== 'inherit') out.push('teachers');
-  if (ev.roomId !== 'inherit') out.push('room');
+  if (ev.teacherIds !== 'inherit') out.push('Gruppenführer');
+  if (ev.roomId !== 'inherit') out.push('Raum');
   if (subject && timeDiffMinutes(ev.startTime, ev.endTime) !== subject.defaultDurationMinutes) {
-    out.push('duration');
+    out.push('Dauer');
   }
   return out;
 }

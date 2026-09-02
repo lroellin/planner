@@ -1,9 +1,8 @@
 <script lang="ts">
   import { updateTeacher, removeTeacher, setTeacherUnavailable, getState } from '../../state/store.svelte';
   import { teacherShort } from '../../utils/format';
-  import {
-    effectiveTeacherIds, timeDiffMinutes, formatDuration, DAY_NAMES, sortSubjects,
-  } from '../../utils/timeUtils';
+  import { formatDuration, DAY_NAMES } from '../../utils/timeUtils';
+  import { teacherLoad } from '../../reports/reports';
   import ColorPicker from './ColorPicker.svelte';
   import AvailabilityEditor from './AvailabilityEditor.svelte';
   import Icon from '../Icon.svelte';
@@ -22,20 +21,10 @@
 
   /**
    * What this teacher is actually booked for. The pane was two text fields in a
-   * 1000px dialog; the load is the thing you open a teacher to find out.
+   * 1000px dialog; the load is the thing you open a teacher to find out. The sum
+   * itself belongs to reports, so this pane and the printed plan cannot disagree.
    */
-  const load = $derived.by(() => {
-    const events = appState.events.filter(ev => {
-      const subject = appState.subjects.find(s => s.id === ev.subjectId);
-      return effectiveTeacherIds(ev, subject).includes(teacher.id);
-    });
-    const minutes = events.reduce((n, ev) => n + timeDiffMinutes(ev.startTime, ev.endTime), 0);
-    const days = [...new Set(events.map(ev => ev.dayIndex))].sort();
-    const subjects = sortSubjects(
-      appState.subjects.filter(s => s.defaultTeacherIds.includes(teacher.id)),
-    );
-    return { count: events.length, minutes, days, subjects };
-  });
+  const load = $derived(teacherLoad(appState, teacher.id));
 
   function set(patch: Partial<Omit<Teacher, 'id'>>, coalesceKey?: string): void {
     updateTeacher(teacher.id, patch, coalesceKey ? { coalesceKey } : {});
@@ -46,7 +35,7 @@
   }
 
   function remove(): void {
-    if (!window.confirm(`Delete "${teacher.name}"?\nThey will be removed from all events.`)) return;
+    if (!window.confirm(`«${teacher.name}» löschen?\nEr wird von allen Lektionen entfernt.`)) return;
     const index = getState().teachers.findIndex(t => t.id === teacher.id);
     removeTeacher(teacher.id);
     ondeleted(index);
@@ -56,7 +45,7 @@
 <div class="detail-form">
   <div class="detail-header">
     <span class="detail-title">{view.name}</span>
-    <span class="autosave-pill"><Icon name="check" size={12} /> Autosaved</span>
+    <span class="autosave-pill"><Icon name="check" size={12} /> Automatisch gespeichert</span>
   </div>
 
   <div class="flex items-start gap-4 pt-1">
@@ -67,23 +56,23 @@
         size={56}
         onpick={(color) => set({ color }, `teacher-color:${teacher.id}`)}
       />
-      <span class="swatch-caption">Colour</span>
+      <span class="swatch-caption">Farbe</span>
     </div>
 
     <div class="flex flex-col gap-2.5 flex-1 min-w-0">
       <div class="form-field">
-        <span class="field-label">Full name</span>
+        <span class="field-label">Voller Name</span>
         <input
           class="input input-bordered input-sm w-full"
           type="text"
           value={view.name}
-          placeholder="e.g. Anna Müller"
+          placeholder="z. B. Anna Müller"
           onchange={(e) => set({ name: (e.currentTarget as HTMLInputElement).value })}
         />
       </div>
       <div class="form-field">
         <span class="field-label">
-          Short name <span class="field-label-note">(shown on cards)</span>
+          Kürzel <span class="field-label-note">(erscheint auf den Karten)</span>
         </span>
         <input
           class="input input-bordered input-sm w-28"
@@ -99,44 +88,44 @@
   <AvailabilityEditor
     windows={view.unavailable}
     onchange={setWindows}
-    title="Away"
-    emptyText="Here the whole week. Add a day below if that is not true."
-    hint="A lesson booked while they are away is a hard conflict, exactly like being in two rooms at once."
-    notePlaceholder="Why (optional) — e.g. Kurs in Schwarzenburg"
+    title="Abwesend"
+    emptyText="Die ganze Woche da. Unten einen Tag hinzufügen, wenn das nicht stimmt."
+    hint="Eine Lektion während einer Abwesenheit ist ein harter Konflikt — genau wie an zwei Orten gleichzeitig zu sein."
+    notePlaceholder="Grund (optional) — z. B. Kurs in Schwarzenburg"
   />
 
   <section class="usage">
-    <h4 class="section-title">Load this week</h4>
+    <h4 class="section-title">Pensum diese Woche</h4>
     <div class="wk-stat-row">
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{load.count}</span>
-        <span class="wk-stat-label">lesson{load.count === 1 ? '' : 's'}</span>
+        <span class="wk-stat-label">{load.count === 1 ? 'Lektion' : 'Lektionen'}</span>
       </div>
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{formatDuration(load.minutes)}</span>
-        <span class="wk-stat-label">in front of a group</span>
+        <span class="wk-stat-label">vor einer Gruppe</span>
       </div>
       <div class="wk-stat">
         <span class="wk-stat-value">
           {load.days.length === 0 ? '—' : load.days.map(d => DAY_NAMES[d]).join(' ')}
         </span>
-        <span class="wk-stat-label">days on duty</span>
+        <span class="wk-stat-label">Einsatztage</span>
       </div>
     </div>
     {#if load.subjects.length > 0}
       <p class="usage-note">
-        Default teacher for
+        Vorgegebener Gruppenführer für
         {#each load.subjects as s, i (s.id)}<span class="usage-subject"><span
           class="usage-dot" style="background:{s.color}"></span>{s.name}</span>{i < load.subjects.length - 1 ? ', ' : ''}{/each}
       </p>
     {:else}
-      <p class="usage-note">Not the default teacher of any subject yet.</p>
+      <p class="usage-note">Noch bei keinem Thema als Vorgabe hinterlegt.</p>
     {/if}
   </section>
 
   <div class="detail-footer">
     <button type="button" class="btn btn-ghost btn-sm text-error gap-1.5" onclick={remove}>
-      <Icon name="trash" size={13} /> Delete teacher
+      <Icon name="trash" size={13} /> Gruppenführer löschen
     </button>
   </div>
 </div>

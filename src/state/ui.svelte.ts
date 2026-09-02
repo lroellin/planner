@@ -39,15 +39,62 @@ function loadPrefs(): Prefs {
 
 // ─── Selection ────────────────────────────────────────────────────────────────
 
-/** The card the keyboard and the quick-edit popover act on. */
-let _selectedEventId: ID | null = $state(null);
+/**
+ * The cards the keyboard acts on. A list rather than one id: a rotation is moved
+ * a lane at a time otherwise, and the same nudge has to be repeated on every
+ * block of an afternoon. The last entry is the *primary* one — the quick-edit
+ * popover only makes sense for a single card, so it follows that.
+ */
+let _selectedEventIds: ID[] = $state([]);
 /** Cards to pulse — driven by hovering a conflict in the right-hand panel. */
 let _highlightedEventIds: ID[] = $state([]);
 /** Hovering a sidebar chip dims everything that is not that subject. */
 let _spotlightSubjectId: ID | null = $state(null);
 
-export function getSelectedEventId(): ID | null { return _selectedEventId; }
-export function selectEvent(id: ID | null): void { _selectedEventId = id; }
+export function getSelectedEventIds(): ID[] { return _selectedEventIds; }
+
+/** The card a single-card action applies to: the most recently added one. */
+export function getSelectedEventId(): ID | null { return _selectedEventIds.at(-1) ?? null; }
+
+export function isEventSelected(id: ID): boolean { return _selectedEventIds.includes(id); }
+
+/** Replace the selection. `null` clears it. */
+export function selectEvent(id: ID | null): void {
+  _selectedEventIds = id === null ? [] : [id];
+}
+
+/** Ctrl/Cmd-click: add a card to the selection, or take it out again. */
+export function toggleEventSelection(id: ID): void {
+  _selectedEventIds = _selectedEventIds.includes(id)
+    ? _selectedEventIds.filter(x => x !== id)
+    : [..._selectedEventIds, id];
+}
+
+/** Shift-click and the marquee: add without removing what is already selected. */
+export function addToSelection(ids: ID[]): void {
+  const next = [..._selectedEventIds];
+  for (const id of ids) if (!next.includes(id)) next.push(id);
+  _selectedEventIds = next;
+}
+
+export function setSelection(ids: ID[]): void { _selectedEventIds = [...ids]; }
+
+export function clearSelection(): void { _selectedEventIds = []; }
+
+// ─── Marquee guard ────────────────────────────────────────────────────────────
+// FullCalendar fires dateClick on mouse*up*, so a marquee that ends over an
+// empty slot would open the placement picker on top of the selection it just
+// made. The marquee sets this flag; the calendar consumes it once.
+
+let dateClickGuard = false;
+
+export function suppressNextDateClick(): void { dateClickGuard = true; }
+
+export function consumeDateClickGuard(): boolean {
+  const guarded = dateClickGuard;
+  dateClickGuard = false;
+  return guarded;
+}
 
 export function getHighlightedEventIds(): ID[] { return _highlightedEventIds; }
 export function highlightEvents(ids: ID[]): void { _highlightedEventIds = ids; }
@@ -86,7 +133,7 @@ export function getReveal(): { id: ID; token: number } | null { return _reveal; 
 
 export function revealEvent(id: ID): void {
   _reveal = { id, token: ++revealToken };
-  _selectedEventId = id;
+  _selectedEventIds = [id];
 }
 
 // ─── Density ──────────────────────────────────────────────────────────────────

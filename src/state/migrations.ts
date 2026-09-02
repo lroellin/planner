@@ -23,7 +23,7 @@ export function migrate_v5_to_v6(state: any): any {
   return {
     ...state,
     version: 6,
-    name: typeof state.name === 'string' && state.name.trim() !== '' ? state.name : 'WK plan',
+    name: typeof state.name === 'string' && state.name.trim() !== '' ? state.name : 'WK-Plan',
     teachers: (state.teachers ?? []).map((t: any) => ({
       ...t,
       unavailable: Array.isArray(t.unavailable) ? t.unavailable : [],
@@ -42,9 +42,44 @@ export function migrate_v5_to_v6(state: any): any {
   };
 }
 
+/**
+ * v6 → v7: a per-group target duration on every subject. 0 keeps the old
+ * meaning of coverage — "has this lane had it at all" — so nothing changes for
+ * an existing plan until a target is actually entered.
+ */
+export function migrate_v6_to_v7(state: any): any {
+  return {
+    ...state,
+    version: 7,
+    subjects: (state.subjects ?? []).map((s: any) => ({
+      ...s,
+      targetMinutesPerGroup:
+        typeof s.targetMinutesPerGroup === 'number' ? s.targetMinutesPerGroup : 0,
+    })),
+  };
+}
+
+/**
+ * v7 → v8: drops `subject.targetMinutesPerGroup` again. The target and the
+ * duration were always the same number — a subject that runs 2.5 h owes every
+ * group 2.5 h — so coverage measures against `defaultDurationMinutes` and the
+ * second field could only ever disagree with it.
+ */
+export function migrate_v7_to_v8(state: any): any {
+  return {
+    ...state,
+    version: 8,
+    subjects: (state.subjects ?? []).map(
+      ({ targetMinutesPerGroup: _dropped, ...s }: any) => s,
+    ),
+  };
+}
+
 /** Keyed by the version each step migrates *from*. Chained by `migrateState`. */
 const MIGRATIONS: Record<number, Migration> = {
   5: migrate_v5_to_v6,
+  6: migrate_v6_to_v7,
+  7: migrate_v7_to_v8,
 };
 
 /**
