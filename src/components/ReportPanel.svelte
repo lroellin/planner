@@ -11,6 +11,7 @@
   import { requestPlacement } from '../state/ui.svelte';
   import Icon from './Icon.svelte';
   import type { ID, ReportTab } from '../types';
+  import type { PlanTarget } from '../print/boxes';
 
   interface Props {
     tab?: ReportTab;
@@ -20,10 +21,19 @@
      * "alle Ausbildner" would drop the half of the question that names who.
      */
     filterId?: ID | null;
+    /** Hands the current tab to the PDF dialog. Abdeckung has no print target:
+     *  it is read here and acted on here. */
+    onprint: (target: PlanTarget) => void;
+    /**
+     * The panel owns its tab after mount, so the prop that seeded it goes stale
+     * the moment the user clicks another one. Ctrl+P has to print what is on
+     * screen, which means the owner of the tab has to say when it changes.
+     */
+    ontab: (tab: ReportTab) => void;
     onclose: () => void;
   }
 
-  let { tab = 'coverage', filterId = null, onclose }: Props = $props();
+  let { tab = 'coverage', filterId = null, onprint, ontab, onclose }: Props = $props();
 
   let sheetEl: HTMLDivElement | undefined = $state();
   // The prop only seeds the initial tab; the panel owns it from then on.
@@ -111,6 +121,8 @@
       }));
   }
 
+  $effect(() => ontab(activeTab));
+
   // Print rules key off the body class so the calendar behind can be hidden.
   onMount(() => {
     document.body.classList.add('wk-report-open');
@@ -165,9 +177,11 @@
             {/each}
           </select>
         {/if}
-        <button class="print-btn" onclick={() => window.print()}>
-          <Icon name="printer" size={14} /> Drucken
-        </button>
+        {#if activeTab !== 'coverage'}
+          <button class="print-btn" onclick={() => onprint(activeTab as PlanTarget)}>
+            <Icon name="printer" size={14} /> Drucken
+          </button>
+        {/if}
       </div>
     </div>
 

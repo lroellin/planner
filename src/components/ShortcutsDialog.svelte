@@ -31,6 +31,7 @@
       items: [
         { keys: [MOD, 'Z'], what: 'Rückgängig' },
         { keys: [MOD, '⇧', 'Z'], what: 'Wiederholen' },
+        { keys: [MOD, 'P'], what: 'Drucken – Wochenplan oder Handzettel' },
         { keys: ['?'], what: 'Diese Übersicht' },
         { keys: ['Esc'], what: 'Dialog schliessen oder Auswahl aufheben' },
       ],

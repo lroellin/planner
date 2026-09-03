@@ -11,6 +11,8 @@
   import ReportPanel from './components/ReportPanel.svelte';
   import ShortcutsDialog from './components/ShortcutsDialog.svelte';
   import PlaceDialog from './components/PlaceDialog.svelte';
+  import PrintDialog from './components/PrintDialog.svelte';
+  import type { PrintTarget } from './print/boxes';
   import Toasts from './components/Toasts.svelte';
   import Icon from './components/Icon.svelte';
   import {
@@ -31,6 +33,7 @@
 
   let configOpen = $state(false);
   let reportOpen = $state(false);
+  let printTarget = $state<PrintTarget | null>(null);
   let shortcutsOpen = $state(false);
   let reportTab = $state<ReportTab>('coverage');
   /** Preselects the report's own teacher/room dropdown when it was asked for. */
@@ -95,6 +98,11 @@
     return () => observer.disconnect();
   });
 
+  /** Ctrl+P over an open report prints that report; Abdeckung has no sheet. */
+  function planTargetFor(tab: ReportTab): PrintTarget {
+    return tab === 'coverage' ? 'grid' : tab;
+  }
+
   function openReport(tab: ReportTab): void {
     reportTab = tab;
     reportOpen = true;
@@ -147,6 +155,24 @@
   // event already lives in.
 
   function handleGridKeys(e: KeyboardEvent): void {
+    /**
+     * Ctrl/Cmd+P is the gesture everyone reaches for, and it used to hand the
+     * job to the browser's own print of the DOM — the path the PDF renderer
+     * exists to replace. Checked before the text-field guard, because printing
+     * is not an editing action and browsers do not suppress it in a field
+     * either.
+     */
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      if (printTarget === null) {
+        printTarget = reportOpen ? planTargetFor(reportTab) : 'grid';
+        // Same as the report's own Drucken button: the dialog replaces the
+        // overlay rather than stacking on top of it.
+        reportOpen = false;
+      }
+      return;
+    }
+
     if (isEditingTarget(e.target)) return;
 
     // "?" is the one shortcut that has to be discoverable without being known.
@@ -157,7 +183,7 @@
         shortcutsOpen = false;
         return;
       }
-      if (configOpen || reportOpen || selectedEventId !== null) return;
+      if (configOpen || reportOpen || printTarget || selectedEventId !== null) return;
       e.preventDefault();
       shortcutsOpen = true;
       return;
@@ -169,7 +195,8 @@
       return;
     }
 
-    const overlayOpen = selectedEventId !== null || configOpen || reportOpen || shortcutsOpen;
+    const overlayOpen =
+      selectedEventId !== null || configOpen || reportOpen || shortcutsOpen || printTarget !== null;
 
     if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A') && !overlayOpen) {
       e.preventDefault();
@@ -386,6 +413,7 @@
       bind:configOpen
       bind:filter
       onreport={openReport}
+      onprint={() => (printTarget = 'grid')}
       onshowissues={() => (conflictsOpen = true)}
       onshowshortcuts={() => (shortcutsOpen = true)}
     />
@@ -528,8 +556,14 @@
   <ReportPanel
     tab={reportTab}
     filterId={reportFilterId}
+    onprint={(t) => { reportOpen = false; printTarget = t; }}
+    ontab={(t) => (reportTab = t)}
     onclose={() => { reportOpen = false; reportFilterId = null; }}
   />
+{/if}
+
+{#if printTarget}
+  <PrintDialog target={printTarget} onclose={() => (printTarget = null)} />
 {/if}
 
 {#if shortcutsOpen}

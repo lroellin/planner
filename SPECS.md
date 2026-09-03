@@ -291,7 +291,7 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 └──────────────┴──────────────────┴──────────────────────┴───────────────────┘
 ```
 
-- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the conflict panel, Reports, a **Print menu** (week grid · group plans · teacher plans · room plans · coverage), a **keyboard-shortcuts** button and Config.
+- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the conflict panel, Reports, a **Drucken** button opening the print dialog, a **keyboard-shortcuts** button and Config.
 - **Left sidebar** (`SidePanel.svelte` wrapping `Sidebar.svelte`): collapsible. Draggable subject chips split into Subjects and Breaks; each chip previews the card it will become (same spine, same tint recipe) and carries a coverage counter. Hovering a chip **spotlights** it on the grid — everything else dims — and its tooltip names the lanes still missing it. A filter box appears once there are more than eight subjects. Chips are buttons; activating one opens `PlaceDialog`.
 - **Calendar area**: a flex row of phase segments. Each segment's `flex-grow` is proportional to `days × maxLanes`, so columns stay the same width across the week regardless of how many lanes a phase has. A `phase-label` strip shows phase names above the segments. Both segments share a single outer scroll container — `height: auto` + `stickyHeaderDates: true` on each FC instance means headers pin and bodies scroll together.
 - **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible, and **collapsed on load** — the rail keeps the issue badge in view, and the grid is what the app is opened to look at. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
@@ -522,7 +522,7 @@ Shows:
 
 ## Reports (`ReportPanel.svelte`, `src/reports/reports.ts`)
 
-A full-screen overlay (not a `<dialog>`) at a **fixed 86vh**, with four tabs: Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne. These are the four documents a WK actually prints.
+A full-screen overlay (not a `<dialog>`) at a **fixed 86vh**, with four tabs: Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne. Three of them are the documents a WK hands out; Abdeckung is read here and acted on here. Its **Drucken** button hands the current tab to the PDF dialog and is hidden on the Abdeckung tab — see [Printing](#printing). The panel owns its tab after mount, so it reports the live one back through `ontab`; Ctrl+P has to print what is on screen.
 
 ### Coverage tab
 `buildCoverage(state)` → one section per phase. Each section lists the **Themen** (`kind === 'lesson'`) that belong to that phase, and for each group shows how many times that subject has been placed. Missing combinations are highlighted. Pausen and Programmpunkte are excluded: neither carries a per-group Soll — a Pause is placed ad hoc rather than attended, and a Programmpunkt happens once for the whole course. They still appear in the group, teacher and room plans, and a Programmpunkt still counts towards a group's `lessonMinutes` (a Begrüssung is time the group is occupied; only breaks are left out of that total).
@@ -574,7 +574,7 @@ A teacher filter dropdown (single-select) is shown when this tab is active.
 ### Workload (`teacherLoad`, `roomLoad`)
 What one teacher or one room is booked for — count, minutes, days on duty, and the subjects that name them as a default. The config detail panes used to work this out for themselves, and it had already drifted: the teacher pane counted events on switched-off groups and the report did not, so the same week showed two different hour counts depending on where you looked. Both now read `isEventActive(state, ev)`, the one predicate for "this event is on the plan at all", which the detector uses too.
 
-Every tab prints one section per page (`break-after: page`).
+The screen layout keeps its `break-after: page` rules for the browser's own print path, but the Drucken button no longer uses them — plans go through `src/print/` instead.
 
 ---
 
@@ -689,7 +689,47 @@ on the sixth tab of a dialog.
 
 ## Printing
 
-The Print menu prints one of five documents. The four report tabs are plain HTML and print on A4 portrait, one section per page.
+Everything printable is generated as a **real PDF** (`src/print/`, jsPDF) and previewed in the dialog before it is printed. **Abdeckung is not printable**: it is an analysis table you act on in the app, not something anyone hands out.
+
+The toolbar's **Drucken** is a single button, not a menu. Every entry of the menu it replaced opened this same dialog and then asked the same question again with the answer already filled in. **Ctrl/Cmd+P** opens the same dialog — on the report you are looking at if the Auswertungen overlay is open, otherwise on the Wochenplan. It is handled before the text-field guard in `handleGridKeys`, because printing is not an editing action.
+
+### Two categories, not four siblings
+
+The dialog asks for the **Art** first — *Wochenplan* or *Handzettel* — and only then, for a Handzettel, which one. The two take genuinely different options (phases and orientation against boxes-per-page), and flattened into one row of four buttons the controls below changed shape depending on the pick, with nothing on screen saying why.
+
+### Cut-out plans (`boxes.ts`, `layout.ts`, `pdf.ts`)
+
+The three plan reports print as *boxes* on A4 portrait — one box per Gruppe, Ausbildner or belegtem Raum — laid out on a grid with cut marks, so a sheet can be cut up into handouts. Every box repeats its own header and footer, because after cutting there is no page left to say whose plan it is.
+
+| Module | Job |
+| --- | --- |
+| `boxes.ts` | `buildPrintDoc(state, target)` reduces a report to `PrintBox`es. Rows carry a `PrintCell` (`full` + `short`) per column. |
+| `layout.ts` | The fitter. Grid candidates, the three type tiers, `boxHeight`, `paginateBox`, `autoFit`. Pure arithmetic, fully tested. |
+| `pdf.ts` | jsPDF drawing: absolute geometry, column allocation, cut marks. |
+
+**Rows never wrap.** That is what makes a box's height a pure function of its row count, which is what lets `autoFit` try every grid against every box without rendering anything. A cell that will not fit falls back to its explicit short name (`Subject.shortName`, `Room.shortName`, teacher initials) and only then to an ellipsis — *derived* short names are deliberately not used here: "Aussenplatz" cut to "Ausse" earns its keep in a 70 px lane, not on paper.
+
+`autoFit` picks the **densest A4 division on which every box still fits whole** (1×1, 1×2, 2×2, 2×3, 2×4). A box too big even for a full sheet continues into a further slip labelled "Blatt 1/2". The dialog lets the user override the count, and the preview is the real PDF, so an over-dense choice shows its own overflow before any paper is spent.
+
+Column widths are measured **once per document** from the content, so every slip of one report divides its width identically. Each column's floor is its short-form width, capped (45 / 24 / 30 % of the row) so a Thema with no short name cannot starve the Raum column.
+
+No font is embedded: jsPDF's built-in Helvetica is WinAnsi-encoded, which covers the umlauts and ß this app is full of.
+
+`PrintDialog.svelte` owns the UI — category, target, boxes per page, phases, orientation, and a **Stand** checkbox (date *and* time, so a sheet on a wall can be dated; off for a final print).
+
+### The week grid (`calendar.ts`, `calendarPdf.ts`)
+
+`buildCalendarDoc(state, phaseIds)` states what the grid *is* — lane columns under day headers, minutes down the side — and `renderCalendarPdf` sizes that to the sheet. The minute scale is whatever makes the day fill the page, so the type size no longer depends on how wide the browser window happened to be. One page, A4, **Quer or Hoch**.
+
+- **Phase checkboxes.** A KVK and a Gruppenrotation are two documents for two audiences. Unchecking a phase drops its days *entirely* and the rest widen to fill the sheet — `buildCalendarDoc` never emits the columns, so there is no empty band to explain.
+- **The time range is the day's own extent**, opened out to whole hours and floored at four. Printing 07:00–19:00 when nothing starts before 08:00 spends a seventh of the sheet on a band that, on paper, cannot be scrolled past.
+- **Blocks are a tint of the subject colour with a solid bar on the left**, not the full hue: a saturated block behind 6 pt text is unreadable on paper and expensive to print, and the bar keeps the colour decodable against the Legende.
+- **Conflicts are drawn**: red border, solid for hard, dashed for soft. Long blocks are painted first, so a short one placed inside one is not hidden under it — the sheet has no z-index, only paint order.
+- A block under 4.6 mm (a 15-minute Pause) gets **one centred line** instead of the stacked layout; drawn blank it read as a printing artefact rather than a block.
+
+### The old browser print path
+
+Nothing in the app routes here any more — Ctrl+P is intercepted and the menu is gone — but the browser's own File ▸ Print still reaches the DOM, and the machinery below is what makes that survivable.
 
 The **week grid** is the awkward one. FullCalendar sizes its columns in JS and writes the result as inline pixel widths, so a print viewport narrower than the screen leaves those widths in place and the phases overlap. `fitGridToPage()` (App.svelte, on `beforeprint`) therefore writes a `@page { size: <grid width>px <grid height>px }` rule into a dedicated `<style id="wk-print-page">`: the sheet is sized to the grid that is already laid out, and the printer's own fit-to-page scales it. The print rules only *unclip* (heights to auto, scrollers to visible) — switching `.main-area` to `display: block`, the obvious move, collapses the calendar's width and the absolutely positioned events stack at the top of the page.
 

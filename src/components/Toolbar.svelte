@@ -14,6 +14,8 @@
     configOpen: boolean;
     filter: EventFilter | null;
     onreport: (tab: ReportTab) => void;
+    /** Opens the PDF print dialog, which owns the choice of what to print. */
+    onprint: () => void;
     /** The issue badge is the one place that says something is wrong; it has to
      *  be able to open the panel that says what. */
     onshowissues: () => void;
@@ -21,7 +23,8 @@
   }
 
   let {
-    configOpen = $bindable(), filter = $bindable(), onreport, onshowissues, onshowshortcuts,
+    configOpen = $bindable(), filter = $bindable(), onreport, onprint, onshowissues,
+    onshowshortcuts,
   }: Props = $props();
 
   const appState = $derived(getState());
@@ -69,7 +72,7 @@
     `${dayDateLabel(appState.wkStartDate, 0)}–${dayDateLabel(appState.wkStartDate, 4)}`,
   );
 
-  let menu: 'print' | 'legend' | 'week' | 'history' | 'more' | null = $state(null);
+  let menu: 'legend' | 'week' | 'history' | 'more' | null = $state(null);
 
   /**
    * The bar carries more than fits, and it used to deal with that by not
@@ -106,14 +109,6 @@
     { key: 'comfortable', label: 'Weit', short: 'L' },
   ];
 
-  const PRINT_TARGETS: { tab: ReportTab | 'grid'; label: string; hint: string }[] = [
-    { tab: 'grid', label: 'Kalender', hint: 'Die ganze Woche, wie angezeigt' },
-    { tab: 'groups', label: 'Gruppenpläne', hint: 'Eine Seite pro Gruppe' },
-    { tab: 'teachers', label: 'Ausbildnerpläne', hint: 'Eine Seite pro Ausbildner' },
-    { tab: 'rooms', label: 'Raumpläne', hint: 'Eine Seite pro Raum' },
-    { tab: 'coverage', label: 'Abdeckung', hint: 'Wer noch was braucht' },
-  ];
-
   function applyFilter(raw: string): void {
     if (!raw) {
       filter = null;
@@ -129,18 +124,6 @@
     const d = new Date(y!, m! - 1, day!);
     d.setDate(d.getDate() + delta * 7);
     setWkStartDate(formatDate(d));
-  }
-
-  function print(target: ReportTab | 'grid'): void {
-    menu = null;
-    if (target === 'grid') {
-      window.print();
-      return;
-    }
-    onreport(target);
-    // The overlay has to be mounted (and its print stylesheet applied) before
-    // the print dialog samples the page.
-    setTimeout(() => window.print(), 350);
   }
 
   function handleKeydown(e: KeyboardEvent): void {
@@ -460,30 +443,18 @@
       <Icon name="report" size={15} />{#if !dense}Auswertungen{/if}
     </button>
 
-    <div class="legend-wrap">
-      <button
-        class="tb-btn"
-        class:tb-btn-on={menu === 'print'}
-        class:tb-btn-icon={dense}
-        onclick={() => (menu = menu === 'print' ? null : 'print')}
-        title="Drucken"
-        aria-label="Drucken"
-      >
-        <Icon name="printer" size={15} />{#if !dense}Drucken{/if}
-        <Icon name="chevronDown" size={12} />
-      </button>
-      {#if menu === 'print'}
-        <div class="pop pop-right">
-          <div class="pop-title wk-eyebrow">Drucken …</div>
-          {#each PRINT_TARGETS as target (target.tab)}
-            <button class="pop-item" onclick={() => print(target.tab)}>
-              <span class="pop-item-label">{target.label}</span>
-              <span class="pop-item-hint">{target.hint}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    <!-- One button, no submenu: every entry of the old dropdown opened this
+         same dialog, which then asked the same question again with the answer
+         already filled in. The dialog owns the choice. -->
+    <button
+      class="tb-btn"
+      class:tb-btn-icon={dense}
+      onclick={onprint}
+      title="Drucken"
+      aria-label="Drucken"
+    >
+      <Icon name="printer" size={15} />{#if !dense}Drucken{/if}
+    </button>
 
     <!-- B5: Tastenkürzel lives here at every width. As a lone icon-only button
          between two labelled ones it was the only thing on the bar you had to
