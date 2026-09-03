@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true

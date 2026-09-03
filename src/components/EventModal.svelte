@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
-    getState, duplicateEvents, updateEvent, removeEvent, splitEvent, copyEventToLanes, lanesWithoutEvent,
+    getState, duplicateEvents, updateEvent, updateSubject, removeEvent, splitEvent,
+    copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
   import { selectEvent } from '../state/ui.svelte';
   import {
@@ -11,6 +12,7 @@
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import TimeField from './TimeField.svelte';
+  import DurationField from './DurationField.svelte';
   import { ALL_GROUPS, CONFLICT_KIND_LABELS, isHardConflict, type ID } from '../types';
 
   interface Props {
@@ -70,11 +72,15 @@
     });
   });
 
-  // Reloads the form whenever a different event is opened. Keyed on the id, not
-  // the event object, so an unrelated store update can't clobber a pending edit.
+  // Seeds the form from the event, once per event id. It used to re-seed on
+  // every store change, which was harmless only while the form was a buffer;
+  // now that edits are written straight through, re-seeding would fight them.
+  let seededId: ID | null = null;
   $effect(() => {
+    if (seededId === eventId) return;
     const current = getState().events.find(e => e.id === eventId);
     if (!current) return;
+    seededId = eventId;
     localTeacherIds = current.teacherIds;
     localRoomId = current.roomId;
     localDayIndex = current.dayIndex;
@@ -83,6 +89,54 @@
     const totalMin = timeDiffMinutes(current.startTime, current.endTime);
     localDuration = totalMin;
     splitTime = snapToSlot(addMinutesToTime(current.startTime, Math.round(totalMin / 2)));
+  });
+
+  /**
+   * Write every change straight through.
+   *
+   * The app had three answers to "did that save?": the quick-edit popover wrote
+   * immediately, Konfiguration autosaved and said so, and this dialog buffered
+   * behind a Speichern button and threw the edit away on Escape or a backdrop
+   * click — with no dirty guard. Escape is safe everywhere else here, which is
+   * exactly what made it dangerous in the one place it was not.
+   *
+   * Self-limiting rather than event-driven: after a commit the store matches the
+   * locals, so the comparison below finds nothing to do and the effect settles.
+   * That also means it does not care *which* control changed, which is what let
+   * `bind:value` fields join in without an onchange each.
+   */
+  $effect(() => {
+    if (seededId !== eventId) return;
+    const current = getState().events.find(e => e.id === eventId);
+    if (!current) return;
+
+    const startTime = snapToSlot(localStartTime);
+    const next = {
+      teacherIds: localTeacherIds,
+      roomId: localRoomId,
+      startTime,
+      endTime: addMinutesToTime(startTime, Math.max(15, localDuration)),
+      dayIndex: localDayIndex,
+      // A multi-group event keeps the ALL_GROUPS sentinel: it follows the lanes
+      // of whichever phase covers its day, so a cross-phase move needs no
+      // re-mapping.
+      groupId: isMultiGroupEvent(current) ? ALL_GROUPS : targetGroupId || current.groupId,
+    };
+
+    const same =
+      JSON.stringify(next.teacherIds) === JSON.stringify(current.teacherIds) &&
+      next.roomId === current.roomId &&
+      next.startTime === current.startTime &&
+      next.endTime === current.endTime &&
+      next.dayIndex === current.dayIndex &&
+      next.groupId === current.groupId;
+    if (same) return;
+
+    // Coalesced: the duration field is a number input, so a typed "120" would
+    // otherwise push three undo entries and evict the real history.
+    updateEvent(eventId, next, `${subject?.name ?? 'Lektion'} bearbeiten`, {
+      coalesceKey: `modal:${eventId}`,
+    });
   });
 
   // The split picker offers only the slots that actually cut the event in two,
@@ -101,24 +155,6 @@
 
   const effectiveTeacherIds = $derived(resolveTeacherIds(localTeacherIds, subject));
   const effectiveRoomId = $derived(resolveRoomId(localRoomId, subject));
-
-  function save(): void {
-    if (!ev) return;
-    // A multi-group event keeps the ALL_GROUPS sentinel: it follows the lanes of
-    // whichever phase covers its day, so a cross-phase move needs no re-mapping.
-    const groupId = isMultiGroup ? ALL_GROUPS : targetGroupId || ev.groupId;
-    const startTime = snapToSlot(localStartTime);
-
-    updateEvent(eventId, {
-      teacherIds: localTeacherIds,
-      roomId: localRoomId,
-      startTime,
-      endTime: addMinutesToTime(startTime, Math.max(15, localDuration)),
-      dayIndex: localDayIndex,
-      groupId,
-    }, `editing ${subject?.name ?? 'event'}`);
-    onclose();
-  }
 
   function duplicateEvent(): void {
     if (!ev) return;
@@ -150,25 +186,64 @@
       : [...current, tid];
   }
 
+  /**
+   * Coalesced under one key, like the write-through effect above: typing a name
+   * is one action, not one per keystroke. An empty field is not committed —
+   * a nameless card is unfindable on the grid and in every report.
+   */
+  function renameSubject(next: string): void {
+    if (!ev || next.trim() === '') return;
+    updateSubject(ev.subjectId, { name: next }, {
+      label: 'Programmpunkt umbenennen',
+      coalesceKey: `modal:name:${ev.subjectId}`,
+    });
+  }
+
   function resetTeachers(): void { localTeacherIds = 'inherit'; }
   function resetRoom(): void { localRoomId = 'inherit'; }
   function resetDuration(): void { localDuration = defaultDuration; }
 
+  /**
+   * Z2: focus the dialog itself, not its close button.
+   *
+   * `showModal()` hands focus to the first focusable descendant, which in every
+   * one of these is the ✕ — so a keyboard user opened the dialog already on
+   * "leave", and their first Tab went out of the content rather than into it.
+   * The panel takes `tabindex="-1"` so it can hold focus without joining the tab
+   * order; the first Tab then lands on the first real control.
+   */
   let dialogEl: HTMLDialogElement;
+  let sheetEl: HTMLDivElement | undefined = $state();
   $effect(() => {
-    if (dialogEl) dialogEl.showModal();
+    if (!dialogEl) return;
+    dialogEl.showModal();
+    sheetEl?.focus();
   });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
 <dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
   class="modal">
-  <div class="sheet" style="--ev-color: {subject?.color ?? 'gray'}">
+  <div bind:this={sheetEl} class="sheet" tabindex="-1" style="--ev-color: {subject?.color ?? 'gray'}">
     {#if ev && subject}
       <header class="sheet-head">
         <span class="sheet-spine"></span>
         <div class="min-w-0 flex-1">
-          <h3 class="sheet-title">{subject.name}</h3>
+          <!-- A Programmpunkt *is* its one card: the definition has no other
+               placement to speak for, so the name is edited here rather than
+               through a detour into Konfiguration and back. Every other kind
+               has a library entry that several cards share, and renaming one of
+               those from a single card would be a surprise. -->
+          {#if subject.kind === 'oneoff'}
+            <input
+              class="sheet-title sheet-title-input"
+              value={subject.name}
+              aria-label="Name des Programmpunkts"
+              oninput={(e) => renameSubject((e.currentTarget as HTMLInputElement).value)}
+            />
+          {:else}
+            <h3 class="sheet-title">{subject.name}</h3>
+          {/if}
           <p class="sheet-when wk-num">
             {DAY_NAMES[ev.dayIndex] ?? ''} {dayDateLabel(appState.wkStartDate, ev.dayIndex)}
             · {ev.startTime}–{ev.endTime}
@@ -218,11 +293,11 @@
             </div>
             {#if targetPhase === null}
               <p class="warn">
-                Keine Phase deckt {DAY_NAMES[localDayIndex]} ab — die Lektion würde auf keinem Kalender erscheinen.
+                Keine Phase deckt {DAY_NAMES[localDayIndex]} ab — die Lektion läge ausserhalb jeder Phase und würde nicht angezeigt.
               </p>
             {:else if laneOptions.length === 0}
               <p class="warn">
-                {targetPhase.label} hat keine aktiven Gruppen — die Lektion würde auf keinem Kalender erscheinen.
+                {targetPhase.label} hat keine aktiven Gruppen — die Lektion würde nicht angezeigt.
               </p>
             {:else}
               <p class="hint">
@@ -234,7 +309,7 @@
 
         <!-- Teachers -->
         <div class="field">
-          <span class="field-name">Gruppenführer</span>
+          <span class="field-name">Ausbildner</span>
           <div class="field-control">
             <div class="teacher-grid">
               {#each appState.teachers as t (t.id)}
@@ -254,15 +329,15 @@
                 </button>
               {/each}
               {#if appState.teachers.length === 0}
-                <span class="hint">Keine Gruppenführer erfasst.</span>
+                <span class="hint">Keine Ausbildner erfasst.</span>
               {/if}
             </div>
             {#if localTeacherIds !== 'inherit'}
-              <button class="reset" onclick={resetTeachers}>
-                <Icon name="reset" size={11} /> zurück zur Themenvorgabe
+              <button class="reset" onclick={resetTeachers} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> zurücksetzen
               </button>
             {:else}
-              <span class="hint">aus der Themenvorgabe</span>
+              <span class="tag-inherit">Vorgabe</span>
             {/if}
           </div>
         </div>
@@ -285,11 +360,11 @@
               {/each}
             </select>
             {#if localRoomId !== 'inherit'}
-              <button class="reset" onclick={resetRoom}>
-                <Icon name="reset" size={11} /> zurück zur Themenvorgabe
+              <button class="reset" onclick={resetRoom} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> zurücksetzen
               </button>
             {:else}
-              <span class="hint">aus der Themenvorgabe</span>
+              <span class="tag-inherit">Vorgabe</span>
             {/if}
           </div>
         </div>
@@ -300,29 +375,19 @@
           <div class="field-control">
             <div class="row-2">
               <TimeField bind:value={localStartTime} ariaLabel="Startzeit" />
-              <input
-                type="number"
-                min="15"
-                step="15"
-                class="input input-bordered input-sm w-20"
-                value={localDuration}
-                oninput={(e) => {
-                  const n = Number((e.currentTarget as HTMLInputElement).value);
-                  if (Number.isFinite(n) && n > 0) localDuration = n;
-                }}
-              />
-              <span class="inline-note wk-num">min · endet {previewEnd}</span>
+              <span class="inline-note wk-num">endet {previewEnd}</span>
             </div>
+            <DurationField value={localDuration} onchange={(m) => (localDuration = m)} />
             <div class="flex items-center gap-3 flex-wrap">
               {#if startTimeMoved}
                 <span class="hint wk-num">verschoben von {ev.startTime}</span>
               {/if}
               {#if durationOverridden}
-                <button class="reset" onclick={resetDuration}>
-                  <Icon name="reset" size={11} /> zurück auf {defaultDuration} min
+                <button class="reset" onclick={resetDuration} title="Zurück auf {defaultDuration} min">
+                  <Icon name="reset" size={11} /> zurücksetzen
                 </button>
               {:else}
-                <span class="hint">Dauer aus der Themenvorgabe</span>
+                <span class="tag-inherit">Vorgabe</span>
               {/if}
             </div>
           </div>
@@ -350,7 +415,7 @@
             <div class="flex items-center gap-2 w-full">
               <span class="inset-label">Kopieren auf</span>
               {#if spareLanes.length === 0}
-                <span class="hint">Alle anderen Gruppen haben das zu dieser Zeit bereits.</span>
+                <span class="hint">Alle anderen Gruppen haben diese Lektion zu dieser Zeit schon.</span>
               {:else}
                 <div class="flex gap-1.5 flex-wrap flex-1">
                   {#each spareLanes as g (g.id)}
@@ -380,10 +445,12 @@
         {/if}
       </div>
 
-      <!-- Five labelled buttons plus Cancel/Save never fit the sheet, and the
-           overflow clipped Save right off the end. The secondary actions are the
-           same four the quick popover offers, so they take the same icon-button
-           vocabulary here and leave the room to the two that decide the edit. -->
+      <!-- Labelled. As four identical 30px grey glyphs these were a guessing
+           game — scissors and layers in particular say nothing about "teilen"
+           and "auf andere Gruppen kopieren" until you have been told once. The
+           sheet is wider to pay for it. Löschen keeps its own end of the row,
+           its separator and its error-coloured hover: it is the one action here
+           that cannot be undone by pressing the button again. -->
       <footer class="sheet-foot">
         <div class="foot-actions">
           <button
@@ -392,7 +459,7 @@
             title="Diese Lektion löschen"
             aria-label="Diese Lektion löschen"
           >
-            <Icon name="trash" size={15} />
+            <Icon name="trash" size={15} /> Löschen
           </button>
           {#if !showSplit && !showCopy}
             <span class="act-sep"></span>
@@ -400,10 +467,10 @@
               class="act"
               onclick={() => (showSplit = true)}
               disabled={!split.canSplit}
-              title={split.canSplit ? 'In zwei Lektionen teilen' : 'Zu kurz zum Teilen — beide Hälften brauchen ein Feld'}
+              title={split.canSplit ? 'In zwei Lektionen teilen' : 'Zu kurz zum Teilen — jede Hälfte braucht mindestens 15 Minuten'}
               aria-label="In zwei Lektionen teilen"
             >
-              <Icon name="scissors" size={15} />
+              <Icon name="scissors" size={15} /> Teilen
             </button>
             <button
               class="act"
@@ -411,24 +478,30 @@
               title="Duplizieren"
               aria-label="Duplizieren"
             >
-              <Icon name="copy" size={15} />
+              <Icon name="copy" size={15} /> Duplizieren
             </button>
             {#if !isMultiGroup}
               <button
                 class="act"
                 disabled={spareLanes.length === 0}
                 onclick={() => { showCopy = true; copyLanes = spareLanes.map(g => g.id); }}
-                title="Auf die anderen Gruppen kopieren"
+                title={spareLanes.length > 0
+                  ? 'Auf die anderen Gruppen kopieren'
+                  : laneOptions.length <= 1
+                    ? `${targetPhase?.label ?? 'Diese Phase'} hat nur eine Gruppe`
+                    : 'Jede andere Gruppe hat diese Lektion zu dieser Zeit schon'}
                 aria-label="Auf die anderen Gruppen kopieren"
               >
-                <Icon name="layers" size={15} />
+                <Icon name="layers" size={15} /> Alle Gruppen
               </button>
             {/if}
           {/if}
         </div>
-        <div class="flex gap-2">
-          <button class="btn btn-ghost btn-sm" onclick={onclose}>Abbrechen</button>
-          <button class="btn btn-primary btn-sm" onclick={save}>Speichern</button>
+        <!-- No Speichern, and no Abbrechen to imply there is something to
+             cancel: the fields write through, exactly as the quick-edit popover
+             and Konfiguration do. Ctrl+Z is the way back, everywhere. -->
+        <div class="saved">
+          <Icon name="check" size={13} /> Automatisch gespeichert
         </div>
       </footer>
     {:else}
@@ -439,11 +512,11 @@
 
 <style>
   dialog::backdrop {
-    background: color-mix(in oklab, black 45%, transparent);
+    background: var(--wk-scrim);
   }
 
   .sheet {
-    width: min(460px, 94vw);
+    width: min(620px, 94vw);
     background: var(--wk-surface);
     color: var(--wk-text);
     border-radius: var(--wk-r-md);
@@ -517,24 +590,34 @@
     color: var(--color-error);
   }
 
+  /* One grid for every row, so the label column is exactly as wide as the
+     longest label and no wider. It used to be a fixed 5rem per row: "Zeit" got
+     55px of slack it had no use for and "Ausbildner", which needs 95px, ran
+     15px past its box and straight into the first teacher chip — the one label
+     the width was supposed to be chosen for. `max-content` measures instead of
+     guessing, and every row shares the measurement because they share the grid.
+     `.field` is display: contents so its two halves land in that grid directly. */
   .sheet-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 0.9rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.85rem;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-content: start;
+    gap: 0.85rem 0.85rem;
+  }
+
+  /* Anything that is not a label/control pair spans the pair. */
+  .sheet-body > :not(.field) {
+    grid-column: 1 / -1;
   }
 
   .field {
-    display: flex;
-    gap: 0.75rem;
+    display: contents;
   }
 
   .field-name {
-    width: 5rem;
-    flex-shrink: 0;
     padding-top: 0.4rem;
     font-size: var(--wk-fs-sm);
     font-weight: 650;
@@ -659,14 +742,33 @@
   }
   .lane input { accent-color: var(--color-primary); }
 
+  /* Wraps rather than clips. The labels this footer now carries are what the
+     original icon-only row was avoiding, and the failure it was avoiding was
+     Save being pushed off the end of the sheet — so the sheet is wide enough for
+     both rows, and if a longer translation ever changes that, the actions drop
+     to their own line instead of taking Save with them. */
   .sheet-foot {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
     padding: 0.6rem 0.75rem;
     border-top: 1px solid var(--wk-line);
     background: var(--wk-surface-alt);
+  }
+
+  /* One word, in the row it belongs to. "aus der Themenvorgabe" set as body
+     text under three separate fields was the same sentence three times, and it
+     read as prose rather than as this row's state. */
+  .tag-inherit {
+    align-self: flex-start;
+    padding: 0.02rem 0.36rem;
+    border: 1px solid var(--wk-line);
+    border-radius: 999px;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    color: var(--wk-text-faint);
   }
 
   .foot-actions {
@@ -679,16 +781,29 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
+    gap: 0.3rem;
     height: 30px;
+    padding: 0 0.5rem;
     border: none;
     border-radius: var(--wk-r-sm);
     background: transparent;
     color: var(--wk-text-mute);
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
   }
   .act:hover:not(:disabled) { background: var(--wk-surface); color: var(--wk-text); }
   .act:disabled { opacity: 0.35; cursor: default; }
+  .saved {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: var(--wk-fs-xs);
+    color: var(--color-success);
+    font-weight: 600;
+  }
+
   .act-danger:hover:not(:disabled) {
     color: var(--color-error);
     background: color-mix(in oklab, var(--color-error) 12%, transparent);

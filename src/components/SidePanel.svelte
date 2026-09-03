@@ -7,17 +7,32 @@
     label: string;
     width?: string;
     badge?: number;
+    /**
+     * Float above the calendar instead of taking width from it. The conflict
+     * panel is opened *to work on the grid*, and taking 268px from it turned
+     * "Persönliche Ausrüstung" into "Persönl iche…" at exactly the moment the
+     * card had to be readable. The caller docks it (see `.right-dock`).
+     */
+    overlay?: boolean;
     children: Snippet;
   }
 
-  let { side, open = $bindable(), label, width = '220px', badge, children }: Props = $props();
+  let {
+    side, open = $bindable(), label, width = '220px', badge, overlay = false, children,
+  }: Props = $props();
 
   // The chevron points the way the panel is about to move, so it reads the same
   // whether it sits on the left or the right edge.
   const chevron = $derived((side === 'left') === open ? '‹' : '›');
 </script>
 
-<aside class="side-panel" class:collapsed={!open} class:side-right={side === 'right'} style="--panel-w:{width}">
+<aside
+  class="side-panel"
+  class:collapsed={!open}
+  class:side-right={side === 'right'}
+  class:floating={overlay && open}
+  style="--panel-w:{width}"
+>
   {#if open}
     <div class="panel-body">{@render children()}</div>
   {:else}
@@ -48,7 +63,21 @@
     flex-direction: column;
     overflow: hidden;
     border-right: 1px solid var(--wk-line);
-    transition: width 0.15s ease;
+    /* No width transition. The panel used to ease over 0.15s while the
+       calendars inside re-laid out in a single frame, so eleven lanes snapped to
+       their new widths partway through the slide — half an animation reads worse
+       than none. */
+  }
+
+  /* Docked: out of the flex flow, so opening it costs the grid nothing. */
+  .floating {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 30;
+    background: var(--wk-surface);
+    box-shadow: var(--wk-shadow-2);
   }
 
   .side-right {

@@ -84,8 +84,23 @@
   --wk-text: var(--color-base-content);
   --wk-text-mute: color-mix(in oklab, var(--color-base-content) 62%, transparent);
   --wk-text-faint: color-mix(in oklab, var(--color-base-content) 40%, transparent);
-  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 5%, transparent);
-  --wk-day-band: color-mix(in oklab, var(--color-base-content) 2.5%, transparent);
+  /* G3/A9: these three were each tuned alone, against an empty grid, and two of
+     them did nothing once a week of cards was on top. Re-checked together on a
+     populated column: the day band and the out-of-hours fringe are the two that
+     had to come up to be seen at all. */
+  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 7%, transparent);
+  --wk-day-band: color-mix(in oklab, var(--color-base-content) 4.5%, transparent);
+
+  /* C3: the sidebar chip mixed at 8% and the calendar card at 13%/34%, while
+     the comment on each claimed they shared one recipe. Now they do — the chip
+     is literally a preview of the card it becomes, so it has to be. */
+  --wk-tint: 13%;
+  --wk-edge: 34%;
+
+  /* Breaks recede: a step away from the grid's own surface. See the dark
+     override — the direction flips. */
+  --wk-break-ground: var(--wk-surface-alt);
+  --wk-break-hatch: 3.5%;
 
   /* Time-gutter width. Each phase reserves exactly this much, so lanes come out
      the same width in a 1-lane phase as in a 4-lane one. */
@@ -93,7 +108,11 @@
   /* Height of one 15-minute slot; the density control rewrites it at runtime. */
   --wk-slot-h: 24px;
 
-  /* Type scale — five steps, so a label can't land on a sixth size by accident. */
+  /* Type scale. It said five steps "so a label can't land on a sixth size by
+     accident" — and then three avatars landed on 8.5px and 9px anyway, written
+     as raw pixels in three different files. The sixth step is real, so it is
+     named: it exists for initials inside a circle and for nothing else. */
+  --wk-fs-3xs: 0.6rem;
   --wk-fs-2xs: 0.6875rem;
   --wk-fs-xs: 0.75rem;
   --wk-fs-sm: 0.8125rem;
@@ -106,6 +125,22 @@
 
   --wk-shadow-1: 0 1px 2px color-mix(in oklab, var(--color-base-content) 8%, transparent);
   --wk-shadow-2: 0 10px 34px color-mix(in oklab, var(--color-base-content) 22%, transparent);
+
+  /* Floating things come in exactly two kinds, and the difference is whether
+     the page behind is still the context you are working in.
+
+     A *modal* takes the page away — Konfiguration, Auswertungen, the full event
+     editor, the shortcut sheet — and dims it with --wk-scrim. Every one of them
+     had its own copy of the same `black 45%`, four places for one decision to
+     drift apart, which is the only reason this token exists.
+
+     A *card-anchored* floater — the quick edit, the toolbar menus, the
+     placement picker — deliberately leaves the grid lit, because the card it
+     points at is what you are reading it against. It earns its separation from
+     a firmer edge and a deeper shadow instead of from a scrim. */
+  --wk-scrim: color-mix(in oklab, black 45%, transparent);
+  --wk-pop-line: var(--wk-line-strong);
+  --wk-pop-shadow: 0 14px 40px color-mix(in oklab, var(--color-base-content) 26%, transparent);
 
   --wk-font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -121,10 +156,25 @@
   --wk-line: color-mix(in oklab, var(--color-base-content) 20%, transparent);
   --wk-line-strong: color-mix(in oklab, var(--color-base-content) 42%, transparent);
   --wk-line-faint: color-mix(in oklab, var(--color-base-content) 12%, transparent);
-  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 8%, transparent);
-  --wk-day-band: color-mix(in oklab, var(--color-base-content) 4%, transparent);
+  --wk-grid-fringe: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --wk-day-band: color-mix(in oklab, var(--color-base-content) 6%, transparent);
+
+  /* A tint has to be stronger against a dark ground to read as the same colour. */
+  --wk-tint: 24%;
+  --wk-edge: 44%;
+
+  /* G2: "breaks recede" is a different *direction* in each theme. On white,
+     receding means a step lighter — surface-alt. On black, surface-alt is a step
+     *lighter* than the grid, so the lunch band became the brightest large area
+     on the screen: a wall exactly where the eye should skip. Down, not up. */
+  --wk-break-ground: color-mix(in oklab, var(--color-base-100) 78%, black);
+  --wk-break-hatch: 2.5%;
   --wk-surface-sunken: color-mix(in oklab, var(--color-base-100) 60%, black);
   --wk-shadow-2: 0 10px 34px rgb(0 0 0 / 0.5);
+  /* A dark page has less room to go darker, so the scrim has to lean harder to
+     read as "this is behind something" rather than as a dimmer theme. */
+  --wk-scrim: color-mix(in oklab, black 62%, transparent);
+  --wk-pop-shadow: 0 14px 40px rgb(0 0 0 / 0.62);
 }
 
 html,
@@ -159,4 +209,25 @@ input[type='date'] {
    needs the small negative lead-in. */
 .btn .wk-icon {
   margin-right: 0.1rem;
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────────────── */
+/* The app's motion is all feedback — a flash saying where undo landed, a toast
+   sliding in, a badge ticking when the conflict count drops. None of it carries
+   information the still frame does not, so under `reduce` it all simply stops.
+   Not `animation: none`: a keyframe that never runs also never fires its
+   `animationend`, and the flash is removed on a timer rather than on that event,
+   but zeroing the duration keeps every such contract intact.
+
+   The scroll that accompanies a reveal is handled in Calendar.svelte, which has
+   to pass `behavior` to scrollIntoView in JS. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -167,11 +167,29 @@
    The card is a neutral surface carrying a tint and a spine of the subject
    colour, not a saturated fill of it. Twelve lanes of full-strength colour had
    no hierarchy, and it left nothing louder for a conflict to be drawn in.
+
+   Two independent axes decide how much the card says: how *tall* it is (the
+   duration bands, set as a class in buildFCEvent) and how *wide* its lane is
+   (the container queries at the end of this section). Only duration existed
+   before, so a 90-minute block rendered the same three rows in a 200px lane and
+   in a 68px one — where the title fragmented, the time wrapped and the room
+   truncated. Width is not knowable at build time: it depends on the phase's
+   lane count, the viewport and any overlap in the lane, so it has to be asked
+   at layout time.
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* The harness is FC's per-card box: absolutely positioned with left/right, so
+   its inline size never depends on its contents and inline-size containment is
+   free. Querying it rather than the card itself keeps the query out of the way
+   of the card's own borders and padding. */
+.fc-timegrid-event-harness {
+  container-type: inline-size;
+  container-name: wk-ev;
+}
+
 .fc-timegrid-event.wk-ev {
-  --wk-tint: 13%;
-  --wk-edge: 34%;
+  /* --wk-tint / --wk-edge come from :root now, so the sidebar chip mixes from
+     the same two numbers — the chip is a preview of this card. */
   background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
   border: 1px solid color-mix(in oklab, var(--ev-color, gray) var(--wk-edge), var(--wk-surface));
   border-left: 3px solid var(--ev-color, gray);
@@ -192,8 +210,6 @@
 /* A tint has to be stronger against a dark ground to read as the same colour,
    and the spine of an already-dark subject colour needs lifting off it. */
 [data-theme='dark'] .fc-timegrid-event.wk-ev {
-  --wk-tint: 24%;
-  --wk-edge: 44%;
   border-left-color: color-mix(in oklab, var(--ev-color, gray) 85%, white);
 }
 
@@ -233,14 +249,23 @@
   font-weight: 650;
   line-height: 1.25;
   /* Never mid-word: "Karteneröffnung/-führung" used to break as
-     "Karteneröffn / ung/-führung". German compounds hyphenate or they clamp. */
+     "Karteneröffn / ung/-führung". German compounds hyphenate or they clamp.
+     The limits stop `hyphens: auto` from doing its own damage in a narrow lane —
+     unbounded, it produced "Kar- / te- / ner…". Nothing under 8 characters is
+     hyphenated at all, and neither piece may be shorter than 4 / 3. */
   overflow-wrap: break-word;
   hyphens: auto;
+  hyphenate-limit-chars: 8 4 3;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+}
+
+/* One of the two is always display: none — see the width bands. */
+.wk-ev-name-short {
+  display: none;
 }
 
 .wk-ev-flags {
@@ -273,6 +298,7 @@
   font-variant-numeric: tabular-nums;
   color: var(--wk-text-mute);
   letter-spacing: -0.01em;
+  white-space: nowrap;
 }
 
 /* Circles are people … */
@@ -282,35 +308,56 @@
   flex-wrap: wrap;
 }
 
+/* 18px at --wk-fs-3xs, not 16px at a hardcoded 8.5px. Three initials at 8.5px
+   inside a 16px circle left roughly a pixel of margin and no room for the
+   descender, and the label colour is derived per teacher (getContrastColor) so
+   a pale teacher colour gets dark type instead of unreadable white. */
 .wk-ev-av {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  font-size: 8.5px;
+  font-size: var(--wk-fs-3xs);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
   flex-shrink: 0;
 }
 
-/* … rectangles are places. */
+/* … rectangles are places.
+
+   The room used to be a 9×6 colour swatch plus the full name, and the name was
+   the first thing a narrow lane dropped — which left a swatch that could only be
+   decoded against the Legende, on the very card whose whole job on a printed
+   plan is to say where a Gruppe walks to. It is now a pill in the room's colour
+   carrying the room's own 4–5 character code, which fits at every width the app
+   draws. The full name rides alongside it while there is room for it. */
 .wk-ev-room {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   font-size: var(--wk-fs-2xs);
   color: var(--wk-text-mute);
 }
 
-.wk-ev-room-tag {
-  width: 9px;
-  height: 6px;
-  border-radius: 2px;
+.wk-ev-room-code {
   flex-shrink: 0;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: var(--wk-fs-3xs);
+  font-weight: 700;
+  line-height: 15px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  /* Tinted rather than filled: at full strength four of these in a column of
+     lessons out-shouted the Thema colour that the card is actually keyed on. The
+     ring is what makes it read as a *place* against the round teacher discs. */
+  color: color-mix(in oklab, var(--room) 72%, var(--wk-text));
+  background: color-mix(in oklab, var(--room) 20%, var(--wk-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--room) 45%, transparent);
 }
 
 .wk-ev-room-name {
@@ -319,28 +366,154 @@
   text-overflow: ellipsis;
 }
 
-/* ── How much fits: one rule per duration band ─────────────────────────────── */
+/* ── How much fits ─────────────────────────────────────────────────────────
+   Two axes decide it — how tall the card is (duration bands) and how wide its
+   lane is (container queries below) — and they used to disagree about which
+   things matter, so two cards of the same width could carry different fields
+   because one was taller. Both now drop from the *same* priority order, tail
+   first:
 
+       room pill  →  Ausbildner  →  start time  →  end time  →  room name
+
+   The room leads because it is the least redundant thing on the card: the grid
+   already states the time by where the block sits, and a printed Gruppenplan is
+   read to find out where to walk. The old order had it exactly backwards — the
+   room name was the first field a narrow lane dropped, leaving a colour swatch
+   that could only be decoded against the Legende, while the time it had just
+   drawn twice survived.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Duration: how tall ────────────────────────────────────────────────────── */
+
+/* ≤20 min. Roughly one slot: a title line and nothing else honestly fits, and
+   at the compact density not even the pill would. */
 .wk-dur-xs .wk-ev-body { padding: 1px 4px 1px 5px; justify-content: center; }
 .wk-dur-xs .wk-ev-title { -webkit-line-clamp: 1; line-clamp: 1; }
 .wk-dur-xs .wk-ev-meta { display: none; }
 
+/* ≤45 min. One line of title, one line of meta — which keeps the room and the
+   people, and gives up the end time. The height already says "short". */
 .wk-dur-sm .wk-ev-title { -webkit-line-clamp: 1; line-clamp: 1; }
-.wk-dur-sm .wk-ev-time { display: none; }
-.wk-dur-sm .wk-ev-meta { flex-wrap: nowrap; }
+.wk-dur-sm .wk-ev-t-end { display: none; }
+.wk-dur-sm .wk-ev-room-name { display: none; }
+.wk-dur-sm .wk-ev-meta { flex-wrap: nowrap; overflow: hidden; }
 
+/* A tall card had its three rows at the top and 200px of flat tint under them.
+   Pinning the meta row to the bottom edge makes the block's own height the thing
+   that separates title from detail. */
 .wk-dur-lg .wk-ev-title { -webkit-line-clamp: 3; line-clamp: 3; }
+.wk-dur-lg .wk-ev-body { justify-content: space-between; }
+
+/* ── Width: how wide the lane is ───────────────────────────────────────────── */
+/* Measured against the harness (see the container rule above). The thresholds
+   are where things actually stop fitting rather than round numbers. */
+
+/* Where a lane of a four-lane phase lands on a 1500px viewport. The end time and
+   the room's full name go; the pill and the initials stay.
+   
+   The start time goes too — but only on a block that starts on an hour rule,
+   where the axis beside it has already said so. `wk-ev-offgrid` (08:30, 15:45)
+   keeps its time all the way down to the next band, because there the card is
+   the only thing that can say when it starts.
+   
+   Making the rule *information* rather than pixels is what stops it looking
+   arbitrary: with a plain width threshold, KVK's ~100px lanes kept their times
+   and WK's ~96px lanes lost theirs, which read as "KVK is special" when it was
+   only four pixels. */
+@container wk-ev (max-width: 132px) {
+  .wk-ev-t-end { display: none; }
+  .wk-ev-room-name { display: none; }
+  .wk-ev-meta { flex-wrap: nowrap; gap: 3px 5px; overflow: hidden; }
+  .fc-timegrid-event:not(.wk-ev-offgrid) .wk-ev-time { display: none; }
+}
+
+/* …but a card with height to spare spends it rather than clipping. A 3 h block
+   in a 100px lane cannot fit "08:00", two initials and a room pill on one line —
+   and `nowrap` there cut the pill in half, which is worse than either dropping
+   it or wrapping it. Only the two short bands stay on one line, because that is
+   all the height they have. Ordered after the width query so it wins. */
+.wk-dur-md .wk-ev-meta,
+.wk-dur-lg .wk-ev-meta {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* Nothing in the meta row shrinks: a half-drawn pill or a time clipped to
+   "13:(" is worse than either field being absent, and both were happening. When
+   the row cannot hold everything, something is dropped outright instead — which
+   on a single-line card is the time, by the priority at the top of this section. */
+.wk-ev-room,
+.wk-ev-time { flex-shrink: 0; }
+
+/* Below this the card stops trying to be a sentence: the short subject name, the
+   initials and the room code. Even an off-grid time goes — the row has space for
+   two things and neither the people nor the place is recoverable from anywhere
+   else on screen, where the minute is one click away in the quick-edit popover.
+   The full name of everything stays in the tooltip. */
+@container wk-ev (max-width: 92px) {
+  .wk-ev-name-full { display: none; }
+  .wk-ev-name-short { display: inline; }
+  .wk-ev-time { display: none; }
+  .wk-ev-body { padding: 3px 4px 2px 5px; }
+  .wk-ev-meta { gap: 2px 4px; }
+
+  /* The short name is only as short as someone made it, and `Subject.shortName`
+     defaults to empty — so a one-word Thema like "Sanität" arrives here at full
+     length and wrapped as "Sanit / ät", which is the fragmentation this band
+     exists to prevent. One line, cut with an ellipsis: a clipped word reads as a
+     clipped word, where a broken one reads as a different word. */
+  .wk-ev-title {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    hyphens: none;
+    overflow-wrap: normal;
+  }
+}
+
+/* The narrowest lanes the app draws — five lanes in a three-day phase on a
+   1280px screen. The initials and the room code are the last two things left,
+   and they are the two the card exists to carry. */
+@container wk-ev (max-width: 62px) {
+  .wk-ev-meta { gap: 2px 3px; }
+  .wk-ev-av { width: 16px; height: 16px; }
+  .wk-ev-room-code { padding: 0 3px; line-height: 14px; }
+}
+
+/* Two events overlapping in one lane split it in half, which at 1280px leaves
+   ~35px — narrower than the code itself. Rather than let a clipped "Drau|" run
+   off the edge, the pill falls all the way back to a colour tag; the room is
+   then only in the tooltip, but nothing on the card is a fragment. This is the
+   floor, not a band anyone should be reading a plan at. */
+@container wk-ev (max-width: 48px) {
+  .wk-ev-room-code {
+    padding: 0;
+    width: 10px;
+    height: 6px;
+    border-radius: 2px;
+    overflow: hidden;
+    text-indent: -99px;
+    background: var(--room);
+    box-shadow: none;
+  }
+}
 
 /* ── Breaks recede ─────────────────────────────────────────────────────────── */
 
+/* A lower alpha over a longer period: at 5% every 10px the hatch read as a
+   texture in its own right, and a lunch break spanning four lanes is the widest
+   object in the week. It has to sit under the lessons, not compete with them.
+   Both the ground and the hatch alpha are per-theme tokens — see --wk-break-ground
+   in app.css for why "recede" points in opposite directions. */
 .fc-timegrid-event.wk-ev-break {
   background:
     repeating-linear-gradient(
       135deg,
-      transparent 0 5px,
-      color-mix(in oklab, var(--color-base-content) 5%, transparent) 5px 10px
+      transparent 0 7px,
+      color-mix(in oklab, var(--color-base-content) var(--wk-break-hatch), transparent) 7px 14px
     ),
-    var(--wk-surface-alt);
+    var(--wk-break-ground);
   border-color: var(--wk-line);
   border-left: 1px solid var(--wk-line);
   box-shadow: none;
@@ -358,28 +531,52 @@
   box-shadow: none;
 }
 
-/* ── Conflict: outline + icon, so it survives a red subject colour ─────────── */
-
-.fc-timegrid-event.wk-ev-hard {
-  outline: 2px solid var(--color-error);
-  outline-offset: -2px;
+/* And it says its name once per day, not once per lane. Twelve lunch cards each
+   repeating "Mittagessen 12:00–13:00" spent the week's widest object on one bit
+   of information; labelling only the first lane lets the rest read as the single
+   band across the day that they are. `visibility` rather than `display`, so the
+   card keeps its box — the conflict ring and the hit area are per lane.
+   `.wk-day-first` is applied from tagDayBoundaries() in Calendar.svelte. */
+.fc-timegrid-col.fc-resource:not(.wk-day-first) .fc-timegrid-event.wk-ev-multi .wk-ev-body {
+  visibility: hidden;
 }
 
-.fc-timegrid-event.wk-ev-soft {
-  outline: 2px dashed var(--color-warning);
-  outline-offset: -2px;
-}
+/* ── Conflict: a ring with its own geometry ────────────────────────────────── */
+/* Two things were wrong with the outline this replaces. It was drawn on all four
+   edges at offset -2px, so it painted straight over the 3px spine — the Thema's
+   identity disappeared exactly when the card most needed to be identifiable. And
+   a 2px red edge is not distinguishable from a Thema whose own colour is red:
+   `Sanität #ef4444` looked permanently conflicted, and an amber Thema looked
+   like a soft one.
 
-/* A corner notch: the same information without relying on hue, which matters
-   on a card whose own colour is already red. */
-.fc-timegrid-event.wk-ev-hard::after {
+   So the signal is geometry, not hue: the ring is separated from the card body
+   by a 2px gap in the surface colour, which makes a conflicted card visibly
+   *double-edged*. No unconflicted card can look like that whatever its colour,
+   and it survives a mono printer. The ring sits on ::before at the padding box,
+   which starts after the spine, so the spine is left alone.
+
+   The corner notch that used to carry this never rendered — `overflow: hidden`
+   plus a rounded corner plus `.wk-ev-flags` occupying that exact spot — and the
+   ring plus the alert icon in the flags row now say it twice over. */
+.fc-timegrid-event.wk-ev-hard::before,
+.fc-timegrid-event.wk-ev-soft::before {
   content: '';
   position: absolute;
-  top: 0;
-  right: 0;
-  border-width: 0 9px 9px 0;
-  border-style: solid;
-  border-color: transparent var(--color-error) transparent transparent;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: calc(var(--wk-r-sm) - 2px);
+  box-shadow: inset 0 0 0 2px var(--wk-surface);
+}
+
+/* Solid against dashed is the second, redundant channel — the one that reads at
+   a glance without resolving red from amber. */
+.fc-timegrid-event.wk-ev-hard::before {
+  border: 2px solid var(--color-error);
+}
+
+.fc-timegrid-event.wk-ev-soft::before {
+  border: 2px dashed var(--color-warning);
 }
 
 /* ── Selection, highlight, spotlight ───────────────────────────────────────── */
@@ -390,14 +587,33 @@
   z-index: 6;
 }
 
+/* One pulse, not two. At 1.1s × 2 the card spent 2.2 seconds throbbing, which
+   reads as an alarm rather than as a pointer — and now that undo, duplicate,
+   teilen and copy-to-lanes all use it, four cards can pulse at once. A single
+   sharper peak says "here" and gets out of the way. */
 .fc-timegrid-event.wk-flash {
-  animation: wk-flash 1.1s ease-out 2;
+  animation: wk-flash 0.7s ease-out 1;
   z-index: 5;
 }
 
 @keyframes wk-flash {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 0%, transparent); }
-  35% { box-shadow: 0 0 0 5px color-mix(in oklab, var(--color-primary) 55%, transparent); }
+  30% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--color-primary) 65%, transparent); }
+}
+
+/* ── Drag: what the drop would land on ─────────────────────────────────────── */
+/* The mirror already tints red to say a clash is coming. This says with what:
+   `previewClashDetail` walks the colliding events to decide the level, so the
+   identities cost nothing extra. Outline rather than fill — the card underneath
+   still has to be readable while it is being pointed at. */
+.fc-timegrid-event.wk-clash-target {
+  outline: 2px dashed var(--color-error);
+  outline-offset: 1px;
+  z-index: 4;
+}
+
+.wk-cal[data-clash='soft'] .fc-timegrid-event.wk-clash-target {
+  outline-color: var(--color-warning);
 }
 
 /* Hovering a sidebar chip answers "where is this one still missing?" by
@@ -405,6 +621,21 @@
 .fc-timegrid-event.wk-dimmed {
   opacity: 0.16;
   filter: saturate(0.4);
+}
+
+/* Dimming can only show where the subject *is*. The planner's question is where
+   it is not — and an absence has nothing to highlight, so the lane header says
+   it instead: while a chip is spotlighted, the lanes that still owe it are
+   marked. Applied from paintStates() in Calendar.svelte, which resolves the
+   lanes per phase. */
+.fc-col-header-cell.fc-resource.wk-lane-owes .fc-col-header-cell-cushion {
+  color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+  font-weight: 700;
+}
+
+.fc-col-header-cell.fc-resource.wk-lane-owes {
+  background: color-mix(in oklab, var(--color-warning) 16%, transparent);
+  box-shadow: inset 0 -2px 0 var(--color-warning);
 }
 
 /* ── Resize grip ───────────────────────────────────────────────────────────── */
@@ -418,17 +649,23 @@
   justify-content: center;
 }
 
+/* Hidden until asked for. At 22% alpha on every card at rest, thirty of these
+   read as a smudge along the bottom of every block rather than as a control —
+   and the grip is only ever wanted by a pointer that is already on the card. */
 .fc-timegrid-event .fc-event-resizer-end::after {
   content: '';
   display: block;
   width: 18px;
   height: 2px;
   border-radius: 1px;
-  background: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+  opacity: 0;
+  transition: opacity 0.12s;
 }
 
-.fc-timegrid-event:hover .fc-event-resizer-end::after {
-  background: color-mix(in oklab, var(--color-base-content) 45%, transparent);
+.fc-timegrid-event:hover .fc-event-resizer-end::after,
+.fc-timegrid-event:focus-within .fc-event-resizer-end::after {
+  opacity: 1;
 }
 
 /* ── Drag feedback ─────────────────────────────────────────────────────────── */
@@ -466,6 +703,37 @@
     --wk-ring: 0 0 0 0 transparent;
     --wk-lift: none;
     box-shadow: none;
+  }
+
+  /* The conflict ring is a *border* on ::before, so unlike the outline it
+     replaced it survives a printer that drops backgrounds — the double edge
+     prints as geometry. Only the surface-coloured gap is a shadow, so it is
+     restated here as a white ring to keep the two edges apart on paper. */
+  .fc-timegrid-event.wk-ev-hard::before,
+  .fc-timegrid-event.wk-ev-soft::before {
+    box-shadow: inset 0 0 0 2px #fff;
+  }
+
+  .fc-timegrid-event.wk-ev-hard::before { border-color: #000; }
+  .fc-timegrid-event.wk-ev-soft::before { border-color: #666; }
+
+  /* A teacher avatar is white type on a coloured disc. The disc is a background,
+     so it prints as nothing and the initials went white-on-white — the one part
+     of the card that names a person vanished. On paper it is dark type inside a
+     ruled circle instead. */
+  .wk-ev-av {
+    background: transparent !important;
+    color: #000 !important;
+    border: 1px solid #000;
+    font-weight: 700;
+  }
+
+  /* Same for the hatch: it prints as a flat grey wash that swallows the title,
+     where on screen it is a 3.5% texture. A ruled outline says "break" without
+     costing any ink the words need. */
+  .fc-timegrid-event.wk-ev-break {
+    background: none !important;
+    border-style: dashed;
   }
 }
 

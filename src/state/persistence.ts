@@ -4,7 +4,7 @@ import { formatDate } from "../utils/timeUtils";
 import { migrateState } from "./migrations";
 
 const STATE_KEY = "wk-planner-state";
-export const CURRENT_VERSION = 8;
+export const CURRENT_VERSION = 12;
 
 // A colour picker fires an input event per mouse move, so writes are coalesced
 // into one per frame-ish window instead of one per event. Anything still pending
@@ -32,6 +32,7 @@ export function createDefaultState(): AppState {
   return {
     version: CURRENT_VERSION,
     name: `WK ${monday.slice(0, 4)}`,
+    lastExportedAt: null,
     wkStartDate: monday,
     groups: [
       { id: kaderId, label: "K", enabled: true, order: 0 },
@@ -61,11 +62,12 @@ export function createDefaultState(): AppState {
       {
         id: nanoid(),
         name: "Mittagessen",
+        shortName: "",
         color: "#a0aec0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 60,
-        isBreak: true,
+        kind: "break",
         isMultiGroup: true,
         phaseId: null,
         content: { goals: [], notes: "" },
@@ -73,11 +75,12 @@ export function createDefaultState(): AppState {
       {
         id: nanoid(),
         name: "Pause",
+        shortName: "",
         color: "#cbd5e0",
         defaultTeacherIds: [],
         defaultRoomId: null,
         defaultDurationMinutes: 15,
-        isBreak: true,
+        kind: "break",
         isMultiGroup: false,
         phaseId: null,
         content: { goals: [], notes: "" },
@@ -170,7 +173,7 @@ export function loadState(): AppState {
 
     const reset = window.confirm(
       `Das gespeicherte Datenformat passt nicht (gespeichert: v${parsed.version ?? "?"}, aktuell: v${CURRENT_VERSION}).\n\n` +
-        `OK setzt auf die Vorgaben zurück, Abbrechen versucht die alten Daten trotzdem zu laden (kann instabil sein).`,
+        `OK setzt alles zurück, Abbrechen versucht die alten Daten trotzdem zu laden (die App verhält sich dann möglicherweise falsch).`,
     );
     if (reset) return createDefaultState();
     // User chose to keep old data — it passed the shape check, but individual

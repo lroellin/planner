@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { migrate_v5_to_v6, migrate_v6_to_v7, migrate_v7_to_v8, migrateState } from './migrations';
+import {
+  migrate_v5_to_v6, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10,
+  migrate_v10_to_v11, migrate_v11_to_v12, migrateState,
+} from './migrations';
+import { CURRENT_VERSION } from './persistence';
 
 /** A v5 store, as it sat in localStorage before the plan-name/content release. */
 function v5State(): Record<string, unknown> {
@@ -68,26 +72,113 @@ describe('migrate_v7_to_v8', () => {
   });
 });
 
-describe('migrateState', () => {
-  it('walks a v5 store up to the current version', () => {
-    expect(migrateState(v5State(), 8)?.version).toBe(8);
+describe('migrate_v8_to_v9', () => {
+  it('seeds an empty short name, which keeps the derived one live', () => {
+    const v8 = migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State())));
+    const out = migrate_v8_to_v9(v8);
+
+    expect(out.version).toBe(9);
+    expect(out.subjects[0].shortName).toBe('');
+    expect(out.events).toEqual(v5State().events);
   });
 
-  it('chains every hop, so a v5 store arrives with the v8 shape', () => {
-    const out = migrateState(v5State(), 8);
+  it('keeps a short name that is already there', () => {
+    const v8 = migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State())));
+    v8.subjects[0].shortName = 'Karte';
+    expect(migrate_v8_to_v9(v8).subjects[0].shortName).toBe('Karte');
+  });
+});
+
+describe('migrate_v9_to_v10', () => {
+  const v9 = () => migrate_v8_to_v9(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State()))));
+
+  it('seeds lastExportedAt as null, not as "now"', () => {
+    // An existing plan genuinely has never been exported. Stamping it with the
+    // migration time would suppress the first reminder for exactly the plans
+    // that have been living in one browser the longest.
+    const out = migrate_v9_to_v10(v9());
+    expect(out.version).toBe(10);
+    expect(out.lastExportedAt).toBeNull();
+    expect(out.events).toEqual(v5State().events);
+  });
+
+  it('keeps a timestamp that is already there', () => {
+    const state = v9();
+    state.lastExportedAt = '2026-09-01T10:00:00.000Z';
+    expect(migrate_v9_to_v10(state).lastExportedAt).toBe('2026-09-01T10:00:00.000Z');
+  });
+});
+
+describe('migrate_v10_to_v11', () => {
+  const v10 = () => migrate_v9_to_v10(
+    migrate_v8_to_v9(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State())))),
+  );
+
+  it('seeds an empty room code, which keeps the derived one live', () => {
+    const out = migrate_v10_to_v11(v10());
+    expect(out.version).toBe(11);
+    expect(out.rooms[0].shortName).toBe('');
+  });
+
+  it('keeps a code that is already there', () => {
+    const state = v10();
+    state.rooms[0].shortName = 'TS1';
+    expect(migrate_v10_to_v11(state).rooms[0].shortName).toBe('TS1');
+  });
+});
+
+describe('migrate_v11_to_v12', () => {
+  const v11 = () => migrate_v10_to_v11(migrate_v9_to_v10(
+    migrate_v8_to_v9(migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State())))),
+  ));
+
+  it('turns the boolean into a kind and drops the old field', () => {
+    const out = migrate_v11_to_v12(v11());
+    expect(out.version).toBe(12);
+    expect(out.subjects[0].kind).toBe('lesson');
+    expect(out.subjects[0]).not.toHaveProperty('isBreak');
+    expect(out.events).toEqual(v5State().events);
+  });
+
+  it('maps a break to the break kind', () => {
+    const state = v11();
+    state.subjects[0].isBreak = true;
+    expect(migrate_v11_to_v12(state).subjects[0].kind).toBe('break');
+  });
+
+  it('never invents a Programmpunkt: nothing in an old store could be one', () => {
+    const state = v11();
+    state.subjects.push({ ...state.subjects[0], id: 's2', isBreak: true });
+    const kinds = migrate_v11_to_v12(state).subjects.map((s: { kind: string }) => s.kind);
+    expect(kinds).toEqual(['lesson', 'break']);
+  });
+});
+
+describe('migrateState', () => {
+  it('walks a v5 store up to the current version', () => {
+    expect(migrateState(v5State(), CURRENT_VERSION)?.version).toBe(CURRENT_VERSION);
+  });
+
+  it('chains every hop, so a v5 store arrives with the current shape', () => {
+    const out = migrateState(v5State(), CURRENT_VERSION);
     expect(out.name).toBe('WK-Plan');
     expect(out.subjects[0].content).toEqual({ goals: [], notes: '' });
     expect(out.subjects[0]).not.toHaveProperty('targetMinutesPerGroup');
+    expect(out.subjects[0].shortName).toBe('');
+    expect(out.lastExportedAt).toBeNull();
+    expect(out.rooms[0].shortName).toBe('');
+    expect(out.subjects[0].kind).toBe('lesson');
+    expect(out.subjects[0]).not.toHaveProperty('isBreak');
   });
 
   it('returns state that is already current untouched', () => {
-    const current = migrate_v7_to_v8(migrate_v6_to_v7(migrate_v5_to_v6(v5State())));
-    expect(migrateState(current, 8)).toBe(current);
+    const current = migrateState(v5State(), CURRENT_VERSION);
+    expect(migrateState(current, CURRENT_VERSION)).toBe(current);
   });
 
   it('refuses a version with no path to the target', () => {
     // Newer than this build, and a hop nothing knows how to make.
-    expect(migrateState({ version: 99 }, 8)).toBeNull();
-    expect(migrateState({ version: 1 }, 8)).toBeNull();
+    expect(migrateState({ version: 99 }, CURRENT_VERSION)).toBeNull();
+    expect(migrateState({ version: 1 }, CURRENT_VERSION)).toBeNull();
   });
 });

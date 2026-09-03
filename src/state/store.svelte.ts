@@ -10,7 +10,7 @@ import {
   peekUndoLabel, peekRedoLabel, undoLabels,
 } from './undo';
 import { detectConflicts, attachConflicts } from '../conflicts/detector';
-import { toast } from './ui.svelte';
+import { toast, flashEvents } from './ui.svelte';
 import {
   timeDiffMinutes, addMinutesToTime, formatDate, orphanEvents, snapToSlot, phaseForDay,
   phaseGroups,
@@ -53,6 +53,21 @@ export function getConflicts(): ConflictReport[] { return _conflicts; }
 export function getOrphans(): CalendarEvent[] { return _orphans; }
 /** Everything the toolbar and the conflict rail count as "needs attention". */
 export function getIssueCount(): number { return _conflicts.length + _orphans.length; }
+
+/**
+ * How many *Lektionen* those issues involve. `getIssueCount` counts clash
+ * relations: one badly placed lesson overlapping two others on both a
+ * Ausbildner and a Raum raises four reports, and the same lesson is then
+ * listed under a Ausbildner card *and* a Raum card. The relation count is the
+ * right thing to sort and group by; it is the wrong thing to hand someone as
+ * "how much is left to do", so both numbers are shown together.
+ */
+export function getAffectedEventCount(): number {
+  const ids = new Set<ID>();
+  for (const report of _conflicts) for (const id of report.involvedEventIds) ids.add(id);
+  for (const ev of _orphans) ids.add(ev.id);
+  return ids.size;
+}
 export function canUndo(): boolean { return _canUndoState; }
 export function canRedo(): boolean { return _canRedoState; }
 /** The actions undo would take back, most recent first — feeds the history menu. */
@@ -62,6 +77,24 @@ export function undoHistory(): string[] { return _undoHistory; }
 
 function snapshot(): AppState {
   return $state.snapshot(_state) as AppState;
+}
+
+/**
+ * Which Lektionen differ between two states — what undo and redo just changed,
+ * so the grid can point at it. Conflict annotations are re-derived on every
+ * commit and would otherwise report every card as changed, so they are skipped.
+ */
+function changedEventIds(before: AppState, after: AppState): ID[] {
+  const key = (ev: CalendarEvent): string => JSON.stringify([
+    ev.subjectId, ev.groupId, ev.dayIndex, ev.startTime, ev.endTime, ev.teacherIds, ev.roomId,
+  ]);
+  const previous = new Map(before.events.map(ev => [ev.id, key(ev)]));
+  const changed: ID[] = [];
+  for (const ev of after.events) {
+    const was = previous.get(ev.id);
+    if (was === undefined || was !== key(ev)) changed.push(ev.id);
+  }
+  return changed;
 }
 
 /** Apply a new state: detect conflicts once, persist, publish. */
@@ -111,7 +144,8 @@ export function undo(): void { undoSteps(1); }
  * commit and the toast happen once, at the end.
  */
 export function undoSteps(steps: number): void {
-  let current = snapshot();
+  const before = snapshot();
+  let current = before;
   let entry = null as ReturnType<typeof undoState>;
   let taken = 0;
   for (let i = 0; i < steps; i++) {
@@ -128,22 +162,47 @@ export function undoSteps(steps: number): void {
   }
   commit(entry.state);
   // Undo used to change the schedule with no acknowledgement at all, which is
-  // unnerving on a grid where the affected card may be off-screen.
+  // unnerving on a grid where the affected card may be off-screen. The toast
+  // names the action; the flash answers "where".
+  flashEvents(changedEventIds(before, entry.state));
   const message = taken === 1
     ? `Rückgängig: ${entry.label}`
-    : `${taken} Schritte rückgängig, zurück vor «${entry.label}»`;
+    : `${taken} Schritte rückgängig — Stand vor «${entry.label}»`;
   toast(message, { label: 'Wiederholen', run: redo });
 }
 
 export function redo(): void {
-  const entry = redoState(snapshot());
+  const before = snapshot();
+  const entry = redoState(before);
   lastCoalesceKey = null;
   if (!entry) {
     syncUndoState();
     return;
   }
   commit(entry.state);
+  flashEvents(changedEventIds(before, entry.state));
   toast(`Wiederhergestellt: ${entry.label}`, { label: 'Rückgängig', run: undo });
+}
+
+/**
+ * Announce a deletion with the way back.
+ *
+ * Every one of these goes through `setState` with a label, so all of them are on
+ * the undo stack — which made the `window.confirm()` they used to sit behind an
+ * OS dialog interrupting for something one keystroke reverses. The consequence
+ * is still named ("mit 12 Lektionen"), it is just named *after* the click, where
+ * it costs nothing to read and can be acted on.
+ */
+function deletedToast(what: string, consequence?: string): void {
+  toast(
+    consequence ? `${what} gelöscht — ${consequence}` : `${what} gelöscht`,
+    { label: 'Rückgängig', run: undo },
+  );
+}
+
+/** German plural for the one noun these messages all end up counting. */
+function lektionen(n: number): string {
+  return `${n} ${n === 1 ? 'Lektion' : 'Lektionen'}`;
 }
 
 // ─── Event mutations ──────────────────────────────────────────────────────────
@@ -167,17 +226,21 @@ export function addEvent(ev: CalendarEvent, label?: string): void {
     { ..._state, events: [..._state.events, ev] },
     { label: label ?? (name ? `${name} platzieren` : 'Lektion platzieren') },
   );
+  // A placement made from a dialog rather than by dragging lands wherever the
+  // day/lane selects pointed, which is often not where the user is looking.
+  flashEvents([ev.id]);
 }
 
 export function updateEvent(
   id: ID,
   patch: Partial<Omit<CalendarEvent, 'id' | 'conflicts'>>,
   label?: string,
+  opts: MutateOptions = {},
 ): void {
   setState({
     ..._state,
     events: _state.events.map(ev => ev.id === id ? { ...ev, ...patch } : ev),
-  }, { label: label ?? eventLabel(id, 'bearbeiten') });
+  }, { label: label ?? eventLabel(id, 'bearbeiten'), ...opts });
 }
 
 export function removeEvent(id: ID): void {
@@ -226,6 +289,9 @@ export function duplicateEvents(ids: ID[]): ID[] {
     { ..._state, events: [..._state.events, ...copies] },
     { label: eventsLabel(ids, 'duplizieren') },
   );
+  // A copy is placed exactly on top of its original, so without this nothing on
+  // screen changes at all and the action reads as a no-op.
+  flashEvents(copies.map(c => c.id));
   return copies.map(c => c.id);
 }
 
@@ -249,6 +315,8 @@ export function copyEventToLanes(id: ID, groupIds: ID[]): void {
     { ..._state, events: [..._state.events, ...copies] },
     { label: `${name} auf ${copies.length} Gruppe${copies.length === 1 ? '' : 'n'} kopieren` },
   );
+  // Up to four cards appear at once, in lanes the user was not pointing at.
+  flashEvents(copies.map(c => c.id));
 }
 
 /** The lanes of an event's phase that do not already hold it at that time. */
@@ -295,6 +363,77 @@ export function placeSubject(
   });
 }
 
+/** What the Programmpunkt dialog collects — everything not fixed by the clicked cell. */
+export interface ProgrammpunktDraft {
+  name: string;
+  color: string;
+  durationMinutes: number;
+  isMultiGroup: boolean;
+}
+
+/**
+ * Create a *Programmpunkt* and place it, in one commit.
+ *
+ * A Programmpunkt is a Subject like any other — it just has `kind: 'oneoff'`, so
+ * coverage leaves it alone. What makes it worth its own function is that the
+ * definition and its first placement have to land in a single `setState`:
+ * created as two actions, one Ctrl+Z would take back the card and leave an
+ * orphan Thema behind in Konfiguration that nobody asked for.
+ *
+ * A name that already belongs to a Programmpunkt reuses that one instead of
+ * making a second definition — that is the "Antreten again on Thursday" path,
+ * and it is also what stops a delete-and-retype from silently accumulating
+ * duplicates.
+ *
+ * Returns the new event's id so the caller can open the quick edit on it.
+ */
+export function createProgrammpunkt(
+  draft: ProgrammpunktDraft,
+  dayIndex: number,
+  startTime: string,
+  groupId: GroupSelector,
+): ID {
+  const name = draft.name.trim() || 'Programmpunkt';
+  const existing = _state.subjects.find(
+    s => s.kind === 'oneoff' && s.name.toLowerCase() === name.toLowerCase(),
+  );
+
+  const subject: Subject = existing ?? {
+    id: nanoid(),
+    name,
+    shortName: '',
+    color: draft.color,
+    defaultTeacherIds: [],
+    defaultRoomId: null,
+    defaultDurationMinutes: draft.durationMinutes,
+    kind: 'oneoff',
+    isMultiGroup: draft.isMultiGroup,
+    phaseId: null,
+    content: { goals: [], notes: '' },
+  };
+
+  const event: CalendarEvent = {
+    id: nanoid(),
+    subjectId: subject.id,
+    // The reused definition decides the lane rule, so placing "Antreten" again
+    // cannot end up half all-lanes and half not.
+    groupId: subject.isMultiGroup ? ALL_GROUPS : groupId,
+    dayIndex,
+    startTime,
+    endTime: addMinutesToTime(startTime, draft.durationMinutes),
+    teacherIds: 'inherit',
+    roomId: 'inherit',
+  };
+
+  setState({
+    ..._state,
+    subjects: existing ? _state.subjects : [..._state.subjects, subject],
+    events: [..._state.events, event],
+  }, { label: `${name} anlegen und platzieren` });
+  flashEvents([event.id]);
+  return event.id;
+}
+
 /** Cut an event in two at `atTime`; no-op when the time is outside the event. */
 export function splitEvent(id: ID, atTime: string): void {
   const ev = _state.events.find(e => e.id === id);
@@ -309,6 +448,8 @@ export function splitEvent(id: ID, atTime: string): void {
     ..._state,
     events: _state.events.filter(e => e.id !== id).concat([first, second]),
   }, { label: eventLabel(id, 'teilen') });
+  // Which two halves came out of the cut, on a grid where the seam is one rule.
+  flashEvents([first.id, second.id]);
 }
 
 // ─── Teacher mutations ────────────────────────────────────────────────────────
@@ -323,11 +464,22 @@ export function updateTeacher(id: ID, patch: Partial<Omit<Teacher, 'id'>>, opts:
   setState({
     ..._state,
     teachers: _state.teachers.map(t => t.id === id ? { ...t, ...patch } : t),
-  }, { label: `${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} bearbeiten`, ...opts });
+  }, { label: `${_state.teachers.find(t => t.id === id)?.name ?? 'Ausbildner'} bearbeiten`, ...opts });
+}
+
+/** Lektionen this Ausbildner is named on — what a deletion takes them off. */
+export function eventCountForTeacher(id: ID): number {
+  return _state.events.filter(ev =>
+    ev.teacherIds === 'inherit'
+      ? (_state.subjects.find(s => s.id === ev.subjectId)?.defaultTeacherIds ?? []).includes(id)
+      : ev.teacherIds.includes(id),
+  ).length;
 }
 
 export function removeTeacher(id: ID): void {
-  const label = `${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} löschen`;
+  const name = _state.teachers.find(t => t.id === id)?.name ?? 'Ausbildner';
+  const label = `${name} löschen`;
+  const affected = eventCountForTeacher(id);
   setState({
     ..._state,
     teachers: _state.teachers.filter(t => t.id !== id),
@@ -342,12 +494,13 @@ export function removeTeacher(id: ID): void {
         : ev.teacherIds.filter(tid => tid !== id),
     })),
   }, { label });
+  deletedToast(name, affected > 0 ? `von ${lektionen(affected)} entfernt` : undefined);
 }
 
 // ─── Room mutations ───────────────────────────────────────────────────────────
 
 export function addRoom(name: string, color: string, excludeFromConflictCheck: boolean): ID {
-  const room: Room = { id: nanoid(), name, color, excludeFromConflictCheck, unavailable: [] };
+  const room: Room = { id: nanoid(), name, shortName: '', color, excludeFromConflictCheck, unavailable: [] };
   setState({ ..._state, rooms: [..._state.rooms, room] }, { label: `${name} hinzufügen` });
   return room.id;
 }
@@ -359,8 +512,19 @@ export function updateRoom(id: ID, patch: Partial<Omit<Room, 'id'>>, opts: Mutat
   }, { label: `${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} bearbeiten`, ...opts });
 }
 
+/** Lektionen booked into this Raum — what a deletion un-rooms. */
+export function eventCountForRoom(id: ID): number {
+  return _state.events.filter(ev =>
+    ev.roomId === 'inherit'
+      ? _state.subjects.find(s => s.id === ev.subjectId)?.defaultRoomId === id
+      : ev.roomId === id,
+  ).length;
+}
+
 export function removeRoom(id: ID): void {
-  const label = `${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} löschen`;
+  const name = _state.rooms.find(r => r.id === id)?.name ?? 'Raum';
+  const label = `${name} löschen`;
+  const affected = eventCountForRoom(id);
   setState({
     ..._state,
     rooms: _state.rooms.filter(r => r.id !== id),
@@ -373,6 +537,7 @@ export function removeRoom(id: ID): void {
       roomId: ev.roomId === id ? 'inherit' : ev.roomId,
     })),
   }, { label });
+  deletedToast(name, affected > 0 ? `${lektionen(affected)} sind jetzt ohne Raum` : undefined);
 }
 
 // ─── Subject mutations ────────────────────────────────────────────────────────
@@ -412,13 +577,21 @@ export function updateSubject(id: ID, patch: Partial<Omit<Subject, 'id'>>, opts:
   }, { label: `${oldSubject?.name ?? 'Thema'} bearbeiten`, ...opts });
 }
 
+/** Placed Lektionen of this Thema — a deletion removes them from the grid. */
+export function eventCountForSubject(id: ID): number {
+  return _state.events.filter(ev => ev.subjectId === id).length;
+}
+
 export function removeSubject(id: ID): void {
-  const label = `${_state.subjects.find(s => s.id === id)?.name ?? 'Thema'} löschen`;
+  const name = _state.subjects.find(s => s.id === id)?.name ?? 'Thema';
+  const label = `${name} löschen`;
+  const affected = eventCountForSubject(id);
   setState({
     ..._state,
     subjects: _state.subjects.filter(s => s.id !== id),
     events: _state.events.filter(ev => ev.subjectId !== id),
   }, { label });
+  deletedToast(name, affected > 0 ? `${lektionen(affected)} mitgelöscht` : undefined);
 }
 
 // ─── Group mutations ──────────────────────────────────────────────────────────
@@ -474,7 +647,9 @@ export function eventCountForGroup(id: ID): number {
 }
 
 export function removeGroup(id: ID): void {
-  const label = `Gruppe ${_state.groups.find(g => g.id === id)?.label ?? ''} löschen`.replace('  ', ' ');
+  const name = `Gruppe ${_state.groups.find(g => g.id === id)?.label ?? ''}`.trim();
+  const label = `${name} löschen`;
+  const affected = eventCountForGroup(id);
   setState({
     ..._state,
     groups: _state.groups.filter(g => g.id !== id),
@@ -483,6 +658,7 @@ export function removeGroup(id: ID): void {
     // lane fewer now. Only events pinned to this lane have nowhere left to be.
     events: _state.events.filter(ev => ev.groupId !== id),
   }, { label });
+  deletedToast(name, affected > 0 ? `${lektionen(affected)} mitgelöscht` : undefined);
 }
 
 // ─── Phase mutations ──────────────────────────────────────────────────────────
@@ -509,12 +685,15 @@ export function eventCountForPhase(id: ID): number {
 }
 
 export function removePhase(id: ID): void {
-  const label = `Phase ${_state.phases.find(p => p.id === id)?.label ?? ''} löschen`.replace('  ', ' ');
+  const name = `Phase ${_state.phases.find(p => p.id === id)?.label ?? ''}`.trim();
+  const label = `${name} löschen`;
+  const affected = eventCountForPhase(id);
   setState({
     ..._state,
     phases: _state.phases.filter(p => p.id !== id),
     subjects: _state.subjects.map(s => (s.phaseId === id ? { ...s, phaseId: null } : s)),
   }, { label });
+  deletedToast(name, affected > 0 ? `${lektionen(affected)} werden nicht mehr angezeigt` : undefined);
 }
 
 // null for anything that isn't a real calendar date. A date input hands back ""
@@ -538,7 +717,7 @@ function snapToMonday(dateStr: string): string | null {
  * and the undo label — out of the config components.
  */
 export function setTeacherUnavailable(id: ID, unavailable: TimeWindow[]): void {
-  updateTeacher(id, { unavailable }, { label: `Abwesenheiten von ${_state.teachers.find(t => t.id === id)?.name ?? 'Gruppenführer'} bearbeiten` });
+  updateTeacher(id, { unavailable }, { label: `Abwesenheiten von ${_state.teachers.find(t => t.id === id)?.name ?? 'Ausbildner'} bearbeiten` });
 }
 
 export function setRoomUnavailable(id: ID, unavailable: TimeWindow[]): void {
@@ -574,4 +753,37 @@ export function setWkStartDate(date: string): void {
   const monday = snapToMonday(date);
   if (!monday || monday === _state.wkStartDate) return;
   setState({ ..._state, wkStartDate: monday }, { label: 'Woche ändern' });
+}
+
+// ─── Export freshness ─────────────────────────────────────────────────────────
+
+/**
+ * Record that the plan has just been written to a file. Deliberately not an undo
+ * entry: it is a fact about the outside world, and taking it back would claim a
+ * file that exists does not.
+ */
+export function markExported(): void {
+  setState(
+    { ..._state, lastExportedAt: new Date().toISOString() },
+    { recordUndo: false, label: 'Plan exportiert' },
+  );
+}
+
+/**
+ * How stale the only copy of this plan is. The week lives in one browser's
+ * localStorage — one "clear site data" from gone — and the app said so exactly
+ * once, on the last tab of a dialog. A plan worth losing is one with real
+ * content, so an almost-empty plan never nags.
+ */
+const EXPORT_REMINDER_DAYS = 3;
+const EXPORT_REMINDER_MIN_EVENTS = 8;
+
+export function exportStaleness(): { stale: boolean; days: number | null } {
+  if (_state.events.length < EXPORT_REMINDER_MIN_EVENTS) return { stale: false, days: null };
+  const last = _state.lastExportedAt;
+  if (last === null) return { stale: true, days: null };
+  const then = Date.parse(last);
+  if (Number.isNaN(then)) return { stale: true, days: null };
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  return { stale: days >= EXPORT_REMINDER_DAYS, days };
 }

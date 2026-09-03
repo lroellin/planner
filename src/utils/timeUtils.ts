@@ -2,7 +2,7 @@ import { ALL_GROUPS, isHardConflict } from '../types';
 import type { AppState, CalendarEvent, EventFilter, Group, ID, Phase, Subject } from '../types';
 import type { EventInput } from '@fullcalendar/core';
 import type { ResourceInput } from '@fullcalendar/resource';
-import { teacherShort } from './format';
+import { roomShort, subjectShort, teacherShort } from './format';
 
 // Weekday labels, 0=Mon … 4=Fri (matches CalendarEvent.dayIndex)
 export const DAY_NAMES = ['Mo', 'Di', 'Mi', 'Do', 'Fr'] as const;
@@ -215,6 +215,8 @@ export interface FCEventTeacher {
 
 export interface FCEventRoom {
   name: string;
+  /** 4–5 characters, so the room survives a narrow lane — see `roomShort`. */
+  shortName: string;
   color: string;
 }
 
@@ -225,6 +227,15 @@ export function dayDateLabel(wkStartDate: string, dayIndex: number): string {
   return `${dt.getDate()}.${dt.getMonth() + 1}.`;
 }
 
+// "7.9.2026" — a stored ISO date shown to a user. The plain ISO string leaked
+// into the import confirm, which is the one place the app names a date the user
+// did not just pick from a date input.
+export function fullDateLabel(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  if (!y || !m || !d) return isoDate;
+  return `${d}.${m}.${y}`;
+}
+
 // Which of the subject's defaults this instance departs from. Drives the
 // "not in the series" marker on the calendar card.
 export function eventOverrides(
@@ -232,7 +243,7 @@ export function eventOverrides(
   subject: Subject | null | undefined,
 ): string[] {
   const out: string[] = [];
-  if (ev.teacherIds !== 'inherit') out.push('Gruppenführer');
+  if (ev.teacherIds !== 'inherit') out.push('Ausbildner');
   if (ev.roomId !== 'inherit') out.push('Raum');
   if (subject && timeDiffMinutes(ev.startTime, ev.endTime) !== subject.defaultDurationMinutes) {
     out.push('Dauer');
@@ -297,7 +308,7 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   const roomId = effectiveRoomId(ev, subject);
   const roomEntity = roomId ? state.rooms.find(r => r.id === roomId) : null;
   const room: FCEventRoom | null = roomEntity
-    ? { name: roomEntity.name, color: roomEntity.color }
+    ? { name: roomEntity.name, shortName: roomShort(roomEntity), color: roomEntity.color }
     : null;
 
   // Multi-group events occupy every lane the rendering phase draws; single-lane
@@ -310,10 +321,20 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   // hue in CSS (which can mix against the current theme's background and give
   // dark mode a different recipe). Saturation is reserved for state — conflict,
   // selection, spotlight — so those can still be seen on a full week's grid.
+  // Does the block start on an hour rule? If it does, the time axis beside it
+  // already says when — printing "08:00" on a card whose top edge *is* the 08:00
+  // line is the one field on the card that carries no information. A block
+  // starting at 08:30 or 15:45 sits between rules and has to say so itself.
+  // Which is what decides whether the time survives a narrow lane; see the width
+  // bands in calendar.css.
+  const startsOnTheHour = ev.startTime.endsWith(':00');
+
   const classNames = [
     'wk-ev',
     `wk-dur-${durationBand(minutes)}`,
-    subject?.isBreak ? 'wk-ev-break' : 'wk-ev-lesson',
+    // A Programmpunkt is a lesson on the grid — same card, its own colour.
+    subject?.kind === 'break' ? 'wk-ev-break' : 'wk-ev-lesson',
+    ...(startsOnTheHour ? [] : ['wk-ev-offgrid']),
     ...(ev.groupId === ALL_GROUPS ? ['wk-ev-multi'] : []),
     ...(hardConflict ? ['wk-ev-hard'] : hasConflict ? ['wk-ev-soft'] : []),
   ];
@@ -329,13 +350,18 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
       eventId: ev.id,
       subjectId: ev.subjectId,
       color,
+      // What the card falls back to in a narrow lane. Resolved here rather than
+      // in eventContent so the renderer never reaches back into the store.
+      shortName: subjectShort(subject),
+      startTime: ev.startTime,
+      endTime: ev.endTime,
       teachers,
       room,
       hasConflict,
       hardConflict,
       conflictKinds: [...kinds],
       minutes,
-      isBreak: subject?.isBreak ?? false,
+      isBreak: subject?.kind === 'break',
       overrides: eventOverrides(ev, subject),
     },
   };

@@ -8,8 +8,9 @@ import type { AppState, CalendarEvent, GroupSelector, Subject, TimeWindow } from
  */
 export function makeState(overrides: Partial<AppState> = {}): AppState {
   return {
-    version: 8,
+    version: 11,
     name: 'Test WK',
+    lastExportedAt: null,
     wkStartDate: '2026-09-07',
     groups: [
       { id: 'k', label: 'K', enabled: true, order: 0 },
@@ -26,13 +27,13 @@ export function makeState(overrides: Partial<AppState> = {}): AppState {
       { id: 't2', name: 'Beat Zwahlen', shortName: 'BZ', color: '#48bb78', unavailable: [] },
     ],
     rooms: [
-      { id: 'r1', name: 'Seminarraum 1', color: '#48bb78', excludeFromConflictCheck: false, unavailable: [] },
-      { id: 'outside', name: 'Outside', color: '#a0aec0', excludeFromConflictCheck: true, unavailable: [] },
+      { id: 'r1', name: 'Seminarraum 1', shortName: '', color: '#48bb78', excludeFromConflictCheck: false, unavailable: [] },
+      { id: 'outside', name: 'Outside', shortName: '', color: '#a0aec0', excludeFromConflictCheck: true, unavailable: [] },
     ],
     subjects: [
       makeSubject({ id: 'lesson', name: 'Karteneröffnung' }),
       makeSubject({ id: 'other', name: 'Materialdienst' }),
-      makeSubject({ id: 'lunch', name: 'Mittagessen', isBreak: true, isMultiGroup: true, defaultRoomId: null }),
+      makeSubject({ id: 'lunch', name: 'Mittagessen', kind: 'break', isMultiGroup: true, defaultRoomId: null }),
     ],
     events: [],
     ...overrides,
@@ -42,11 +43,12 @@ export function makeState(overrides: Partial<AppState> = {}): AppState {
 export function makeSubject(overrides: Partial<Subject> & { id: string }): Subject {
   return {
     name: overrides.id,
+    shortName: '',
     color: '#9f7aea',
     defaultTeacherIds: ['t1'],
     defaultRoomId: 'r1',
     defaultDurationMinutes: 90,
-    isBreak: false,
+    kind: 'lesson',
     isMultiGroup: false,
     phaseId: null,
     content: { goals: [], notes: '' },

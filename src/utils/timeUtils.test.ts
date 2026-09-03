@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   eventGroupIds, eventInPhase, orphanEvents, phaseForDay, buildFCEvents, durationBand,
-  snapToSlot, addMinutesToTime, timeDiffMinutes, eventOverrides,
+  snapToSlot, addMinutesToTime, timeDiffMinutes, eventOverrides, fullDateLabel,
 } from './timeUtils';
 import { getContrastColor } from './colorUtils';
 import { escapeHtml } from './format';
@@ -181,5 +181,19 @@ describe('presentation helpers', () => {
 
   it('escapes user text before it reaches an event card', () => {
     expect(escapeHtml('Karten <b>"x"</b>')).toBe('Karten &lt;b&gt;&quot;x&quot;&lt;/b&gt;');
+  });
+});
+
+describe('fullDateLabel', () => {
+  it('renders a stored ISO date the way a German reader writes one', () => {
+    expect(fullDateLabel('2026-09-07')).toBe('7.9.2026');
+    expect(fullDateLabel('2026-12-14')).toBe('14.12.2026');
+  });
+
+  // The import confirm is the one place the app names a date the user did not
+  // pick from a date input, so a malformed one has to stay readable.
+  it('hands back anything it cannot parse', () => {
+    expect(fullDateLabel('')).toBe('');
+    expect(fullDateLabel('kaputt')).toBe('kaputt');
   });
 });

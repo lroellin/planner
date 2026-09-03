@@ -23,6 +23,13 @@ export interface Teacher {
 export interface Room {
   id: ID;
   name: string;
+  /**
+   * A 4–5 character code for the card, where the full name never fits: a lane is
+   * ~70–130px wide and "Schutzanlage Bern-West" is not going to be in it.
+   * Empty means "derive it" — `roomShort()` builds one from the name — so a
+   * rename keeps the code in step until someone enters a real one.
+   */
+  shortName: string;
   color: string;
   excludeFromConflictCheck: boolean;
   unavailable: TimeWindow[];
@@ -35,9 +42,32 @@ export interface SubjectContent {
   notes: string;     // free text
 }
 
+/**
+ * What a subject *is*, which decides whether coverage applies to it.
+ *
+ * - `lesson`   — a Thema of the rotation: every group owes its full duration.
+ * - `break`    — Mittagessen, Pause. Placed ad hoc, attended by nobody in particular.
+ * - `oneoff`   — a *Programmpunkt*: a fixed point of the programme (Begrüssung,
+ *                Antreten, Schlussrapport) that happens once rather than once per
+ *                group. It has everything a lesson has — teachers, room, colour,
+ *                duration, all-lanes placement — and is simply outside coverage,
+ *                so it never shows up as "fehlt noch bei G2".
+ *
+ * This replaced a boolean `isBreak`: every `!isBreak` test in the app meant
+ * "lesson", and a third kind had to make the compiler visit each of them.
+ */
+export type SubjectKind = 'lesson' | 'break' | 'oneoff';
+
 export interface Subject {
   id: ID;
   name: string;
+  /**
+   * What the card falls back to once its lane is too narrow for the full name
+   * (see the width bands in calendar.css). Empty means "derive it" —
+   * `subjectShort()` cuts the name at its first separator — so renaming a
+   * subject keeps the short form in step until someone enters a real one.
+   */
+  shortName: string;
   color: string;
   defaultTeacherIds: ID[];
   defaultRoomId: ID | null;
@@ -48,7 +78,7 @@ export interface Subject {
    * placed minutes against this.
    */
   defaultDurationMinutes: number;
-  isBreak: boolean;
+  kind: SubjectKind;
   isMultiGroup: boolean; // if true, placing schedules it for every lane of the phase at once
   // Which phase this subject is rotated through. null = infer from where it is
   // placed. Setting it makes coverage exact for subjects that belong to one
@@ -110,7 +140,7 @@ export const HARD_CONFLICT_KINDS: ConflictKind[] = ['teacher', 'group', 'teacher
  * the card tooltip both name the same thing and had no reason to disagree.
  */
 export const CONFLICT_KIND_LABELS: Record<ConflictKind, string> = {
-  teacher: 'Gruppenführer',
+  teacher: 'Ausbildner',
   room: 'Raum',
   group: 'Gruppe',
   'teacher-absent': 'Abwesend',
@@ -150,6 +180,13 @@ export interface AppState {
   version: number;
   /** Names the plan in the toolbar, the printed reports and the export file. */
   name: string;
+  /**
+   * When the plan was last written to a file, as an ISO timestamp; null while it
+   * has never been exported. The plan lives in one browser's localStorage, which
+   * is one "clear site data" away from gone — so the app has to be able to say
+   * how long it has been since there was a copy of it anywhere else.
+   */
+  lastExportedAt: string | null;
   wkStartDate: string;  // "YYYY-MM-DD", always a Monday
   teachers: Teacher[];
   rooms: Room[];

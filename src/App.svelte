@@ -10,6 +10,7 @@
   import SidePanel from './components/SidePanel.svelte';
   import ReportPanel from './components/ReportPanel.svelte';
   import ShortcutsDialog from './components/ShortcutsDialog.svelte';
+  import PlaceDialog from './components/PlaceDialog.svelte';
   import Toasts from './components/Toasts.svelte';
   import Icon from './components/Icon.svelte';
   import {
@@ -18,6 +19,9 @@
   import {
     getQuickEdit, closeQuickEdit, getSelectedEventId, getSelectedEventIds, setSelection,
     clearSelection, getDensity, slotHeight, suppressNextDateClick,
+    getPlaceRequest, clearPlaceRequest, getConfigRequest, clearConfigRequest, requestConfig,
+    getReportRequest, clearReportRequest,
+    type ConfigTab,
   } from './state/ui.svelte';
   import {
     phaseGroups, phaseDayCount, addMinutesToTime, timeDiffMinutes, clampDayIndex, orderedPhases,
@@ -29,6 +33,8 @@
   let reportOpen = $state(false);
   let shortcutsOpen = $state(false);
   let reportTab = $state<ReportTab>('coverage');
+  /** Preselects the report's own teacher/room dropdown when it was asked for. */
+  let reportFilterId = $state<ID | null>(null);
   let sidebarOpen = $state(true);
   // Collapsed by default: the rail keeps the issue badge in view, and the grid
   // is what you open the app to look at.
@@ -44,6 +50,9 @@
   // nowhere. Every badge in the app reads this same number.
   const conflictCount = $derived(getIssueCount());
   const hasEvents = $derived(getState().events.length > 0);
+  // A fresh plan ships only the two Pausen, so "drag a Thema from the sidebar"
+  // was an instruction with nothing to carry it out.
+  const hasLessons = $derived(getState().subjects.some(s => s.kind === 'lesson'));
   const quickEdit = $derived(getQuickEdit());
   const selectedIds = $derived(getSelectedEventIds());
 
@@ -90,6 +99,47 @@
     reportTab = tab;
     reportOpen = true;
   }
+
+  // ─── Cross-panel requests ──────────────────────────────────────────────────
+  // A gap named in the coverage report, a sidebar chip, the first-run call to
+  // action: all three want the same two dialogs, so they post a request and this
+  // owns the opening. The report is closed on the way — the placement dialog
+  // would otherwise open behind a full-screen overlay.
+
+  let placing = $state<{ subjectId: ID; groupId?: ID; dayIndex?: number } | null>(null);
+  let configTab = $state<ConfigTab | null>(null);
+  let configCreateSubject = $state(false);
+
+  $effect(() => {
+    const request = getPlaceRequest();
+    if (!request) return;
+    request.token;
+    reportOpen = false;
+    placing = { subjectId: request.subjectId, groupId: request.groupId, dayIndex: request.dayIndex };
+    clearPlaceRequest();
+  });
+
+  $effect(() => {
+    const request = getConfigRequest();
+    if (!request) return;
+    request.token;
+    configTab = request.tab;
+    configCreateSubject = request.createSubject === true;
+    configOpen = true;
+    clearConfigRequest();
+  });
+
+  // Config hands off to the report that lists what its panes only count.
+  $effect(() => {
+    const request = getReportRequest();
+    if (!request) return;
+    request.token;
+    configOpen = false;
+    reportTab = request.tab;
+    reportFilterId = request.filterId ?? null;
+    reportOpen = true;
+    clearReportRequest();
+  });
 
   // ─── Keyboard editing on the grid ──────────────────────────────────────────
   // The selected cards can be nudged without reaching for the mouse: this is the
@@ -146,7 +196,7 @@
           updateEvents(ids, ev => {
             const minutes = Math.max(15, timeDiffMinutes(ev.startTime, ev.endTime) + delta);
             return { endTime: addMinutesToTime(ev.startTime, minutes) };
-          }, 'in der Dauer ändern');
+          }, 'Dauer ändern');
         } else {
           updateEvents(ids, ev => {
             const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
@@ -342,7 +392,7 @@
   </div>
 
   <div class="main-area">
-    <SidePanel side="left" bind:open={sidebarOpen} label="Themen" width="208px">
+    <SidePanel side="left" bind:open={sidebarOpen} label="Themen" width="240px">
       <Sidebar />
     </SidePanel>
 
@@ -375,19 +425,42 @@
             </div>
           {/each}
         {/key}
-
-        {#if !hasEvents}
-          <div class="empty-hint" aria-hidden="true">
-            <Icon name="arrowLeft" size={20} />
-            <div>Ein Thema aus der Seitenleiste auf den Kalender ziehen, oder ein leeres Feld anklicken.</div>
-          </div>
-        {/if}
       </div>
+
+      {#if !hasEvents}
+        <!-- Anchored at the sidebar edge rather than centred in the WK phase,
+             where a lone ← pointing across 1200px read as a caption for the
+             Mi/Do columns. -->
+        <div class="empty-hint">
+          {#if hasLessons}
+            <Icon name="arrowLeft" size={18} />
+            <div>Ein Thema aus der Seitenleiste auf den Kalender ziehen, oder ein leeres Feld anklicken.</div>
+          {:else}
+            <div class="empty-title">Noch keine Themen</div>
+            <div>Themen sind das, was auf den Kalender gezogen wird. Für diesen WK ist noch keines erfasst.</div>
+            <button class="empty-cta" onclick={() => requestConfig('subjects', { createSubject: true })}>
+              <Icon name="plus" size={14} /> Erstes Thema anlegen
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
 
-    <SidePanel side="right" bind:open={conflictsOpen} label="Konflikte" width="268px" badge={conflictCount}>
-      <ConflictPanel bind:selectedEventId />
-    </SidePanel>
+    <!-- The dock keeps the collapsed rail's 40px in the flex row; the panel
+         itself floats out of it over the calendar when open, so the grid never
+         reflows for it. -->
+    <div class="right-dock">
+      <SidePanel
+        side="right"
+        bind:open={conflictsOpen}
+        label="Konflikte"
+        width="268px"
+        badge={conflictCount}
+        overlay
+      >
+        <ConflictPanel bind:selectedEventId />
+      </SidePanel>
+    </div>
   </div>
 </div>
 
@@ -422,6 +495,13 @@
       <Icon name="trash" size={13} /> Löschen
     </button>
     <button class="selbar-btn" onclick={clearSelection}>Aufheben</button>
+    <div class="selbar-sep"></div>
+    <!-- The only contextual place these are taught. The shortcut sheet lists
+         them, but its button lives in the "⋯" menu below 1360px and nothing
+         else in the app mentions that a selection can be nudged at all. -->
+    <span class="selbar-keys">
+      <kbd>↑↓</kbd> 15 min · <kbd>←→</kbd> Tag
+    </span>
   </div>
 {/if}
 
@@ -437,15 +517,32 @@
 {/if}
 
 {#if configOpen}
-  <ConfigPanel onclose={() => (configOpen = false)} />
+  <ConfigPanel
+    initialTab={configTab}
+    createSubject={configCreateSubject}
+    onclose={() => { configOpen = false; configTab = null; configCreateSubject = false; }}
+  />
 {/if}
 
 {#if reportOpen}
-  <ReportPanel tab={reportTab} onclose={() => (reportOpen = false)} />
+  <ReportPanel
+    tab={reportTab}
+    filterId={reportFilterId}
+    onclose={() => { reportOpen = false; reportFilterId = null; }}
+  />
 {/if}
 
 {#if shortcutsOpen}
   <ShortcutsDialog onclose={() => (shortcutsOpen = false)} />
+{/if}
+
+{#if placing}
+  <PlaceDialog
+    subjectId={placing.subjectId}
+    groupId={placing.groupId}
+    dayIndex={placing.dayIndex}
+    onclose={() => (placing = null)}
+  />
 {/if}
 
 <Toasts />
@@ -483,7 +580,20 @@
     min-height: 0;
   }
 
+  .right-dock {
+    position: relative;
+    width: 40px;
+    flex-shrink: 0;
+  }
+
+  /* The dock is the positioning context, so the panel inside it no longer
+     stretches as a flex child of .main-area and has to be told to fill it. */
+  .right-dock > :global(.side-panel) {
+    height: 100%;
+  }
+
   .calendar-wrapper {
+    position: relative;
     flex: 1;
     min-width: 0;
     display: flex;
@@ -575,6 +685,34 @@
     border-radius: 999px;
     box-shadow: var(--wk-shadow-2);
     font-size: var(--wk-fs-xs);
+    /* The toast directly below rises in; this used to appear in one frame, so
+       the pair read as two unrelated mechanisms. */
+    animation: selbar-in 0.12s ease-out;
+  }
+
+  @keyframes selbar-in {
+    from { opacity: 0; transform: translate(-50%, 6px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+  }
+
+  .selbar-keys {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--wk-text-faint);
+    font-size: var(--wk-fs-2xs);
+    white-space: nowrap;
+  }
+
+  .selbar-keys kbd {
+    font-family: inherit;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid var(--wk-line);
+    border-radius: 3px;
+    background: var(--wk-surface-alt);
+    color: var(--wk-text-mute);
   }
 
   .selbar-count {
@@ -612,24 +750,54 @@
     background: color-mix(in oklab, var(--color-error) 12%, transparent);
   }
 
+  /* Beside the sidebar it refers to, not centred three phases away. Above the
+     grid rather than behind it: the block now overlaps real columns, where the
+     old centred position happened to sit on empty space. */
   .empty-hint {
     position: absolute;
-    top: 34%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    pointer-events: none;
-    text-align: center;
+    z-index: 5;
+    /* Anchored to the wrapper, not the scroller: inside the scroller it moved
+       with the grid and slid up under the sticky day headers. */
+    top: 7.5rem;
+    left: calc(var(--wk-axis-w) + 1.25rem);
     color: var(--wk-text-faint);
     font-size: var(--wk-fs-sm);
-    padding: 1.25rem 1.75rem;
-    background: color-mix(in oklab, var(--color-base-100) 92%, transparent);
+    line-height: 1.5;
+    padding: 1.1rem 1.35rem;
+    background: var(--wk-surface);
+    box-shadow: var(--wk-shadow-2);
     border-radius: var(--wk-r-md);
-    border: 1.5px dashed var(--wk-line);
+    border: 1.5px dashed var(--wk-line-strong);
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+    max-width: 320px;
+  }
+
+  .empty-title {
+    font-size: var(--wk-fs-md);
+    font-weight: 650;
+    color: var(--wk-text);
+  }
+
+  .empty-cta {
+    display: flex;
     align-items: center;
-    gap: 0.5rem;
-    max-width: 300px;
+    gap: 0.4rem;
+    padding: 0.4rem 0.7rem;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: var(--color-primary);
+    color: var(--color-primary-content);
+    font-size: var(--wk-fs-sm);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .empty-cta:hover { filter: brightness(1.07); }
+  .empty-cta:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   /* Printing the grid is a question of unclipping, not of relayout: every flex
@@ -647,7 +815,8 @@
 
     .toolbar-wrapper,
     .selbar,
-    .marquee {
+    .marquee,
+    .right-dock {
       display: none !important;
     }
 

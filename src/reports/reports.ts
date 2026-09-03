@@ -21,6 +21,15 @@ export interface CoverageRow {
   uneven: boolean;
   /** Every group has some of it, but at least one lane is under the duration. */
   short: boolean;
+  /**
+   * At least one lane has *more* than the subject's duration. Distinct from
+   * `uneven`, which can only ever see a difference *between* lanes: a phase with
+   * one lane has nothing to differ from, so a Kader subject planned for 6 h
+   * against a Soll of 3 h read as complete, and so did a subject placed at
+   * double its duration in every lane. Over-planning is a mistake whether or not
+   * it was made evenly.
+   */
+  over: boolean;
 }
 
 export interface CoverageSection {
@@ -31,11 +40,16 @@ export interface CoverageSection {
 }
 
 /** How a row reads at a glance. One definition, used by the report and the sidebar. */
-export type CoverageStatus = 'missing' | 'short' | 'uneven' | 'complete';
+export type CoverageStatus = 'missing' | 'short' | 'over' | 'uneven' | 'complete';
 
-export function coverageStatus(row: Pick<CoverageRow, 'missing' | 'short' | 'uneven'>): CoverageStatus {
+export function coverageStatus(
+  row: Pick<CoverageRow, 'missing' | 'short' | 'uneven' | 'over'>,
+): CoverageStatus {
   if (row.missing > 0) return 'missing';
   if (row.short) return 'short';
+  // Before `uneven`: when both hold, "zu viel" names the amount that is wrong,
+  // where "ungleich" only names the spread.
+  if (row.over) return 'over';
   if (row.uneven) return 'uneven';
   return 'complete';
 }
@@ -101,9 +115,11 @@ export function buildCoverage(state: AppState): CoverageSection[] {
   return state.phases.map(phase => {
     const groupIds = phaseGroups(state, phase).map(g => g.id);
 
-    // Breaks are placed ad hoc rather than "attended", so they are not part of coverage.
+    // Only Themen are "owed" by every lane. Pausen are placed ad hoc rather than
+    // attended, and a Programmpunkt happens once for the whole course — neither
+    // has a per-group Soll to measure against.
     const rows: CoverageRow[] = sortSubjects(state.subjects)
-      .filter(s => !s.isBreak)
+      .filter(s => s.kind === 'lesson')
       .filter(s => subjectPhases(state, s.id).some(p => p.id === phase.id))
       .map(subject => {
         const tally = tallyLanes(state, subject.id, phase);
@@ -114,11 +130,12 @@ export function buildCoverage(state: AppState): CoverageSection[] {
         const missing = groupIds.filter(id => counts.get(id) === 0).length;
         const totals = groupIds.map(id => minutes.get(id) ?? 0);
         const short = missing === 0 && totals.some(m => m < target);
+        const over = missing === 0 && !short && totals.some(m => m > target);
         const uneven =
           missing === 0 && !short && totals.length > 1 &&
           Math.max(...totals) !== Math.min(...totals);
 
-        return { subject, counts, minutes, target, missing, uneven, short };
+        return { subject, counts, minutes, target, missing, uneven, short, over };
       });
 
     return { phase, rows, groupIds, totalMissing: rows.reduce((n, r) => n + r.missing, 0) };
@@ -134,13 +151,19 @@ export function buildCoverage(state: AppState): CoverageSection[] {
 export function coverageForSubject(
   state: AppState,
   subjectId: ID,
-): { placed: number; total: number; uneven: boolean; short: boolean } {
+): { placed: number; total: number; uneven: boolean; short: boolean; over: boolean } {
   const subject = state.subjects.find(s => s.id === subjectId);
-  const target = subject?.defaultDurationMinutes ?? 0;
+  // Only a Thema is owed by every lane; a Pause or a Programmpunkt has nothing
+  // to be short of, so the badge has nothing to say about it.
+  if (!subject || subject.kind !== 'lesson') {
+    return { placed: 0, total: 0, uneven: false, short: false, over: false };
+  }
+  const target = subject.defaultDurationMinutes;
   let placed = 0;
   let total = 0;
   let uneven = false;
   let short = false;
+  let over = false;
 
   for (const phase of subjectPhases(state, subjectId)) {
     const groups = phaseGroups(state, phase);
@@ -153,10 +176,11 @@ export function coverageForSubject(
 
     if (totals.some(m => m === 0)) continue;
     if (totals.some(m => m < target)) short = true;
+    else if (totals.some(m => m > target)) over = true;
     else if (totals.length > 1 && Math.max(...totals) !== Math.min(...totals)) uneven = true;
   }
 
-  return { placed, total, uneven, short };
+  return { placed, total, uneven, short, over };
 }
 
 /**
@@ -167,7 +191,8 @@ export function coverageForSubject(
  */
 export function missingLanesForSubject(state: AppState, subjectId: ID): string[] {
   const subject = state.subjects.find(s => s.id === subjectId);
-  const target = subject?.defaultDurationMinutes ?? 0;
+  if (!subject || subject.kind !== 'lesson') return [];
+  const target = subject.defaultDurationMinutes;
   const labels: string[] = [];
   for (const phase of subjectPhases(state, subjectId)) {
     const tally = tallyLanes(state, subjectId, phase);
@@ -180,6 +205,28 @@ export function missingLanesForSubject(state: AppState, subjectId: ID): string[]
     }
   }
   return labels;
+}
+
+/**
+ * The same answer as `missingLanesForSubject`, as lane ids within one phase —
+ * what the grid needs to mark the headers of the lanes that still owe a subject
+ * while its sidebar chip is spotlighted. Labels are for reading; a calendar
+ * column is addressed by id, and the two phases have different lanes.
+ */
+export function missingLaneIdsForSubject(state: AppState, subjectId: ID, phase: Phase): ID[] {
+  const subject = state.subjects.find(s => s.id === subjectId);
+  if (!subject || subject.kind !== 'lesson') return [];
+  // A Kader subject is not owed by the group lanes, and vice versa.
+  if (!subjectPhases(state, subjectId).some(p => p.id === phase.id)) return [];
+
+  const target = subject.defaultDurationMinutes;
+  const tally = tallyLanes(state, subjectId, phase);
+  return phaseGroups(state, phase)
+    .filter(group => {
+      const lane = tally.get(group.id) ?? { count: 0, minutes: 0 };
+      return lane.count === 0 || lane.minutes < target;
+    })
+    .map(group => group.id);
 }
 
 // ─── Workload ─────────────────────────────────────────────────────────────────
@@ -404,7 +451,8 @@ export function buildGroupPlans(state: AppState): GroupPlan[] {
         .filter((e): e is ScheduleEntry => e !== null)
         .sort(byTime);
 
-      const lessons = entries.filter(e => !e.subject.isBreak);
+      // Programmpunkte count: a Begrüssung is time the group is occupied.
+      const lessons = entries.filter(e => e.subject.kind !== 'break');
       return {
         group,
         entries,

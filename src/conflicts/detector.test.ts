@@ -201,7 +201,7 @@ describe('availability', () => {
   it('flags a blocked room even when it is excluded from double-booking checks', () => {
     const state = makeState({
       rooms: [
-        { id: 'outside', name: 'Outside', color: '#a0aec0', excludeFromConflictCheck: true,
+        { id: 'outside', name: 'Outside', shortName: '', color: '#a0aec0', excludeFromConflictCheck: true,
           unavailable: [makeWindow([2])] },
       ],
       subjects: [makeSubject({ id: 'lesson', defaultTeacherIds: [], defaultRoomId: 'outside' })],

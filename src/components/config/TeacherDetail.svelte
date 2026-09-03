@@ -6,6 +6,7 @@
   import ColorPicker from './ColorPicker.svelte';
   import AvailabilityEditor from './AvailabilityEditor.svelte';
   import Icon from '../Icon.svelte';
+  import { requestReport } from '../../state/ui.svelte';
   import type { Teacher, TimeWindow } from '../../types';
 
   interface Props {
@@ -34,8 +35,10 @@
     setTeacherUnavailable(teacher.id, unavailable);
   }
 
+  // No confirm: `removeTeacher` is one undoable `setState`, and its toast names
+  // the count ("von 10 Lektionen entfernt") with a Rückgängig beside it — which
+  // the OS dialog could neither do nor be undone from.
   function remove(): void {
-    if (!window.confirm(`«${teacher.name}» löschen?\nEr wird von allen Lektionen entfernt.`)) return;
     const index = getState().teachers.findIndex(t => t.id === teacher.id);
     removeTeacher(teacher.id);
     ondeleted(index);
@@ -88,14 +91,26 @@
   <AvailabilityEditor
     windows={view.unavailable}
     onchange={setWindows}
-    title="Abwesend"
-    emptyText="Die ganze Woche da. Unten einen Tag hinzufügen, wenn das nicht stimmt."
-    hint="Eine Lektion während einer Abwesenheit ist ein harter Konflikt — genau wie an zwei Orten gleichzeitig zu sein."
+    title="Abwesenheiten"
+    emptyText="Die ganze Woche anwesend. Fehlt jemand an einem Tag, unten hinzufügen."
+    hint="Eine Lektion in einer Abwesenheit ist ein harter Konflikt, wie eine Doppelbuchung."
     notePlaceholder="Grund (optional) — z. B. Kurs in Schwarzenburg"
   />
 
   <section class="usage">
-    <h4 class="section-title">Pensum diese Woche</h4>
+    <!-- The count used to be a dead end: a number with no way through to what it
+         counts, while the conflict panel next door has had "im Kalender zeigen"
+         all along. -->
+    <div class="usage-head">
+      <h4 class="section-title">Pensum diese Woche</h4>
+      {#if load.count > 0}
+        <button
+          type="button"
+          class="usage-link"
+          onclick={() => requestReport('teachers', teacher.id)}
+        >Plan öffnen <Icon name="chevronRight" size={12} /></button>
+      {/if}
+    </div>
     <div class="wk-stat-row">
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{load.count}</span>
@@ -103,7 +118,7 @@
       </div>
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{formatDuration(load.minutes)}</span>
-        <span class="wk-stat-label">vor einer Gruppe</span>
+        <span class="wk-stat-label">Unterricht</span>
       </div>
       <div class="wk-stat">
         <span class="wk-stat-value">
@@ -114,7 +129,7 @@
     </div>
     {#if load.subjects.length > 0}
       <p class="usage-note">
-        Vorgegebener Gruppenführer für
+        Als Vorgabe hinterlegt bei:
         {#each load.subjects as s, i (s.id)}<span class="usage-subject"><span
           class="usage-dot" style="background:{s.color}"></span>{s.name}</span>{i < load.subjects.length - 1 ? ', ' : ''}{/each}
       </p>
@@ -125,7 +140,7 @@
 
   <div class="detail-footer">
     <button type="button" class="btn btn-ghost btn-sm text-error gap-1.5" onclick={remove}>
-      <Icon name="trash" size={13} /> Gruppenführer löschen
+      <Icon name="trash" size={13} /> Ausbildner löschen
     </button>
   </div>
 </div>

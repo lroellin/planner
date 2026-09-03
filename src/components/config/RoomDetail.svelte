@@ -5,6 +5,8 @@
   import ColorPicker from './ColorPicker.svelte';
   import AvailabilityEditor from './AvailabilityEditor.svelte';
   import Icon from '../Icon.svelte';
+  import { requestReport } from '../../state/ui.svelte';
+  import { roomShort } from '../../utils/format';
   import type { Room, TimeWindow } from '../../types';
 
   interface Props {
@@ -29,8 +31,8 @@
     setRoomUnavailable(room.id, unavailable);
   }
 
+  // See TeacherDetail: undoable, so it is announced rather than asked about.
   function remove(): void {
-    if (!window.confirm(`«${room.name}» löschen?\nLektionen verlieren ihre Raumzuteilung.`)) return;
     const index = getState().rooms.findIndex(r => r.id === room.id);
     removeRoom(room.id);
     ondeleted(index);
@@ -61,11 +63,28 @@
       </div>
     </div>
 
+    <!-- The one field on a card that had no short form, so a narrow lane simply
+         dropped it — leaving a colour swatch and nothing that names the place. -->
+    <div class="form-field">
+      <span class="field-label">Kürzel <span class="field-label-note">(erscheint auf den Karten)</span></span>
+      <input
+        class="input input-bordered input-sm w-32"
+        type="text"
+        maxlength="6"
+        value={view.shortName}
+        placeholder={roomShort({ name: view.name, shortName: '' })}
+        onchange={(e) => set({ shortName: (e.currentTarget as HTMLInputElement).value })}
+      />
+      <span class="field-hint">
+        Leer lassen: dann wird es aus dem Namen abgeleitet und folgt einer Umbenennung.
+      </span>
+    </div>
+
     <label class="option-row">
       <span class="option-text">
         <span class="option-title">Konflikte ignorieren</span>
         <span class="option-desc">
-          Zwei Gruppen dürfen hier gleichzeitig gebucht sein, ohne gemeldet zu werden. Für geteilte
+          Zwei Gruppen dürfen hier gleichzeitig gebucht sein, ohne dass das gemeldet wird. Für geteilte
           Flächen wie «draussen». Die Sperrzeiten unten gelten trotzdem.
         </span>
       </span>
@@ -81,14 +100,24 @@
   <AvailabilityEditor
     windows={view.unavailable}
     onchange={setWindows}
-    title="Gesperrt"
-    emptyText="Die ganze Woche frei. Unten einen Tag hinzufügen, wenn das nicht stimmt."
+    title="Sperrzeiten"
+    emptyText="Die ganze Woche verfügbar. Ist der Raum an einem Tag belegt, unten hinzufügen."
     hint="Eine Lektion in einer Sperrzeit wird als weicher Konflikt gemeldet, wie eine Doppelbelegung."
     notePlaceholder="Grund (optional) — z. B. belegt durch Feuerwehr"
   />
 
   <section class="usage">
-    <h4 class="section-title">Belegung diese Woche</h4>
+    <!-- Same as the Ausbildner pane: the count leads to what it counts. -->
+    <div class="usage-head">
+      <h4 class="section-title">Belegung diese Woche</h4>
+      {#if usage.count > 0}
+        <button
+          type="button"
+          class="usage-link"
+          onclick={() => requestReport('rooms', room.id)}
+        >Plan öffnen <Icon name="chevronRight" size={12} /></button>
+      {/if}
+    </div>
     <div class="wk-stat-row">
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{usage.count}</span>
@@ -96,12 +125,12 @@
       </div>
       <div class="wk-stat">
         <span class="wk-stat-value wk-num">{formatDuration(usage.minutes)}</span>
-        <span class="wk-stat-label">in Gebrauch</span>
+        <span class="wk-stat-label">belegt</span>
       </div>
     </div>
     {#if usage.subjects.length > 0}
       <p class="usage-note">
-        Vorgegebener Raum für
+        Als Vorgabe hinterlegt bei:
         {#each usage.subjects as s, i (s.id)}<span class="usage-subject"><span
           class="usage-dot" style="background:{s.color}"></span>{s.name}</span>{i < usage.subjects.length - 1 ? ', ' : ''}{/each}
       </p>

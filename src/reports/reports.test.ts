@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { buildCoverage, coverageForSubject, coverageStatus, subjectPhases, buildTeacherPlans } from './reports';
-import { ALL, makeEvent, makeState } from '../test/fixtures';
+import {
+  buildCoverage, coverageForSubject, coverageStatus, subjectPhases, buildTeacherPlans,
+  missingLanesForSubject, buildGroupPlans,
+} from './reports';
+import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
 
 describe('subjectPhases', () => {
   it('honours an explicitly pinned phase even before anything is placed', () => {
@@ -22,6 +25,45 @@ describe('subjectPhases', () => {
   });
 });
 
+describe('Programmpunkte', () => {
+  /** A Begrüssung on Wednesday morning for G1, and nothing else of it. */
+  function withOneOff() {
+    const base = makeState();
+    return makeState({
+      subjects: [...base.subjects, makeSubject({ id: 'welcome', name: 'Begrüssung', kind: 'oneoff' })],
+      events: [makeEvent({ subjectId: 'welcome', groupId: 'g1', dayIndex: 2 })],
+    });
+  }
+
+  it('never appears in coverage, however few lanes have it', () => {
+    const state = withOneOff();
+    for (const section of buildCoverage(state)) {
+      expect(section.rows.map(r => r.subject.id)).not.toContain('welcome');
+    }
+  });
+
+  it('gives the sidebar chip nothing to be missing', () => {
+    const state = withOneOff();
+    expect(coverageForSubject(state, 'welcome'))
+      .toEqual({ placed: 0, total: 0, uneven: false, short: false, over: false });
+    expect(missingLanesForSubject(state, 'welcome')).toEqual([]);
+  });
+
+  it('leaves the Themen around it measured exactly as before', () => {
+    const state = withOneOff();
+    expect(coverageForSubject(state, 'lesson'))
+      .toEqual({ placed: 0, total: 3, uneven: false, short: false, over: false });
+  });
+
+  it('still counts as time the group is occupied in its own plan', () => {
+    // Unlike a Pause: a Begrüssung is instruction time, it is just not owed.
+    const plan = buildGroupPlans(withOneOff()).find(p => p.group.id === 'g1')!;
+    expect(plan.entries.map(e => e.subject.id)).toEqual(['welcome']);
+    expect(plan.lessonCount).toBe(1);
+    expect(plan.lessonMinutes).toBe(90);
+  });
+});
+
 describe('coverage', () => {
   it('counts a pinned Kader subject against the Kader lane, not the group lanes', () => {
     const base = makeState();
@@ -34,7 +76,7 @@ describe('coverage', () => {
 
     expect(kader.rows.map(r => r.subject.id)).toContain('lesson');
     expect(gruppen.rows.map(r => r.subject.id)).not.toContain('lesson');
-    expect(coverageForSubject(state, 'lesson')).toEqual({ placed: 0, total: 1, uneven: false, short: false });
+    expect(coverageForSubject(state, 'lesson')).toEqual({ placed: 0, total: 1, uneven: false, short: false, over: false });
   });
 
   it('counts one lane per placement and reports what is still missing', () => {
@@ -44,7 +86,7 @@ describe('coverage', () => {
         makeEvent({ groupId: 'g2', dayIndex: 3 }),
       ],
     });
-    expect(coverageForSubject(state, 'lesson')).toEqual({ placed: 2, total: 3, uneven: false, short: false });
+    expect(coverageForSubject(state, 'lesson')).toEqual({ placed: 2, total: 3, uneven: false, short: false, over: false });
 
     const gruppen = buildCoverage(state).find(s => s.phase.id === 'gruppen')!;
     const row = gruppen.rows.find(r => r.subject.id === 'lesson')!;
@@ -76,11 +118,11 @@ describe('coverage', () => {
     expect(row.short).toBe(true);
     expect(coverageStatus(row)).toBe('short');
     expect(coverageForSubject(state, 'lesson')).toEqual({
-      placed: 3, total: 3, uneven: false, short: true,
+      placed: 3, total: 3, uneven: false, short: true, over: false,
     });
   });
 
-  it('calls a lane that got more time than the subject asks for uneven', () => {
+  it('calls a lane that got more time than the subject asks for over-planned', () => {
     const state = makeState({
       events: [
         makeEvent({ groupId: 'g1', dayIndex: 2 }),
@@ -94,12 +136,57 @@ describe('coverage', () => {
       .find(r => r.subject.id === 'lesson')!;
 
     expect(row.short).toBe(false); // everyone has at least the full duration
-    expect(row.uneven).toBe(true); // but G1 has twice it
-    expect(coverageStatus(row)).toBe('uneven');
+    expect(row.uneven).toBe(true); // the lanes differ …
+    expect(row.over).toBe(true);   // … because G1 has twice the duration
+    // "zu viel" names the amount that is wrong; "ungleich" only names the spread.
+    expect(coverageStatus(row)).toBe('over');
     // The sidebar counter has to reach the same verdict as the report.
     expect(coverageForSubject(state, 'lesson')).toEqual({
-      placed: 3, total: 3, uneven: true, short: false,
+      placed: 3, total: 3, uneven: false, short: false, over: true,
     });
+  });
+
+  it('sees over-planning in a single-lane phase, where nothing can be uneven', () => {
+    // `uneven` compares lanes against each other, so it is structurally blind in
+    // a one-lane phase: a Kader subject planned for twice its Soll used to read
+    // as complete, which is the one verdict the report exists to not give.
+    const state = makeState({
+      events: [
+        makeEvent({ groupId: 'k', dayIndex: 0 }),                                       // 90
+        makeEvent({ groupId: 'k', dayIndex: 1, startTime: '13:00', endTime: '14:30' }), // + 90
+      ],
+      subjects: makeState().subjects.map(s =>
+        s.id === 'lesson' ? { ...s, phaseId: 'kader' } : s,
+      ),
+    });
+    const row = buildCoverage(state)
+      .find(s => s.phase.id === 'kader')!.rows
+      .find(r => r.subject.id === 'lesson')!;
+
+    expect(row.minutes.get('k')).toBe(180); // against a target of 90
+    expect(row.uneven).toBe(false);         // one lane: nothing to differ from
+    expect(row.over).toBe(true);
+    expect(coverageStatus(row)).toBe('over');
+    expect(coverageForSubject(state, 'lesson')).toEqual({
+      placed: 1, total: 1, uneven: false, short: false, over: true,
+    });
+  });
+
+  it('does not call an evenly over-planned subject complete', () => {
+    // Every lane at double the duration: max === min, so `uneven` sees nothing.
+    const state = makeState({
+      events: ['g1', 'g2', 'g3'].flatMap(groupId => [
+        makeEvent({ groupId, dayIndex: 2 }),
+        makeEvent({ groupId, dayIndex: 3, startTime: '13:00', endTime: '14:30' }),
+      ]),
+    });
+    const row = buildCoverage(state)
+      .find(s => s.phase.id === 'gruppen')!.rows
+      .find(r => r.subject.id === 'lesson')!;
+
+    expect(row.uneven).toBe(false);
+    expect(row.over).toBe(true);
+    expect(coverageStatus(row)).toBe('over');
   });
 
   it('leaves breaks out of coverage entirely', () => {

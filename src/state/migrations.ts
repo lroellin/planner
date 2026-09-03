@@ -75,11 +75,78 @@ export function migrate_v7_to_v8(state: any): any {
   };
 }
 
+/**
+ * v8 → v9: `subject.shortName`, what a card shows once its lane is too narrow
+ * for the full name. Seeded empty rather than derived, so the fallback stays
+ * live and follows a rename until someone types a real short name.
+ */
+export function migrate_v8_to_v9(state: any): any {
+  return {
+    ...state,
+    version: 9,
+    subjects: (state.subjects ?? []).map((s: any) => ({
+      ...s,
+      shortName: typeof s.shortName === 'string' ? s.shortName : '',
+    })),
+  };
+}
+
+/**
+ * v9 → v10: `lastExportedAt`, so the app can tell how long the plan has existed
+ * only inside this one browser. Seeded null rather than "now": an existing plan
+ * genuinely has never been exported, and claiming otherwise would suppress the
+ * first reminder for exactly the plans that most need it.
+ */
+export function migrate_v9_to_v10(state: any): any {
+  return {
+    ...state,
+    version: 10,
+    lastExportedAt: typeof state.lastExportedAt === 'string' ? state.lastExportedAt : null,
+  };
+}
+
+/**
+ * v10 → v11: `room.shortName`, the 4–5 character code a card shows where the
+ * full name cannot fit. Seeded empty, like `subject.shortName`, so the derived
+ * form stays live and follows a rename.
+ */
+export function migrate_v10_to_v11(state: any): any {
+  return {
+    ...state,
+    version: 11,
+    rooms: (state.rooms ?? []).map((r: any) => ({
+      ...r,
+      shortName: typeof r.shortName === 'string' ? r.shortName : '',
+    })),
+  };
+}
+
+/**
+ * v11 → v12: `subject.kind` replaces the boolean `subject.isBreak`, making room
+ * for a third kind — the *Programmpunkt*, a fixed point of the programme that
+ * happens once instead of once per group and is therefore outside coverage.
+ * Nothing existing can be one, so every old subject is a Thema or a Pause.
+ */
+export function migrate_v11_to_v12(state: any): any {
+  return {
+    ...state,
+    version: 12,
+    subjects: (state.subjects ?? []).map(({ isBreak, ...s }: any) => ({
+      ...s,
+      kind: isBreak === true ? 'break' : 'lesson',
+    })),
+  };
+}
+
 /** Keyed by the version each step migrates *from*. Chained by `migrateState`. */
 const MIGRATIONS: Record<number, Migration> = {
   5: migrate_v5_to_v6,
   6: migrate_v6_to_v7,
   7: migrate_v7_to_v8,
+  8: migrate_v8_to_v9,
+  9: migrate_v9_to_v10,
+  10: migrate_v10_to_v11,
+  11: migrate_v11_to_v12,
 };
 
 /**

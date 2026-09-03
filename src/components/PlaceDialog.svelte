@@ -9,10 +9,17 @@
 
   interface Props {
     subjectId: ID;
+    /**
+     * Open pointed at a particular lane. A gap is always named as a pair —
+     * "ABC-Schutz, G1" — and the dialog used to drop the lane half of it on the
+     * floor, making the user re-derive an answer the report had just given them.
+     */
+    groupId?: ID | undefined;
+    dayIndex?: number | undefined;
     onclose: () => void;
   }
 
-  let { subjectId, onclose }: Props = $props();
+  let { subjectId, groupId: initialGroupId, dayIndex: initialDayIndex, onclose }: Props = $props();
 
   const appState = $derived(getState());
   const subject = $derived(appState.subjects.find(s => s.id === subjectId) ?? null);
@@ -34,9 +41,29 @@
     addMinutesToTime(snapToSlot(startTime), subject?.defaultDurationMinutes ?? 60),
   );
 
-  // Open on the subject's own phase when it has one, so the common case needs no
-  // fiddling with the day select.
+  /**
+   * Seed the selects once, on open. The dialog is mounted fresh per request, so
+   * this runs exactly once and the user's edits are never overwritten.
+   *
+   * Priority: an explicit day, then the phase that draws an explicitly requested
+   * lane — landing on day 0 with a lane no phase there draws would silently
+   * discard the lane — then the subject's own pinned phase.
+   */
+  let seeded = false;
   $effect(() => {
+    if (seeded) return;
+    seeded = true;
+
+    if (initialGroupId !== undefined) groupId = initialGroupId;
+
+    if (initialDayIndex !== undefined) {
+      dayIndex = initialDayIndex;
+      return;
+    }
+    if (initialGroupId !== undefined) {
+      const owning = appState.phases.find(p => p.groupIds.includes(initialGroupId));
+      if (owning) { dayIndex = owning.startDay; return; }
+    }
     const pinned = subject?.phaseId
       ? appState.phases.find(p => p.id === subject.phaseId)
       : null;
@@ -55,14 +82,28 @@
     onclose();
   }
 
+  /**
+   * Z2: focus the dialog itself, not its close button.
+   *
+   * `showModal()` hands focus to the first focusable descendant, which in every
+   * one of these is the ✕ — so a keyboard user opened the dialog already on
+   * "leave", and their first Tab went out of the content rather than into it.
+   * The panel takes `tabindex="-1"` so it can hold focus without joining the tab
+   * order; the first Tab then lands on the first real control.
+   */
   let dialogEl: HTMLDialogElement;
-  $effect(() => { if (dialogEl) dialogEl.showModal(); });
+  let sheetEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (!dialogEl) return;
+    dialogEl.showModal();
+    sheetEl?.focus();
+  });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
 <dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
   class="modal">
-  <div class="sheet" style="--ev-color: {subject?.color ?? 'gray'}">
+  <div bind:this={sheetEl} class="sheet" tabindex="-1" style="--ev-color: {subject?.color ?? 'gray'}">
     {#if subject}
       <form onsubmit={submit}>
         <header class="sheet-head">
@@ -70,7 +111,7 @@
           <div class="min-w-0 flex-1">
             <h3 class="sheet-title">{subject.name} platzieren</h3>
             <p class="sheet-when wk-num">
-              {subject.defaultDurationMinutes} min{#if isMultiGroup} · every lane{/if}
+              {subject.defaultDurationMinutes} min{#if isMultiGroup} · alle Gruppen{/if}
             </p>
           </div>
           <button type="button" class="sheet-x" onclick={onclose} aria-label="Schliessen">

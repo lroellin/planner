@@ -1,7 +1,6 @@
 <script lang="ts" generics="T extends { id: string }">
   import type { Snippet } from 'svelte';
   import AddRow from './AddRow.svelte';
-  import Icon from '../Icon.svelte';
 
   interface Props {
     items: T[];
@@ -48,20 +47,12 @@
       </p>
     {/if}
   </div>
+  <!-- Both paths are the same component. The ghost button that used to live
+       here was the third "add" treatment in a panel with one add action. -->
   {#if onquickadd}
     <AddRow label={addLabel} {placeholder} onadd={onquickadd} stacked />
   {:else}
-    <div class="list-add-row">
-      <button
-        class="btn btn-sm w-full justify-start gap-1.5 font-medium"
-        class:btn-primary={adding}
-        class:btn-ghost={!adding}
-        onclick={onadd}
-      >
-        <Icon name="plus" size={13} />
-        {addLabel}
-      </button>
-    </div>
+    <AddRow label={addLabel} onactivate={() => onadd?.()} active={adding} stacked />
   {/if}
 </div>
 

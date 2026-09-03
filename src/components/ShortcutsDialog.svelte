@@ -59,9 +59,21 @@
     },
   ];
 
+  /**
+   * Z2: focus the dialog itself, not its close button.
+   *
+   * `showModal()` hands focus to the first focusable descendant, which in every
+   * one of these is the ✕ — so a keyboard user opened the dialog already on
+   * "leave", and their first Tab went out of the content rather than into it.
+   * The panel takes `tabindex="-1"` so it can hold focus without joining the tab
+   * order; the first Tab then lands on the first real control.
+   */
   let dialogEl: HTMLDialogElement;
+  let sheetEl: HTMLDivElement | undefined = $state();
   $effect(() => {
-    if (dialogEl) dialogEl.showModal();
+    if (!dialogEl) return;
+    dialogEl.showModal();
+    sheetEl?.focus();
   });
 </script>
 
@@ -72,7 +84,7 @@
   onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
   class="modal"
 >
-  <div class="sheet">
+  <div bind:this={sheetEl} class="sheet" tabindex="-1">
     <header class="sheet-head">
       <h3 class="sheet-title">Tastenkürzel</h3>
       <button class="sheet-x" onclick={onclose} aria-label="Schliessen">
@@ -105,14 +117,16 @@
       <p class="foot-note">
         Tastenkürzel wirken nicht, solange der Fokus in einem Eingabefeld steht.
       </p>
-      <button class="btn btn-sm btn-primary" onclick={onclose}>Schliessen</button>
+      <!-- Ghost: this sheet is read, not acted on. A solid primary implied there
+           was something here to commit. -->
+      <button class="btn btn-sm btn-ghost" onclick={onclose}>Schliessen</button>
     </footer>
   </div>
 </dialog>
 
 <style>
   dialog::backdrop {
-    background: color-mix(in oklab, black 45%, transparent);
+    background: var(--wk-scrim);
   }
 
   .modal {
@@ -169,28 +183,35 @@
     gap: 1.1rem;
   }
 
+  /* One grid for the section, so the key column is as wide as its widest cap
+     and no wider. As a fixed 180px track with the caps left-aligned in it, a
+     one-key row like "?" left ~160px of empty gutter before its meaning, and
+     the eye had to cross the sheet to pair them up. */
   .rows {
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    align-items: baseline;
+    gap: 0.1rem 2rem;
     margin-top: 0.4rem;
   }
 
   .row {
-    display: grid;
-    grid-template-columns: 180px 1fr;
-    align-items: baseline;
-    gap: 0.6rem;
-    padding: 0.22rem 0.2rem;
-    border-radius: 4px;
+    display: contents;
   }
-  .row:hover { background: var(--wk-surface-alt); }
 
+  /* Right-aligned in their own track: the caps end at a common edge, so the
+     gap between a shortcut and its meaning is the same on every row. */
   .keys {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.2rem;
     flex-wrap: wrap;
+    padding: 0.22rem 0;
+  }
+
+  .what {
+    padding: 0.22rem 0;
   }
 
   .key {

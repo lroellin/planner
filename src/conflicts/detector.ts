@@ -210,6 +210,22 @@ export interface ClashCandidate {
 export type ClashLevel = 'hard' | 'soft' | null;
 
 /**
+ * What a drop would cost, and *with what*. The level alone tints the drag mirror
+ * red — which says a price will be paid without saying to whom, and in a dense
+ * column the four candidate victims are all within a few pixels of the pointer.
+ * The ids are already walked to decide the level; they were simply thrown away.
+ */
+export interface ClashPreview {
+  level: ClashLevel;
+  /**
+   * The events the probe actually overlaps. Empty for an availability clash —
+   * being booked while away involves no second event, which is exactly why it
+   * needs no second card outlined.
+   */
+  eventIds: ID[];
+}
+
+/**
  * What a drop would cost, by exactly the rules `detectConflicts` uses.
  *
  * This lives beside the detector rather than in the calendar component because
@@ -220,8 +236,13 @@ export type ClashLevel = 'hard' | 'soft' | null;
  * the sidebar, and it never looked at availability windows at all.
  */
 export function previewClash(state: AppState, candidate: ClashCandidate): ClashLevel {
+  return previewClashDetail(state, candidate).level;
+}
+
+/** The same rules, keeping the identities of what the probe ran into. */
+export function previewClashDetail(state: AppState, candidate: ClashCandidate): ClashPreview {
   const subject = state.subjects.find(s => s.id === candidate.subjectId);
-  if (!subject) return null;
+  if (!subject) return { level: null, eventIds: [] };
 
   // A probe event, so every lane/teacher/room resolution is the same code the
   // real ones go through — ALL_GROUPS included.
@@ -245,6 +266,8 @@ export function previewClash(state: AppState, candidate: ClashCandidate): ClashL
   const endMs = toMs(probe.dayIndex, probe.endTime);
 
   let level: ClashLevel = null;
+  const eventIds: ID[] = [];
+  const hard = (): void => { level = 'hard'; };
   const soft = (): void => { if (level === null) level = 'soft'; };
 
   // Availability first: it needs no second event, so it can answer immediately.
@@ -253,13 +276,15 @@ export function previewClash(state: AppState, candidate: ClashCandidate): ClashL
     const away = (teacher?.unavailable ?? []).some(
       w => windowOverlaps(w, probe.dayIndex, probe.startTime, probe.endTime),
     );
-    if (away) return 'hard';
+    if (away) return { level: 'hard', eventIds: [] };
   }
   const blocked = (room?.unavailable ?? []).some(
     w => windowOverlaps(w, probe.dayIndex, probe.startTime, probe.endTime),
   );
   if (blocked) soft();
 
+  // No early return: the level is decided by the worst hit, but the outline
+  // wants every card the probe lands on, not just the first one found.
   for (const other of state.events) {
     if (other.id === probe.id) continue;
     if (other.dayIndex !== probe.dayIndex) continue;
@@ -272,14 +297,18 @@ export function previewClash(state: AppState, candidate: ClashCandidate): ClashL
 
     // Lanes are resolved on both sides, so a lesson dropped over the all-lanes
     // Mittagessen reads as the group clash it is.
-    if (eventGroupIds(state, other).some(gid => lanes.has(gid))) return 'hard';
-    if (effectiveTeacherIds(other, otherSubject).some(tid => teacherIds.has(tid))) return 'hard';
-    if (
-      room &&
+    const sameLane = eventGroupIds(state, other).some(gid => lanes.has(gid));
+    const sameTeacher = effectiveTeacherIds(other, otherSubject).some(tid => teacherIds.has(tid));
+    const sameRoom =
+      room !== null &&
       !room.excludeFromConflictCheck &&
-      effectiveRoomId(other, otherSubject) === room.id
-    ) soft();
+      effectiveRoomId(other, otherSubject) === room.id;
+
+    if (sameLane || sameTeacher) hard();
+    else if (sameRoom) soft();
+
+    if (sameLane || sameTeacher || sameRoom) eventIds.push(other.id);
   }
 
-  return level;
+  return { level, eventIds };
 }

@@ -101,7 +101,35 @@ export function highlightEvents(ids: ID[]): void { _highlightedEventIds = ids; }
 export function clearHighlight(): void { _highlightedEventIds = []; }
 
 export function getSpotlightSubjectId(): ID | null { return _spotlightSubjectId; }
-export function spotlightSubject(id: ID | null): void { _spotlightSubjectId = id; }
+
+/**
+ * Hover intent. Sweeping the pointer down a twelve-chip list used to dim and
+ * undim the whole grid twelve times, because the spotlight engaged on the raw
+ * `mouseenter` of every chip it crossed. Entering waits; leaving is immediate,
+ * so the grid never stays dark after the pointer has gone.
+ */
+const SPOTLIGHT_DELAY_MS = 120;
+let spotlightTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function spotlightSubject(id: ID | null): void {
+  if (spotlightTimer !== null) {
+    clearTimeout(spotlightTimer);
+    spotlightTimer = null;
+  }
+  if (id === null) {
+    _spotlightSubjectId = null;
+    return;
+  }
+  // Already lit: switching between chips should not re-wait.
+  if (_spotlightSubjectId !== null) {
+    _spotlightSubjectId = id;
+    return;
+  }
+  spotlightTimer = setTimeout(() => {
+    spotlightTimer = null;
+    _spotlightSubjectId = id;
+  }, SPOTLIGHT_DELAY_MS);
+}
 
 // ─── Quick-edit popover ───────────────────────────────────────────────────────
 
@@ -135,6 +163,99 @@ export function revealEvent(id: ID): void {
   _reveal = { id, token: ++revealToken };
   _selectedEventIds = [id];
 }
+
+// ─── Flash ────────────────────────────────────────────────────────────────────
+
+/**
+ * "It landed here." Every mutation that changes the grid somewhere the user is
+ * not looking — undo, redo, a placement from a dialog, duplicate, split, copy to
+ * lanes — marks its cards so the calendar can pulse them. Undo used to name the
+ * action in a toast and leave the answer to "where?" to a hunt across fifty
+ * cards; copy-to-lanes created four cards at once and said nothing at all.
+ *
+ * Separate from `reveal`: a reveal is a request to *go* to one card and always
+ * scrolls, a flash marks a set that mostly already is on screen.
+ */
+let _flash: { ids: ID[]; token: number } | null = $state(null);
+let flashToken = 0;
+
+export function getFlash(): { ids: ID[]; token: number } | null { return _flash; }
+
+export function flashEvents(ids: ID[]): void {
+  if (ids.length === 0) return;
+  _flash = { ids: [...ids], token: ++flashToken };
+}
+
+// ─── Cross-panel requests ─────────────────────────────────────────────────────
+
+/**
+ * "Place this subject, on this lane." A gap in the coverage report or on a
+ * sidebar chip is the most actionable fact the app produces, and both used to be
+ * inert text: the user had to memorise the pair, close the overlay, find the
+ * chip and drag. App.svelte watches this and opens the placement dialog
+ * prefilled.
+ */
+export interface PlaceRequest {
+  subjectId: ID;
+  /** Prefill the lane select; omitted when the caller has no particular lane. */
+  groupId?: ID;
+  dayIndex?: number;
+  token: number;
+}
+
+let _placeRequest: PlaceRequest | null = $state(null);
+let placeToken = 0;
+
+export function getPlaceRequest(): PlaceRequest | null { return _placeRequest; }
+
+export function requestPlacement(subjectId: ID, opts: { groupId?: ID; dayIndex?: number } = {}): void {
+  _placeRequest = { subjectId, ...opts, token: ++placeToken };
+}
+
+export function clearPlaceRequest(): void { _placeRequest = null; }
+
+/**
+ * "Open Konfiguration on this tab." The empty state has to be able to send a new
+ * user to the one screen where a Thema can be created; nothing else in the app
+ * links there, which is how a fresh plan came to have no way forward at all.
+ */
+export type ConfigTab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'plan';
+
+let _configRequest: { tab: ConfigTab; createSubject?: boolean; token: number } | null = $state(null);
+let configToken = 0;
+
+export function getConfigRequest(): { tab: ConfigTab; createSubject?: boolean; token: number } | null {
+  return _configRequest;
+}
+
+export function requestConfig(tab: ConfigTab, opts: { createSubject?: boolean } = {}): void {
+  _configRequest = { tab, ...opts, token: ++configToken };
+}
+
+export function clearConfigRequest(): void { _configRequest = null; }
+
+/**
+ * "Show me those Lektionen." The Ausbildner and Raum panes report a Pensum
+ * and a Belegung you could not then look at — a count with no way through to
+ * what it counts, while the conflict panel next door has had "im Kalender
+ * zeigen" all along. `filter` preselects the report's own dropdown.
+ */
+export interface ReportRequest {
+  tab: 'coverage' | 'groups' | 'teachers' | 'rooms';
+  filterId?: ID;
+  token: number;
+}
+
+let _reportRequest: ReportRequest | null = $state(null);
+let reportToken = 0;
+
+export function getReportRequest(): ReportRequest | null { return _reportRequest; }
+
+export function requestReport(tab: ReportRequest['tab'], filterId?: ID): void {
+  _reportRequest = { tab, ...(filterId !== undefined ? { filterId } : {}), token: ++reportToken };
+}
+
+export function clearReportRequest(): void { _reportRequest = null; }
 
 // ─── Density ──────────────────────────────────────────────────────────────────
 

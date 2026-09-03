@@ -8,19 +8,21 @@
   import { getState, updateEvent, updateEvents, placeSubject } from '../state/store.svelte';
   import {
     getSelectedEventId, getSelectedEventIds, selectEvent, toggleEventSelection, addToSelection,
-    getHighlightedEventIds, getSpotlightSubjectId,
+    getHighlightedEventIds, getSpotlightSubjectId, getFlash, requestConfig,
     openQuickEdit, closeQuickEdit, getReveal, slotHeight, consumeDateClickGuard,
   } from '../state/ui.svelte';
-  import { previewClash } from '../conflicts/detector';
+  import { previewClashDetail } from '../conflicts/detector';
   import {
     groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate, clampDayIndex,
     formatTime, isMultiGroupEvent, addMinutesToTime,
     sortSubjects, type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
+  import { missingLaneIdsForSubject } from '../reports/reports';
   import { getContrastColor } from '../utils/colorUtils';
   import { escapeHtml } from '../utils/format';
   import { iconSvg } from '../utils/icons';
   import Icon from './Icon.svelte';
+  import ProgrammpunktDialog from './ProgrammpunktDialog.svelte';
   import {
     ALL_GROUPS, CONFLICT_KIND_LABELS, type ConflictKind, type EventFilter, type ID, type Phase,
   } from '../types';
@@ -36,6 +38,11 @@
   let calendarEl: HTMLDivElement;
   let calendar: Calendar;
 
+  // The grid runs 07:00–19:00 so the fringes stay reachable, but the training
+  // day is 08:00–17:00 — the band a click is pulled back into.
+  const DAY_START_MIN = 8 * 60;
+  const DAY_END_MIN = 17 * 60;
+
   // Subject-picker popup state (for dateClick on empty cells)
   interface PlacePending { date: Date; groupId: ID; x: number; y: number; }
   let placePending: PlacePending | null = $state(null);
@@ -45,6 +52,11 @@
   // so the first column of each day is tagged here for the CSS to hook onto —
   // and every column learns whether its day is an odd one, which drives the
   // alternating day band.
+  //
+  // `wk-day-first` marks that first column too, but including the very first day
+  // (`wk-day-start` deliberately skips it — there is no rule to draw there).
+  // It is what lets a multi-group block print its title once per day instead of
+  // once per lane.
   function tagDayBoundaries(): void {
     if (!calendarEl) return;
     for (const sel of ['.fc-col-header-cell.fc-resource', '.fc-timegrid-col.fc-resource']) {
@@ -55,6 +67,7 @@
         const isNewDay = date !== prevDate;
         if (isNewDay) dayIdx++;
         el.classList.toggle('wk-day-start', prevDate !== null && isNewDay);
+        el.classList.toggle('wk-day-first', isNewDay);
         el.classList.toggle('wk-day-alt', dayIdx % 2 === 1);
         prevDate = date;
       }
@@ -75,6 +88,25 @@
       el.classList.toggle('wk-selected', id !== undefined && selected.has(id));
       el.classList.toggle('wk-flash', id !== undefined && highlighted.has(id));
       el.classList.toggle('wk-dimmed', spotlight !== null && subjectId !== spotlight);
+    }
+    paintOwingLanes(spotlight);
+  }
+
+  /**
+   * Mark the lane headers that still owe the spotlighted Thema. Dimming can only
+   * show where a subject *is*; the question the sidebar chip is hovered to
+   * answer is where it is not, and there is no card there to highlight — so the
+   * header carries it. `missingLaneIdsForSubject` is the same computation behind
+   * the chip's tooltip and the report, resolved per phase.
+   */
+  function paintOwingLanes(subjectId: ID | null): void {
+    if (!calendarEl) return;
+    const owing = subjectId === null
+      ? new Set<ID>()
+      : new Set(missingLaneIdsForSubject(getState(), subjectId, phase));
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-col-header-cell.fc-resource')) {
+      const resourceId = el.getAttribute('data-resource-id');
+      el.classList.toggle('wk-lane-owes', resourceId !== null && owing.has(resourceId));
     }
   }
 
@@ -154,7 +186,7 @@
       dayIndex: extractDayIndex(newStart),
       startTime: formatTime(newStart),
       endTime: formatTime(newEnd),
-    }, `${info.event.title} in der Dauer ändern`);
+    }, `Dauer von ${info.event.title} ändern`);
   }
 
   function handleEventReceive(info: EventReceiveArg): void {
@@ -201,11 +233,23 @@
     closeQuickEdit();
     selectEvent(null);
     placePending = {
-      date: info.date,
+      // Clicking a few pixels above the 08:00 rule used to open the picker on
+      // "07:30" — a time outside the training day, above the current scroll
+      // position, chosen by the click's overshoot rather than by anyone.
+      date: clampToDay(info.date),
       groupId: resource.id,
       x: info.jsEvent.clientX,
       y: info.jsEvent.clientY,
     };
+  }
+
+  /** Pull a clicked time into the day's main band, 08:00–17:00. */
+  function clampToDay(date: Date): Date {
+    const out = new Date(date);
+    const minutes = out.getHours() * 60 + out.getMinutes();
+    if (minutes < DAY_START_MIN) out.setHours(8, 0, 0, 0);
+    else if (minutes > DAY_END_MIN) out.setHours(17, 0, 0, 0);
+    return out;
   }
 
   function placePendingSubject(subjectId: ID): void {
@@ -213,6 +257,38 @@
     const { date, groupId } = placePending;
     placeSubject(subjectId, extractDayIndex(date), formatTime(date), groupId);
     placePending = null;
+  }
+
+  // ─── Programmpunkt creation ────────────────────────────────────────────────
+  // The cell that was clicked already answers day, time and lane, so the dialog
+  // only has to ask for the things that make it a *thing*: name, length, colour
+  // and whether it is one lane or all of them.
+  interface OneOffPending { dayIndex: number; startTime: string; groupId: ID; }
+  let newOneOff: OneOffPending | null = $state(null);
+
+  function openProgrammpunkt(): void {
+    if (!placePending) return;
+    const { date, groupId } = placePending;
+    newOneOff = { dayIndex: extractDayIndex(date), startTime: formatTime(date), groupId };
+    placePending = null;
+  }
+
+  /**
+   * Hand the freshly made card to the quick edit, which is where Ausbildner
+   * and Raum are set everywhere else in this app — and which carries the route
+   * on to the full editor. The card only exists once FC has repainted, so the
+   * anchor is measured a frame later, the same way the flash and reveal effects
+   * below wait for it.
+   */
+  function quickEditNewCard(eventId: ID): void {
+    newOneOff = null;
+    requestAnimationFrame(() => {
+      const el = eventElement(eventId);
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      selectEvent(eventId);
+      openQuickEdit(eventId, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+    });
   }
 
   // ─── Live clash preview ────────────────────────────────────────────────────
@@ -234,7 +310,7 @@
       stored?.subjectId ?? (movingEvent?.extendedProps['subjectId'] as ID | undefined) ?? null;
 
     if (!subjectId) {
-      delete calendarEl.dataset['clash'];
+      clearClashPreview();
       return;
     }
 
@@ -244,7 +320,7 @@
     const multi = stored ? isMultiGroupEvent(stored) : subject?.isMultiGroup === true;
     const groupId = multi ? ALL_GROUPS : span.resourceId ?? stored?.groupId ?? '';
 
-    const level = previewClash(state, {
+    const { level, eventIds } = previewClashDetail(state, {
       eventId,
       subjectId,
       groupId,
@@ -257,6 +333,23 @@
 
     if (level) calendarEl.dataset['clash'] = level;
     else delete calendarEl.dataset['clash'];
+
+    // The tint says a price will be paid; this says to whom. In a dense column
+    // four cards sit within a few pixels of the pointer and the mirror alone
+    // never named which of them the drop would land on.
+    const targets = new Set(eventIds);
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-event')) {
+      const id = el.dataset['wkEventId'];
+      el.classList.toggle('wk-clash-target', id !== undefined && targets.has(id));
+    }
+  }
+
+  function clearClashPreview(): void {
+    if (!calendarEl) return;
+    delete calendarEl.dataset['clash'];
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-clash-target')) {
+      el.classList.remove('wk-clash-target');
+    }
   }
 
   onMount(() => {
@@ -315,8 +408,8 @@
         paintClashPreview(span as { start: Date; end: Date; resourceId?: string }, movingEvent);
         return true;
       },
-      eventDragStop() { delete calendarEl.dataset['clash']; },
-      eventResizeStop() { delete calendarEl.dataset['clash']; },
+      eventDragStop() { clearClashPreview(); },
+      eventResizeStop() { clearClashPreview(); },
       // FC pulls the event out of this view the moment it is dropped on another
       // phase. Re-reading the store puts back whatever is actually true, so a
       // drop the target refuses can't leave a hole here.
@@ -363,13 +456,13 @@
 
         const hard = (arg.event.extendedProps['hardConflict'] as boolean | undefined) ?? false;
         const hasConflict = (arg.event.extendedProps['hasConflict'] as boolean | undefined) ?? false;
-        const isMulti = arg.event.classNames.includes('wk-ev-multi');
         const overrides = (arg.event.extendedProps['overrides'] as string[] | undefined) ?? [];
 
+        // No layers icon for a multi-group block: it is drawn once per lane, so
+        // the icon was repeated across the whole day to say what the unbroken
+        // band already says. Only the first lane carries any text at all —
+        // see `.wk-day-first` in calendar.css.
         const flags = [
-          isMulti
-            ? `<span class="wk-ev-flag" title="Jede Gruppe dieser Phase">${iconSvg('layers', 11)}</span>`
-            : '',
           overrides.length > 0
             ? `<span class="wk-ev-flag" title="Weicht von der Themenvorgabe ab: ${escapeHtml(overrides.join(', '))}">${iconSvg('pencil', 11)}</span>`
             : '',
@@ -386,19 +479,32 @@
             }</div>`
           : '';
 
+        // A pill carrying the room's own code, not a colour swatch beside a name
+        // that gets dropped. The swatch could only be decoded against the
+        // Legende; four characters name the place outright, and they fit in
+        // every lane the app draws — which the full name never did.
         const roomHtml = room
-          ? `<div class="wk-ev-room"><span class="wk-ev-room-tag" style="background:${escapeHtml(room.color)}"></span><span class="wk-ev-room-name">${escapeHtml(room.name)}</span></div>`
+          ? `<span class="wk-ev-room" style="--room:${escapeHtml(room.color)}"><span class="wk-ev-room-code">${escapeHtml(room.shortName)}</span><span class="wk-ev-room-name">${escapeHtml(room.name)}</span></span>`
           : '';
+
+        // Both names ship on every card and CSS picks one, because the choice is
+        // made per *lane width* — a container query — and nothing here knows how
+        // wide this card will land. Same for the two halves of the time range.
+        const shortName = escapeHtml(
+          (arg.event.extendedProps['shortName'] as string | undefined) ?? arg.event.title,
+        );
+        const startTime = escapeHtml((arg.event.extendedProps['startTime'] as string | undefined) ?? '');
+        const endTime = escapeHtml((arg.event.extendedProps['endTime'] as string | undefined) ?? '');
 
         return {
           html: `
             <div class="wk-ev-body">
               <div class="wk-ev-top">
-                <div class="wk-ev-title">${title}</div>
+                <div class="wk-ev-title"><span class="wk-ev-name-full">${title}</span><span class="wk-ev-name-short">${shortName}</span></div>
                 <div class="wk-ev-flags">${flags}</div>
               </div>
               <div class="wk-ev-meta">
-                <span class="wk-ev-time">${escapeHtml(arg.timeText)}</span>
+                <span class="wk-ev-time"><span class="wk-ev-t-start">${startTime}</span><span class="wk-ev-t-end">–${endTime}</span></span>
                 ${teacherHtml}
                 ${roomHtml}
               </div>
@@ -446,7 +552,25 @@
     paintStates();
   });
 
-  // "Show me this one" from the conflict panel.
+  /** The one motion the CSS media query cannot reach: scrollIntoView's easing. */
+  function scrollBehavior(): ScrollBehavior {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  }
+
+  /** How long `wk-flash` is left on — the keyframe plus a frame of slack. */
+  const FLASH_MS = 800;
+
+  function flash(el: HTMLElement): void {
+    // Restart rather than stack: a second flash on a card still pulsing from the
+    // first would otherwise do nothing at all.
+    el.classList.remove('wk-flash');
+    void el.offsetWidth;
+    el.classList.add('wk-flash');
+    setTimeout(() => el.classList.remove('wk-flash'), FLASH_MS);
+  }
+
+  // "Show me this one" from the conflict panel: always scrolls, because the
+  // whole request is to go somewhere.
   $effect(() => {
     const request = getReveal();
     if (!request) return;
@@ -454,11 +578,44 @@
     requestAnimationFrame(() => {
       const el = eventElement(request.id);
       if (!el) return;
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.classList.add('wk-flash');
-      setTimeout(() => el.classList.remove('wk-flash'), 2400);
+      el.scrollIntoView({ block: 'center', behavior: scrollBehavior() });
+      flash(el);
     });
   });
+
+  /**
+   * "It landed here." Undo, redo, a placement from a dialog, duplizieren, teilen
+   * and copy-to-lanes all change the grid somewhere the user is not necessarily
+   * looking — undo in particular named the action in a toast and left "where?"
+   * to a hunt across fifty cards.
+   *
+   * Unlike a reveal this only scrolls when it has to: the cards are usually
+   * already on screen, and yanking the grid on every Ctrl+Z would be worse than
+   * the silence it replaces.
+   */
+  $effect(() => {
+    const request = getFlash();
+    if (!request) return;
+    request.token;
+    requestAnimationFrame(() => {
+      const els = request.ids
+        .map(eventElement)
+        .filter((el): el is HTMLElement => el !== null);
+      if (els.length === 0) return;
+      if (!els.some(isOnScreen)) {
+        els[0]!.scrollIntoView({ block: 'center', behavior: scrollBehavior() });
+      }
+      for (const el of els) flash(el);
+    });
+  });
+
+  function isOnScreen(el: HTMLElement): boolean {
+    const scroller = calendarEl?.closest('.phase-scroll');
+    if (!scroller) return true;
+    const box = el.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    return box.bottom > view.top && box.top < view.bottom;
+  }
 </script>
 
 <div class="calendar-wrap">
@@ -474,9 +631,18 @@
     style="left: {Math.min(placePending.x, window.innerWidth - 240)}px; top: {Math.min(placePending.y, window.innerHeight - 340)}px"
   >
     <div class="place-picker-header wk-eyebrow">Platzieren um {formatTime(placePending.date)}</div>
-    {#each [{ isBreak: false, label: 'Themen' }, { isBreak: true, label: 'Pausen' }] as group (group.label)}
-      {@const items = sortSubjects(getState().subjects.filter(s => s.isBreak === group.isBreak))}
-      {#if items.length > 0}
+    {#each [
+      { kind: 'lesson' as const, label: 'Themen' },
+      { kind: 'oneoff' as const, label: 'Programmpunkte' },
+      { kind: 'break' as const, label: 'Pausen' },
+    ] as group (group.label)}
+      {@const items = sortSubjects(getState().subjects.filter(s => s.kind === group.kind))}
+      <!-- Themen is listed even when empty. This picker is one of the two ways
+           to place anything, and on a fresh plan it silently offered only the
+           two Pausen — a dead end with nothing saying where Themen come from.
+           Programmpunkte are the opposite: the block is pure history, so it
+           stays out of the way until one has actually been made. -->
+      {#if items.length > 0 || group.kind === 'lesson'}
         <div class="place-group-label wk-eyebrow">{group.label}</div>
         {#each items as s (s.id)}
           <button class="place-item" onclick={() => placePendingSubject(s.id)}>
@@ -488,9 +654,38 @@
             <span class="place-dur wk-num">{s.defaultDurationMinutes}′</span>
           </button>
         {/each}
+        {#if items.length === 0 && group.kind === 'lesson'}
+          <button
+            class="place-item place-item-new"
+            onclick={() => { placePending = null; requestConfig('subjects', { createSubject: true }); }}
+          >
+            <Icon name="plus" size={13} class="place-icon" />
+            <span class="place-name">Erstes Thema anlegen …</span>
+          </button>
+        {/if}
       {/if}
     {/each}
+
+    <!-- The one thing this picker can create rather than place. A Programmpunkt
+         belongs to the cell it is made in — day, time and lane are already
+         answered by the click — so asking for it here costs one field instead
+         of a detour through Konfiguration and back. -->
+    <div class="place-sep"></div>
+    <button class="place-item place-item-new" onclick={openProgrammpunkt}>
+      <Icon name="plus" size={13} class="place-icon" />
+      <span class="place-name">Neuer Programmpunkt …</span>
+    </button>
   </div>
+{/if}
+
+{#if newOneOff}
+  <ProgrammpunktDialog
+    dayIndex={newOneOff.dayIndex}
+    startTime={newOneOff.startTime}
+    groupId={newOneOff.groupId}
+    oncreated={quickEditNewCard}
+    onclose={() => (newOneOff = null)}
+  />
 {/if}
 
 <style>
@@ -516,14 +711,23 @@
     min-width: 210px;
     max-width: 250px;
     background: var(--wk-surface);
-    border: 1px solid var(--wk-line);
+    /* Card-anchored, like the quick edit — same edge and shadow recipe. */
+    border: 1px solid var(--wk-pop-line);
     border-radius: var(--wk-r-md);
-    box-shadow: var(--wk-shadow-2);
+    box-shadow: var(--wk-pop-shadow);
     padding: 6px 0 7px;
     display: flex;
     flex-direction: column;
     max-height: 340px;
     overflow-y: auto;
+  }
+
+  /* Separates "place one of these" from "make a new one" — different kinds of
+     action, one list. */
+  .place-sep {
+    height: 1px;
+    background: var(--wk-line);
+    margin: 5px 0 4px;
   }
 
   .place-picker-header {
@@ -572,6 +776,14 @@
 
   .place-item :global(.place-icon) {
     color: var(--wk-text-faint);
+  }
+
+  .place-item-new {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+  .place-item-new:hover {
+    background: color-mix(in oklab, var(--color-primary) 10%, transparent);
   }
 
   .place-dur {

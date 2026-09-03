@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../Icon.svelte';
+  import { getContrastColor } from '../../utils/colorUtils';
 
   interface Props {
     value: string;
@@ -32,19 +33,28 @@
 </script>
 
 <div class="picker">
+  <!-- E6: a swatch in a frame with a caret. The palette icon drawn *over* the
+       colour made this read as a primary button on Themen; the same control with
+       initials in it read as the teacher's avatar on Ausbildner — one control
+       with two identities, neither of which was "a colour you can change". The
+       colour is now the thing shown, the frame and the caret are what say it
+       opens. -->
   <button
     type="button"
-    class="swatch"
-    style="background:{value}; width:{size}px; height:{size}px"
+    class="swatch-frame"
+    class:swatch-frame-open={open}
     onclick={() => (open = !open)}
     title="Farbe ändern"
     aria-label="Farbe ändern"
+    aria-expanded={open}
   >
-    {#if initials}
-      <span class="swatch-initials">{initials}</span>
-    {:else}
-      <Icon name="palette" size={Math.round(size * 0.45)} class="swatch-icon" />
-    {/if}
+    <span
+      class="swatch"
+      style="background:{value}; width:{size}px; height:{size}px; color:{getContrastColor(value)}"
+    >
+      {#if initials}<span class="swatch-initials">{initials}</span>{/if}
+    </span>
+    <Icon name="chevronDown" size={13} class="swatch-caret" />
   </button>
 
   {#if open}
@@ -84,28 +94,41 @@
     flex-shrink: 0;
   }
 
+  .swatch-frame {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 3px 3px 3px 4px;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    background: var(--wk-surface);
+    color: var(--wk-text-faint);
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .swatch-frame:hover {
+    border-color: var(--wk-line-strong);
+    background: var(--wk-surface-alt);
+    color: var(--wk-text-mute);
+  }
+  .swatch-frame-open {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
   .swatch {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--wk-r-sm);
-    border: 1px solid color-mix(in oklab, var(--color-base-content) 22%, transparent);
-    cursor: pointer;
-    color: white;
-    box-shadow: var(--wk-shadow-1);
-    transition: transform 0.12s;
+    border-radius: calc(var(--wk-r-sm) - 3px);
+    flex-shrink: 0;
   }
-  .swatch:hover { transform: scale(1.05); }
 
+  /* Initials sit on the colour with a derived label colour, not white with a
+     shadow propping it up. */
   .swatch-initials {
     font-size: var(--wk-fs-sm);
     font-weight: 700;
-    text-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
-  }
-
-  .swatch :global(.swatch-icon) {
-    opacity: 0.85;
-    filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
   }
 
   .backdrop {

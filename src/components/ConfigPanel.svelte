@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import {
-    getState,
+    getState, markExported,
     addGroup, updateGroup, removeGroup, moveGroupUp, moveGroupDown, moveGroupToIndex,
     eventCountForGroup,
     addPhase, updatePhase, removePhase, eventCountForPhase,
@@ -8,9 +9,9 @@
     setPlanName, replacePlan, resetToDefaults,
   } from '../state/store.svelte';
   import { serializePlan, planFileName, parsePlan } from '../state/persistence';
-  import { generateDistinctColor, generateInitials } from '../utils/colorUtils';
+  import { generateDistinctColor, generateInitials, getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
-  import { DAY_NAMES, orderedPhases, sortSubjects } from '../utils/timeUtils';
+  import { DAY_NAMES, fullDateLabel, orderedPhases, sortSubjects } from '../utils/timeUtils';
   import { describeWindow } from '../utils/availability';
   import AddRow from './config/AddRow.svelte';
   import MasterDetail from './config/MasterDetail.svelte';
@@ -18,21 +19,37 @@
   import RoomDetail from './config/RoomDetail.svelte';
   import SubjectDetail from './config/SubjectDetail.svelte';
   import Icon from './Icon.svelte';
+  import type { ConfigTab } from '../state/ui.svelte';
   import type { ID } from '../types';
 
-  interface Props { onclose: () => void; }
-  let { onclose }: Props = $props();
+  interface Props {
+    onclose: () => void;
+    /** Which tab to open on — the empty state sends a new user straight to Themen. */
+    initialTab?: ConfigTab | null;
+    /** Open with a blank Thema draft, so the first one is one field away. */
+    createSubject?: boolean;
+  }
+  let { onclose, initialTab = null, createSubject = false }: Props = $props();
 
   type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'data';
   const TABS: { key: Tab; label: string }[] = [
     { key: 'groups', label: 'Gruppen' },
     { key: 'phases', label: 'Phasen' },
-    { key: 'teachers', label: 'Gruppenführer' },
+    { key: 'teachers', label: 'Ausbildner' },
     { key: 'rooms', label: 'Räume' },
     { key: 'subjects', label: 'Themen' },
     { key: 'data', label: 'Plan & Daten' },
   ];
-  let activeTab: Tab = $state('groups');
+  // `ConfigTab` is the cross-component name; 'plan' is this component's 'data'.
+  const TAB_FOR_REQUEST: Record<ConfigTab, Tab> = {
+    groups: 'groups', phases: 'phases', teachers: 'teachers',
+    rooms: 'rooms', subjects: 'subjects', plan: 'data',
+  };
+  // `untrack`: these props seed the panel and are never read again — the dialog
+  // is mounted fresh per open, so a later change would have nothing to update.
+  let activeTab: Tab = $state(
+    untrack(() => (initialTab ? TAB_FOR_REQUEST[initialTab] : 'groups')),
+  );
 
   const appState = $derived(getState());
   const sortedGroups = $derived([...appState.groups].sort((a, b) => a.order - b.order));
@@ -42,28 +59,28 @@
   // isn't re-read on every visit to the tab.
   const TAB_INTRO: Record<Tab, { short: string; long: string }> = {
     groups: {
-      short: 'Gruppen sind die Spalten des Stundenplans.',
+      short: 'Gruppen sind die Spalten des Kalenders.',
       long: 'Jede Gruppe muss jedes Thema besuchen. Inaktive Gruppen behalten ihre Daten, werden aber im Kalender ausgeblendet und von der Konfliktprüfung übersprungen.',
     },
     phases: {
       short: 'Phasen teilen die Woche in Abschnitte mit eigenen Gruppen.',
-      long: 'Ein Kadervorkurs braucht nur eine Gruppe, die Gruppenrotation alle. Jede Phase wird als eigener Kalender gezeichnet, damit schmale Phasen keinen Platz verschwenden.',
+      long: 'Die KVK-Phase braucht nur eine Gruppe, die WK-Phase alle. Jede Phase wird als eigener Kalender angezeigt, damit schmale Phasen keinen Platz verschwenden.',
     },
     teachers: {
-      short: 'Derselbe Gruppenführer kann nicht zweimal gleichzeitig eingeteilt sein.',
-      long: 'Konflikte bei Gruppenführern sind harte Konflikte. Kürzel und Farbe sind das, was auf den Karten im Kalender erscheint.',
+      short: 'Derselbe Ausbildner kann nicht zweimal gleichzeitig eingeteilt sein.',
+      long: 'Konflikte bei Ausbildnern sind harte Konflikte. Kürzel und Farbe sind das, was auf den Karten im Kalender erscheint.',
     },
     rooms: {
       short: 'Räume werden auf weiche Konflikte geprüft.',
-      long: 'Bei geteilten Flächen wie «draussen», wo zwei Gruppen problemlos am selben Ort sein können, die Konfliktprüfung ausschalten.',
+      long: 'Bei geteilten Flächen wie «draussen» die Konfliktprüfung ausschalten: Dort stören sich zwei Gruppen nicht.',
     },
     subjects: {
       short: 'Themen werden auf den Kalender gezogen und dort zu Lektionen.',
-      long: 'Ihre Vorgaben — Gruppenführer, Raum, Dauer — werden auf jede platzierte Lektion kopiert, wo sie einzeln überschrieben werden können. Auch Inhalt (Lernziele, Notizen) liegt am Thema. Die Dauer ist zugleich das Soll pro Gruppe.',
+      long: 'Ihre Vorgaben — Ausbildner, Raum, Dauer — werden auf jede platzierte Lektion kopiert, wo sie einzeln überschrieben werden können. Auch Inhalt (Lernziele, Notizen) liegt am Thema. Die Dauer ist zugleich das Soll pro Gruppe.',
     },
     data: {
-      short: 'Ein Plan, in diesem Browser gespeichert. Eine Datei ist der Weg hinaus und zurück.',
-      long: 'Alles liegt im localStorage dieses Browsers — Website-Daten löschen löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei; ein Import ersetzt, was hier ist. Es gibt keine Planbibliothek: die Datei ist das Archiv.',
+      short: 'Der Plan liegt in diesem Browser. Wer ihn sichern oder weitergeben will, exportiert ihn als Datei.',
+      long: 'Alles liegt im localStorage dieses Browsers: Wer die Website-Daten löscht, löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei, ein Import überschreibt den aktuellen. Die App verwaltet keine Plansammlung — die Datei ist das Archiv.',
     },
   };
 
@@ -72,18 +89,21 @@
   // ─── Master-detail selection ──────────────────────────────────────────────
   let selectedTeacherId: ID | null = $state(getState().teachers[0]?.id ?? null);
   let selectedRoomId: ID | null = $state(getState().rooms[0]?.id ?? null);
-  let selectedSubjectId: ID | null = $state(getState().subjects[0]?.id ?? null);
-  let addingSubject = $state(false);
+  let selectedSubjectId: ID | null = $state(
+    untrack(() => (createSubject ? null : getState().subjects[0]?.id ?? null)),
+  );
+  let addingSubject = $state(untrack(() => createSubject));
 
   const selectedTeacher = $derived(appState.teachers.find(t => t.id === selectedTeacherId) ?? null);
   const selectedRoom    = $derived(appState.rooms.find(r => r.id === selectedRoomId) ?? null);
   const selectedSubject = $derived(appState.subjects.find(s => s.id === selectedSubjectId) ?? null);
 
-  // Alphabetical everywhere, breaks kept apart: the stored order is insertion
-  // order, which stops being findable at about a dozen subjects.
+  // Alphabetical everywhere, the three kinds kept apart: the stored order is
+  // insertion order, which stops being findable at about a dozen subjects.
   const listedSubjects = $derived([
-    ...sortSubjects(appState.subjects.filter(s => !s.isBreak)),
-    ...sortSubjects(appState.subjects.filter(s => s.isBreak)),
+    ...sortSubjects(appState.subjects.filter(s => s.kind === 'lesson')),
+    ...sortSubjects(appState.subjects.filter(s => s.kind === 'oneoff')),
+    ...sortSubjects(appState.subjects.filter(s => s.kind === 'break')),
   ]);
 
   // A fresh entity opens on a colour that is far from the ones already in use.
@@ -113,15 +133,10 @@
     while (appState.groups.some(g => g.label === `G${i}`)) i++;
     return `G${i}`;
   }
-  // Deleting a lane takes its events with it, so say how many before doing it.
-  function confirmRemoveGroup(id: ID, label: string): void {
-    const count = eventCountForGroup(id);
-    const detail = count === 0
-      ? 'Sie hat keine eigenen Lektionen.'
-      : `${count} auf dieser Gruppe platzierte ${count === 1 ? 'Lektion wird' : 'Lektionen werden'} gelöscht.`;
-    if (!window.confirm(`Gruppe «${label}» löschen?\n${detail}`)) return;
-    removeGroup(id);
-  }
+  // No confirm. The deletion is one `setState` with a label, so Ctrl+Z and the
+  // toast's own "Rückgängig" both take it back — an OS dialog was interrupting
+  // for something a keystroke reverses, and it could not say the count as
+  // anything but a sentence. `removeGroup` names the count in the toast.
 
   // Drag to reorder: the rows *are* the columns of the timetable, so dragging
   // them is the gesture that matches. The ▲▼ buttons stay for the keyboard.
@@ -153,19 +168,23 @@
     updatePhase(id, endDay < startDay ? { endDay, startDay: endDay } : { endDay });
   }
 
-  // Removing a phase keeps its events but leaves them on no calendar at all.
-  function confirmRemovePhase(id: ID, label: string): void {
-    const count = eventCountForPhase(id);
-    const detail = count === 0
-      ? 'Sie deckt keine Lektionen ab.'
-      : `${count} ${count === 1 ? 'Lektion an diesen Tagen wird' : 'Lektionen an diesen Tagen werden'} nirgends mehr gezeichnet — ` +
-        `sie erscheinen unter «Auf keinem Kalender», bis sie verschoben werden.`;
-    if (!window.confirm(`Phase «${label}» löschen?\n${detail}`)) return;
-    removePhase(id);
-  }
+  // Same again: removing a phase leaves its Lektionen on no calendar, which the
+  // toast says, and Rückgängig puts back.
 
   /** Colour a phase gets in the week strip — position, not identity. */
-  const PHASE_HUES = ['var(--color-primary)', 'var(--color-accent)', 'var(--color-info)', 'var(--color-success)'];
+  /**
+   * G4: neutral steps, not the UI accent pair. The strip used to paint KVK in
+   * --color-primary and WK in --color-accent — the two hues app.css explicitly
+   * reserves for "this is a control", spent on what is plainly data. A phase is
+   * a stretch of week, not a button; until Phase carries a colour field of its
+   * own, it is drawn as ink at four strengths.
+   */
+  const PHASE_HUES = [
+    'color-mix(in oklab, var(--color-base-content) 62%, transparent)',
+    'color-mix(in oklab, var(--color-base-content) 40%, transparent)',
+    'color-mix(in oklab, var(--color-base-content) 26%, transparent)',
+    'color-mix(in oklab, var(--color-base-content) 16%, transparent)',
+  ];
 
   // Phases are drawn independently, so a bad day range silently hides events
   // rather than erroring — surface the common mistakes instead.
@@ -216,6 +235,9 @@
     a.download = planFileName(state);
     a.click();
     URL.revokeObjectURL(url);
+    // Records that a copy of this week now exists outside the browser, which is
+    // what the toolbar's staleness hint reads.
+    markExported();
   }
 
   async function handleImportFile(file: File): Promise<void> {
@@ -229,9 +251,9 @@
     const events = incoming.events.length;
     if (!window.confirm(
       `«${incoming.name}» laden?\n\n` +
-      `Er enthält ${events} ${events === 1 ? 'Lektion' : 'Lektionen'} und beginnt am ${incoming.wkStartDate}.\n\n` +
-      'Das ersetzt den Plan in diesem Browser, und der Verlauf wird gelöscht. ' +
-      'Zuerst den aktuellen Plan exportieren, wenn er behalten werden soll.',
+      `Er enthält ${events} ${events === 1 ? 'Lektion' : 'Lektionen'} und beginnt am ${fullDateLabel(incoming.wkStartDate)}.\n\n` +
+      'Der Plan in diesem Browser wird ersetzt und der Verlauf gelöscht. ' +
+      'Wer den aktuellen Plan behalten will, exportiert ihn vorher.',
     )) return;
     replacePlan(incoming);
     onclose();
@@ -247,20 +269,34 @@
 
   function handleClearAll(): void {
     if (!window.confirm(
-      'ALLE Daten löschen?\n\nDas entfernt endgültig jede Lektion, jede Gruppe, jeden Gruppenführer, jeden Raum und jedes Thema und setzt auf die Vorgaben zurück.\n\nDas kann nicht rückgängig gemacht werden.'
+      'ALLE Daten löschen?\n\nDas entfernt endgültig jede Lektion, jede Gruppe, jeden Ausbildner, jeden Raum und jedes Thema und setzt alles zurück.\n\nDas kann nicht rückgängig gemacht werden.'
     )) return;
     resetToDefaults();
     onclose();
   }
 
+  /**
+   * Z2: focus the dialog itself, not its close button.
+   *
+   * `showModal()` hands focus to the first focusable descendant, which in every
+   * one of these is the ✕ — so a keyboard user opened the dialog already on
+   * "leave", and their first Tab went out of the content rather than into it.
+   * The panel takes `tabindex="-1"` so it can hold focus without joining the tab
+   * order; the first Tab then lands on the first real control.
+   */
   let dialogEl: HTMLDialogElement;
-  $effect(() => { if (dialogEl) dialogEl.showModal(); });
+  let sheetEl: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (!dialogEl) return;
+    dialogEl.showModal();
+    sheetEl?.focus();
+  });
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
 <dialog bind:this={dialogEl} onclose={onclose} onclick={(e) => { if (e.target === dialogEl) dialogEl.close(); }}
   class="modal">
-  <div class="config-panel">
+  <div bind:this={sheetEl} class="config-panel" tabindex="-1">
 
     <!-- Header -->
     <header class="cfg-head">
@@ -310,6 +346,7 @@
                   <span>Bezeichnung</span>
                   <span class="text-center">Reihenfolge</span>
                   <span></span>
+                  <span></span>
                 </div>
                 {#each sortedGroups as g, i (g.id)}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -337,29 +374,42 @@
                       aria-label="Gruppenbezeichnung"
                       onchange={(e) => updateGroup(g.id, { label: (e.currentTarget as HTMLInputElement).value })}
                     />
-                    <div class="order-btns">
-                      <button class="mini" disabled={i === 0}
-                        onclick={() => moveGroupUp(g.id)} aria-label="Nach oben">
-                        <Icon name="chevronUp" size={12} />
+                    <!-- E4: the up/down pair is the one reorder mechanism, and it
+                         sits next to the label it moves rather than at the far
+                         edge of the table where it was two near-invisible
+                         chevrons a column away from anything. Dragging the row
+                         still works and is still the fast path — it is the same
+                         gesture on the same row, not a second control. -->
+                    <div class="order-btns" role="group" aria-label="Reihenfolge">
+                      <button class="order-btn" disabled={i === 0}
+                        onclick={() => moveGroupUp(g.id)}
+                        title="Nach oben" aria-label="Nach oben">
+                        <Icon name="chevronUp" size={13} />
                       </button>
-                      <button class="mini" disabled={i === sortedGroups.length - 1}
-                        onclick={() => moveGroupDown(g.id)} aria-label="Nach unten">
-                        <Icon name="chevronDown" size={12} />
+                      <button class="order-btn" disabled={i === sortedGroups.length - 1}
+                        onclick={() => moveGroupDown(g.id)}
+                        title="Nach unten" aria-label="Nach unten">
+                        <Icon name="chevronDown" size={13} />
                       </button>
                     </div>
+                    <span></span>
                     <button class="mini mini-danger"
-                      onclick={() => confirmRemoveGroup(g.id, g.label)} aria-label="Gruppe löschen">
+                      onclick={() => removeGroup(g.id)}
+                      title={eventCountForGroup(g.id) === 0
+                        ? `Gruppe ${g.label} löschen`
+                        : `Gruppe ${g.label} löschen — mit ${eventCountForGroup(g.id)} Lektionen`}
+                      aria-label="Gruppe löschen">
                       <Icon name="trash" size={13} />
                     </button>
                   </div>
                 {/each}
               </div>
               <p class="field-hint mt-3">
-                Switching a group off keeps its events; they are simply not drawn and stop
-                raising conflicts.
+                Eine ausgeschaltete Gruppe behält ihre Lektionen. Sie werden nur nicht mehr
+                angezeigt und lösen keine Konflikte mehr aus.
               </p>
             {:else}
-              <p class="pane-empty">No groups yet. Add one below.</p>
+              <p class="pane-empty">Noch keine Gruppen. Unten eine hinzufügen.</p>
             {/if}
           </div>
 
@@ -440,14 +490,18 @@
                       {/each}
                     </div>
                     <button class="mini mini-danger"
-                      onclick={() => confirmRemovePhase(p.id, p.label)} aria-label="Phase löschen">
+                      onclick={() => removePhase(p.id)}
+                      title={eventCountForPhase(p.id) === 0
+                        ? `Phase ${p.label} löschen`
+                        : `Phase ${p.label} löschen — ${eventCountForPhase(p.id)} Lektionen werden dann nicht mehr angezeigt`}
+                      aria-label="Phase löschen">
                       <Icon name="trash" size={13} />
                     </button>
                   </div>
                 {/each}
               </div>
             {:else}
-              <p class="pane-empty">No phases yet. Add one below.</p>
+              <p class="pane-empty">Noch keine Phasen. Unten eine hinzufügen.</p>
             {/if}
           </div>
 
@@ -459,14 +513,17 @@
         <MasterDetail
           items={appState.teachers}
           selectedId={selectedTeacherId}
-          addLabel="Gruppenführer hinzufügen"
-          placeholder="Name des Gruppenführers"
-          emptyListText="Noch keine Gruppenführer"
+          addLabel="Ausbildner hinzufügen"
+          placeholder="Name des Ausbildners"
+          emptyListText="Noch keine Ausbildner"
           onselect={(id) => (selectedTeacherId = id)}
           onquickadd={quickAddTeacher}
         >
           {#snippet row(t)}
-            <span class="list-avatar" style="background:{t.color}">{teacherShort(t)}</span>
+            <span
+              class="list-avatar"
+              style="background:{t.color}; color:{getContrastColor(t.color)}"
+            >{teacherShort(t)}</span>
             <span class="truncate min-w-0 flex-1">{t.name}</span>
             {#if t.unavailable.length > 0}
               <span class="row-tag" title={t.unavailable.map(describeWindow).join(' · ')}>abwesend</span>
@@ -483,7 +540,7 @@
             {:else}
               <div class="empty-detail">
                 <Icon name="users" size={26} />
-                <span>Unten einen Namen eingeben, um einen Gruppenführer hinzuzufügen — bearbeitet wird er dann hier.</span>
+                <span>Unten einen Namen eingeben, um einen Ausbildner hinzuzufügen — bearbeitet wird er dann hier.</span>
               </div>
             {/if}
           {/snippet}
@@ -504,10 +561,10 @@
             <span class="w-2.5 h-full min-h-[1.4rem] rounded-sm shrink-0 self-stretch" style="background:{r.color}"></span>
             <span class="truncate min-w-0 flex-1">{r.name}</span>
             {#if r.unavailable.length > 0}
-              <span class="row-tag" title={r.unavailable.map(describeWindow).join(' · ')}>blocked</span>
+              <span class="row-tag" title={r.unavailable.map(describeWindow).join(' · ')}>gesperrt</span>
             {/if}
             {#if r.excludeFromConflictCheck}
-              <span class="row-tag">shared</span>
+              <span class="row-tag">geteilt</span>
             {/if}
           {/snippet}
           {#snippet detail()}
@@ -541,8 +598,10 @@
           {#snippet row(s)}
             <span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:{s.color}"></span>
             <span class="truncate min-w-0 flex-1">{s.name}</span>
-            {#if s.isBreak}
+            {#if s.kind === 'break'}
               <span class="row-tag">Pause</span>
+            {:else if s.kind === 'oneoff'}
+              <span class="row-tag">Punkt</span>
             {/if}
           {/snippet}
           {#snippet detail()}
@@ -589,8 +648,8 @@
               <section class="data-card">
                 <h4 class="section-title">Plandatei</h4>
                 <p class="field-hint">
-                  Der Plan liegt nur in diesem Browser. Eine Datei ist die Sicherung, der Weg auf einen
-                  anderen Rechner und der Weg zu jemand anderem.
+                  Der Plan liegt nur in diesem Browser. Mit einer Datei sichert man ihn, nimmt ihn auf
+                  einen anderen Rechner mit oder gibt ihn weiter.
                 </p>
                 <div class="data-actions">
                   <button class="btn btn-sm btn-primary gap-1.5" onclick={exportPlan}>
@@ -610,7 +669,7 @@
                 <p class="field-hint">
                   <span class="wk-num">{appState.events.length}</span> Lektionen ·
                   <span class="wk-num">{appState.subjects.length}</span> Themen ·
-                  <span class="wk-num">{appState.teachers.length}</span> Gruppenführer ·
+                  <span class="wk-num">{appState.teachers.length}</span> Ausbildner ·
                   <span class="wk-num">{appState.rooms.length}</span> Räume
                 </p>
                 {#if importError}
@@ -619,11 +678,11 @@
               </section>
 
               <section class="data-card data-card-danger">
-                <h4 class="section-title">Gefahrenzone</h4>
+                <h4 class="section-title">Zurücksetzen</h4>
                 <div class="danger-body">
                   <span class="danger-note">
-                    Entfernt jede Lektion, jede Gruppe, jeden Gruppenführer, jeden Raum und jedes Thema und beginnt
-                    wieder mit den Vorgaben. Vorher exportieren, wenn etwas erhalten bleiben soll.
+                    Entfernt jede Lektion, jede Gruppe, jeden Ausbildner, jeden Raum und jedes Thema und beginnt
+                    wieder mit einem leeren Plan. Vorher exportieren, wenn etwas erhalten bleiben soll.
                   </span>
                   <button class="btn btn-sm btn-error gap-1.5" onclick={handleClearAll}>
                     <Icon name="trash" size={13} /> Alle Daten zurücksetzen
@@ -643,16 +702,29 @@
 
 <style>
   dialog::backdrop {
-    background: color-mix(in oklab, black 45%, transparent);
+    background: var(--wk-scrim);
+  }
+
+  /* Anchored near the top instead of centred. The height was pinned at 82vh
+     because a content-sized dialog moved its own tab strip out from under the
+     pointer whenever a shorter tab shrank it — a real hazard, fixed at the
+     wrong end. Pinning the *top edge* removes the hazard directly, which then
+     lets the height tell the truth: Phasen showed two rows over 226px of void
+     with the footer stranded at the bottom of the screen. */
+  dialog.modal {
+    align-items: flex-start;
+    padding-top: 6vh;
   }
 
   .config-panel {
     display: flex;
     flex-direction: column;
     width: min(1000px, 92vw);
-    /* Fixed: a short tab used to shrink the dialog and move the tab strip out
-       from under the pointer mid-click. */
-    height: 82vh;
+    height: auto;
+    /* Enough that an empty tab is still a dialog; capped so a full Themen list
+       still scrolls inside the panel rather than running off the screen. */
+    min-height: 420px;
+    max-height: 84vh;
     background: var(--wk-surface);
     color: var(--wk-text);
     border-radius: var(--wk-r-md);
@@ -810,10 +882,13 @@
   .row-off { opacity: 0.45; }
   .row-dragging { opacity: 0.4; background: color-mix(in oklab, var(--color-primary) 10%, transparent); }
 
+  /* The order control sits next to the label it reorders, not at the far edge
+     of the table with 1fr of nothing between them — the slack goes after it. */
   .grid-groups {
     display: grid;
-    grid-template-columns: 1.4rem 3rem 1fr 2.6rem 2rem;
+    grid-template-columns: 1.4rem 3rem auto 3.4rem 1fr 2rem;
     gap: 0.6rem;
+    align-items: center;
   }
 
   .grid-phases {
@@ -826,14 +901,40 @@
     display: flex;
     color: var(--wk-text-faint);
     cursor: grab;
+    opacity: 0;
+    transition: opacity 0.12s;
   }
+  .table-row:hover .drag-handle,
+  .table-row:focus-within .drag-handle { opacity: 1; }
   .drag-handle:active { cursor: grabbing; }
 
+  /* A segmented pair, framed so it reads as one control. Stacked and unframed
+     at the table's outer edge, the two chevrons were 12px of near-invisible
+     grey that nobody would find. */
   .order-btns {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: inline-flex;
+    align-items: stretch;
+    justify-self: center;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    overflow: hidden;
   }
+
+  .order-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    color: var(--wk-text-mute);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .order-btn + .order-btn { border-left: 1px solid var(--wk-line); }
+  .order-btn:hover:not(:disabled) { background: var(--wk-surface-alt); color: var(--wk-text); }
+  .order-btn:disabled { opacity: 0.3; cursor: default; }
 
   .mini {
     display: flex;
