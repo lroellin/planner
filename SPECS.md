@@ -62,6 +62,7 @@ afterwards, so it no longer matches that review round.
 | 27 | **Auswertungen** | The reports overlay (Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne) | Toolbar button, overlay title |
 | 28 | **Konfiguration** | The settings dialog | Toolbar button, dialog title |
 | 29 | **Plan** | The whole week's data — one plan per browser. *Planname*, *Plandatei* | Toolbar, Plan & Daten tab |
+| 29a | **Darstellung** | How the Wochenplan is drawn on paper: *Modern* (the app's own sheet) or *Klassisch* (the look of the former Excel-Arbeitsprogramm). Deliberately not an *Art* — both draw the same week, so the choice is a rendering and not a second document. A Handzettel has none | Drucken dialog |
 | 30 | **Verlauf** | The undo history menu | Undo caret tooltip, menu title ("Rückgängig bis …") |
 | 31 | **Rückgängig / Wiederholen** | Undo / redo | Toolbar tooltips, toasts |
 | 32 | **Schnellbearbeitung** | The popover beside a clicked Lektion | Popover aria-label, shortcut sheet |
@@ -733,6 +734,46 @@ No font is embedded: jsPDF's built-in Helvetica is WinAnsi-encoded, which covers
 - **A card is a stack, not a sentence.** The Thema wraps, then the Raum gets its own line or two, then the Ausbildner — each wrapped, each falling back to its short form, each dropped whole rather than half-drawn. The single joined meta row this replaced spent one line on everything and truncated the lot: `CG · Schutzanlage Bern…` cut off the field a printed plan is read for, while nine empty lines sat underneath it. Raum precedes Ausbildner because it is the less recoverable of the two.
 - **No time on the card.** The axis states it, and the off-hour exception (a card starting 09:45 printing its own time) cost the line the Raum now uses.
 - A block under 4.6 mm (a 15-minute Pause) gets **one centred line** instead of the stacked layout; drawn blank it read as a printing artefact rather than a block.
+
+### Klassische Darstellung (`calendarClassicPdf.ts`)
+
+The Arbeitsprogramm used to be made in Excel, and the supervisors who sign it off
+have read that sheet for years. **Darstellung** — *Modern* (default) or
+*Klassisch* — draws the same `CalendarDoc` the other way, so the plan can be
+handed upwards in the shape its readers already know. It is a rendering, not a
+document: the Art, the Phasen, the Ausrichtung and the Stand all still apply, and
+only the Wochenplan has it (the Excel had no handout).
+
+It is **not a replica**. The vertical "Aktualisieren Unterlagen" text and the
+Excel footer stay out; conflicts keep the red border the Excel had no way to draw.
+
+| | Modern | Klassisch |
+|---|---|---|
+| Block fill | tint + a 1.1 mm colour bar | the subject colour at full strength |
+| Block text | left-aligned stack: Thema → Raum → Ausbildner | centred both ways: Thema, then one italic `Raum, Ausbildner` line |
+| Text colour | fixed slate | `getContrastColor(subject.color)`, the meta line blended 28 % toward the fill |
+| Zeit axis | once, at the left | left, **at every phase boundary**, and at the right edge |
+| Header | Phase / Tag / Lane | Tag / Lane — the repeated axis already marks the boundary |
+| Rules | 30-min, grey | 15-min dotted, whole hours solid black |
+| Frame | hairline column rules | black table borders, heavy outer frame |
+| Breaks | softened fill, grey text | no special case — a Pause is its own colour |
+
+**The axes are the only real logic**, so they are a pure exported function:
+`axisPositions(model)` returns the column indexes a Zeit column is inserted
+before — `0`, every `phase.from`, and `columns.length`, deduplicated and sorted.
+The default plan gives `[0, 2, 11]`; printing one phase collapses it to the two
+edges. Column geometry follows: `colW = (usableW − axes.length·AXIS_W) / columns.length`,
+and a column's x adds `AXIS_W` for every axis at or before it. Should `colW` fall
+under 4 mm the phase axes are dropped and only the two edges kept — an axis meant
+to help read the lanes must not be what squeezes them out.
+
+A block's width is measured from the *first* and *last* column it covers rather
+than from `from + span`, so a Lektion ending on a phase boundary does not swallow
+the axis drawn there.
+
+`pdfDraw.ts` holds the six primitives both renderers use (`PT`, `rgb`, `mix`,
+`blend`, `hhmm`, `truncate`, `cardLines`); `calendar.ts` is untouched, and that
+the two sheets share one model is what makes them the same week.
 
 ### There is no DOM print path any more
 

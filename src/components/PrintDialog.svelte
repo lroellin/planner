@@ -7,6 +7,7 @@
   import { renderPdf, resolveFit, standLabel } from '../print/pdf';
   import { buildCalendarDoc } from '../print/calendar';
   import { renderCalendarPdf } from '../print/calendarPdf';
+  import { renderCalendarClassicPdf } from '../print/calendarClassicPdf';
   import { orderedPhases, phaseGroups } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
   import type { ID } from '../types';
@@ -61,6 +62,17 @@
   let handoutOrientation: Orientation = $state('portrait');
   const orientation = $derived(category === 'grid' ? gridOrientation : handoutOrientation);
 
+  /**
+   * How the Wochenplan is drawn on paper. `classic` reproduces the look of the
+   * Excel Arbeitsprogramm this app replaced — the sheet the supervisors who sign
+   * it off already know how to read. Same week, same blocks, same conflicts;
+   * only the drawing differs, so it is a Darstellung and not another Art.
+   *
+   * A Handzettel has no classic form: the Excel had nothing to hand out.
+   */
+  type CalendarStyle = 'modern' | 'classic';
+  let calendarStyle: CalendarStyle = $state('modern');
+
   function setOrientation(next: Orientation): void {
     if (category === 'grid') gridOrientation = next;
     else handoutOrientation = next;
@@ -107,7 +119,8 @@
     if (planTarget && printDoc) {
       return renderPdf(printDoc, { wkName: appState.name, stand: now, perPage, orientation });
     }
-    return renderCalendarPdf(buildCalendarDoc(appState, includedPhaseIds), {
+    const render = calendarStyle === 'classic' ? renderCalendarClassicPdf : renderCalendarPdf;
+    return render(buildCalendarDoc(appState, includedPhaseIds), {
       wkName: appState.name,
       stand: now,
       orientation,
@@ -122,7 +135,7 @@
   let previewUrl: string | null = $state(null);
   $effect(() => {
     // Named so the effect re-runs on each of them.
-    void [activeTarget, perPage, stand, orientation, includedPhaseIds, appState];
+    void [activeTarget, perPage, stand, orientation, includedPhaseIds, calendarStyle, appState];
     const url = build().output('bloburl').toString();
     previewUrl = url;
     return () => URL.revokeObjectURL(url);
@@ -266,6 +279,27 @@
           </div>
         {/if}
 
+        {#if category === 'grid'}
+          <div class="field">
+            <span class="wk-eyebrow">Darstellung</span>
+            <div class="seg">
+              <button
+                class="seg-btn"
+                class:seg-on={calendarStyle === 'modern'}
+                onclick={() => (calendarStyle = 'modern')}
+              >Modern</button>
+              <button
+                class="seg-btn"
+                class:seg-on={calendarStyle === 'classic'}
+                onclick={() => (calendarStyle = 'classic')}
+              >Klassisch</button>
+            </div>
+            <p class="hint">
+              Klassisch zeichnet den Wochenplan wie das frühere Excel-Arbeitsprogramm.
+            </p>
+          </div>
+        {/if}
+
         <!-- Shared: both documents are sheets of A4 and both can be turned. The
              remembered value is per Art, because the sensible default is not. -->
         <div class="field">
@@ -296,6 +330,10 @@
           {:else}
             Der Wochenplan wird auf eine A4-Seite gezeichnet und passt sich ihr an.
             Konflikte sind rot umrandet: durchgezogen hart, gestrichelt weich.
+            {#if calendarStyle === 'classic'}
+              Die klassische Darstellung wiederholt die Zeitspalte an jedem
+              Phasenwechsel und füllt die Blöcke voll aus.
+            {/if}
           {/if}
         </p>
       </div>
