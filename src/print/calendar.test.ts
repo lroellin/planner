@@ -130,6 +130,17 @@ describe('buildCalendarDoc', () => {
     expect(doc.entries[0]!.room.short).toBe('TS1');
   });
 
+  it('carries full and short forms for the people, so a narrow card can fall back', () => {
+    const doc = buildCalendarDoc(
+      state([makeEvent({ id: 'a', groupId: 'g1', dayIndex: 2, teacherIds: ['t1', 't2'] })]),
+      ['gruppen'],
+    );
+    expect(doc.entries[0]!.teachers).toEqual({
+      full: 'Anna Müller, Beat Zwahlen',
+      short: 'AM BZ',
+    });
+  });
+
   it('produces nothing to draw when every phase is unchecked', () => {
     const doc = buildCalendarDoc(state([makeEvent({ groupId: 'g1' })]), []);
     expect(doc.columns).toHaveLength(0);

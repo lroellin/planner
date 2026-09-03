@@ -2,8 +2,8 @@ import { jsPDF } from 'jspdf';
 import type { PrintCell, PrintDoc } from './boxes';
 import { TARGET_LABELS } from './boxes';
 import {
-  GUTTER, MARGIN, PAGE, autoFit, cellSize, fitAt, gridFor, styleFor,
-  type BoxPart, type Fit, type Style,
+  GUTTER, MARGIN, autoFit, cellSize, fitAt, gridFor, pageSize, styleFor,
+  type BoxPart, type Fit, type Orientation, type Style,
 } from './layout';
 
 /**
@@ -28,6 +28,8 @@ export interface RenderOptions {
   stand: string | null;
   /** Boxes per page, or 'auto' to let the fitter decide. */
   perPage: number | 'auto';
+  /** Quer or Hoch. Changes the cell shape, so the fitter has to know too. */
+  orientation: Orientation;
 }
 
 function rgb(hex: string): [number, number, number] {
@@ -302,45 +304,56 @@ function drawBox(
  * where a tick is gone the moment you have used it. The dotted guides down the
  * gutters are for scissors; they sit on the trim edge.
  */
-function drawCutMarks(doc: jsPDF, grid: { cols: number; rows: number }, cell: { width: number; height: number }): void {
+function drawCutMarks(
+  doc: jsPDF,
+  grid: { cols: number; rows: number },
+  cell: { width: number; height: number },
+  page: { width: number; height: number },
+): void {
   const xs = [MARGIN];
   for (let c = 1; c < grid.cols; c++) xs.push(MARGIN + c * (cell.width + GUTTER) - GUTTER / 2);
-  xs.push(PAGE.width - MARGIN);
+  xs.push(page.width - MARGIN);
 
   const ys = [MARGIN];
   for (let r = 1; r < grid.rows; r++) ys.push(MARGIN + r * (cell.height + GUTTER) - GUTTER / 2);
-  ys.push(PAGE.height - MARGIN);
+  ys.push(page.height - MARGIN);
 
   doc.setLineWidth(0.25);
   doc.setDrawColor(90);
   for (const x of xs) {
     doc.line(x, 3.5, x, MARGIN - 2);
-    doc.line(x, PAGE.height - MARGIN + 2, x, PAGE.height - 3.5);
+    doc.line(x, page.height - MARGIN + 2, x, page.height - 3.5);
   }
   for (const y of ys) {
     doc.line(3.5, y, MARGIN - 2, y);
-    doc.line(PAGE.width - MARGIN + 2, y, PAGE.width - 3.5, y);
+    doc.line(page.width - MARGIN + 2, y, page.width - 3.5, y);
   }
 
   doc.setDrawColor(212);
   doc.setLineWidth(0.15);
   doc.setLineDashPattern([0.8, 1.2], 0);
-  for (const x of xs.slice(1, -1)) doc.line(x, MARGIN, x, PAGE.height - MARGIN);
-  for (const y of ys.slice(1, -1)) doc.line(MARGIN, y, PAGE.width - MARGIN, y);
+  for (const x of xs.slice(1, -1)) doc.line(x, MARGIN, x, page.height - MARGIN);
+  for (const y of ys.slice(1, -1)) doc.line(MARGIN, y, page.width - MARGIN, y);
   doc.setLineDashPattern([], 0);
 }
 
-export function resolveFit(docModel: PrintDoc, perPage: number | 'auto'): Fit {
-  return perPage === 'auto' ? autoFit(docModel.boxes) : fitAt(docModel.boxes, perPage);
+export function resolveFit(
+  docModel: PrintDoc,
+  perPage: number | 'auto',
+  orientation: Orientation,
+): Fit {
+  return perPage === 'auto'
+    ? autoFit(docModel.boxes, orientation)
+    : fitAt(docModel.boxes, perPage, orientation);
 }
 
 export function renderPdf(docModel: PrintDoc, opts: RenderOptions): jsPDF {
-  const fit = resolveFit(docModel, opts.perPage);
+  const fit = resolveFit(docModel, opts.perPage, opts.orientation);
   const grid = fit.grid;
   const cell = fit.cell;
   const style = fit.style;
 
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: opts.orientation });
   doc.setProperties({
     title: `${TARGET_LABELS[docModel.target]} – ${opts.wkName}`,
     creator: 'WK-Planer',
@@ -357,7 +370,7 @@ export function renderPdf(docModel: PrintDoc, opts: RenderOptions): jsPDF {
   fit.parts.forEach((part, i) => {
     const slot = i % fit.perPage;
     if (i > 0 && slot === 0) doc.addPage();
-    if (slot === 0) drawCutMarks(doc, grid, cell);
+    if (slot === 0) drawCutMarks(doc, grid, cell, pageSize(opts.orientation));
 
     const col = slot % grid.cols;
     const row = Math.floor(slot / grid.cols);

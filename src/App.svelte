@@ -350,43 +350,7 @@
     window.addEventListener('pointerup', up);
   }
 
-  /**
-   * Give the week its own sheet.
-   *
-   * FullCalendar sizes its columns in JS and writes the result as inline pixel
-   * widths, so a print viewport narrower than the screen leaves those widths in
-   * place and the phases overlap. Rather than fight the reflow, the page box is
-   * sized to the grid that is already laid out; the printer's own fit-to-page
-   * then scales it down, which is what every calendar app ends up doing.
-   */
-  function printPageStyle(): HTMLStyleElement {
-    let el = document.getElementById('wk-print-page') as HTMLStyleElement | null;
-    if (!el) {
-      el = document.createElement('style');
-      el.id = 'wk-print-page';
-      document.head.appendChild(el);
-    }
-    return el;
-  }
-
-  function fitGridToPage(): void {
-    // The report overlay brings its own layout and prints on plain A4.
-    if (reportOpen || !calendarWrapper || !scroller) {
-      printPageStyle().textContent = '';
-      return;
-    }
-    const width = Math.ceil(calendarWrapper.scrollWidth) + 4;
-    const height = Math.ceil(labelStripHeight() + scroller.scrollHeight) + 4;
-    if (width <= 4 || height <= 4) return;
-    printPageStyle().textContent = `@page { size: ${width}px ${height}px; margin: 14px; }`;
-  }
-
-  function labelStripHeight(): number {
-    return calendarWrapper?.querySelector('.phase-labels')?.getBoundingClientRect().height ?? 0;
-  }
-
   onMount(() => {
-    window.addEventListener('beforeprint', fitGridToPage);
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = (dark: boolean) =>
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
@@ -401,7 +365,6 @@
       }, 60);
     });
 
-    return () => window.removeEventListener('beforeprint', fitGridToPage);
   });
 </script>
 
@@ -578,6 +541,19 @@
     onclose={() => (placing = null)}
   />
 {/if}
+
+<!-- Only ever seen on paper, and only through the browser's own File > Print:
+     Ctrl/Cmd+P is intercepted and opens the Drucken dialog instead. -->
+<div class="print-notice">
+  <h1>Dieser Plan wird nicht aus dem Browser gedruckt.</h1>
+  <p>
+    Im WK-Planer auf <strong>Drucken</strong> klicken – oder
+    <strong>Ctrl/Cmd + P</strong>. Dort entstehen <strong>Wochenplan</strong> und
+    <strong>Handzettel</strong> als PDF, mit Schnittmarken, Phasenauswahl,
+    Ausrichtung und Vorschau.
+  </p>
+  <p>Diese Seite ist nur ein Hinweis und enthält keine Planungsdaten.</p>
+</div>
 
 <Toasts />
 
@@ -834,40 +810,48 @@
     outline-offset: 2px;
   }
 
-  /* Printing the grid is a question of unclipping, not of relayout: every flex
-     rule below stays exactly as it is on screen, and only the 100vh cages and
-     the scrollers are opened up. Switching .main-area to `display: block` (the
-     obvious move) collapses the calendar's width and FullCalendar's absolutely
-     positioned events then stack at the top of the page. */
+  /* The app itself prints nothing any more. Wochenplan and Handzettel are
+     drawn as PDFs in src/print/ and previewed in the Drucken dialog, which is
+     what Ctrl/Cmd+P opens — so there is no second, worse print layout of the
+     DOM to keep in step with them. Only the browser's own File > Print still
+     lands here, and it gets a note saying where the real thing is rather than a
+     wasted sheet of app chrome. */
+  .print-notice { display: none; }
+
   @media print {
-    /* Default sheet; fitGridToPage() replaces it with a grid-sized page box
-       whenever the calendar itself is what is being printed. */
     @page {
       size: A4 portrait;
-      margin: 10mm;
+      margin: 18mm;
     }
 
-    .toolbar-wrapper,
-    .selbar,
-    .marquee,
-    .right-dock {
+    .app-layout { display: none !important; }
+
+    /* The overlays live outside .app-layout, and any of them can be open when
+       the browser's print is triggered. */
+    :global(.report-overlay),
+    :global(.toast-stack),
+    :global(dialog) {
       display: none !important;
     }
 
-    .app-layout,
-    .main-area,
-    .calendar-wrapper,
-    .phase-scroll {
-      height: auto !important;
-      max-height: none !important;
-      min-height: 0 !important;
-      overflow: visible !important;
+    .print-notice {
+      display: block;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      color: #000;
+      max-width: 46em;
     }
 
-    .phase-scroll {
-      display: flex !important;
-      align-items: flex-start !important;
+    .print-notice h1 {
+      font-size: 15pt;
+      font-weight: 700;
+      margin: 0 0 0.7em;
     }
 
+    .print-notice p {
+      font-size: 11pt;
+      line-height: 1.55;
+      margin: 0 0 0.6em;
+    }
   }
+
 </style>

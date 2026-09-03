@@ -3,10 +3,10 @@
   import {
     buildPrintDoc, isPlanTarget, TARGET_LABELS, type PlanTarget, type PrintTarget,
   } from '../print/boxes';
-  import { PER_PAGE_CHOICES, gridFor } from '../print/layout';
+  import { PER_PAGE_CHOICES, gridFor, type Orientation } from '../print/layout';
   import { renderPdf, resolveFit, standLabel } from '../print/pdf';
   import { buildCalendarDoc } from '../print/calendar';
-  import { renderCalendarPdf, type Orientation } from '../print/calendarPdf';
+  import { renderCalendarPdf } from '../print/calendarPdf';
   import { orderedPhases, phaseGroups } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
   import type { ID } from '../types';
@@ -27,8 +27,6 @@
    */
   let perPage: number | 'auto' = $state('auto');
   let showStand = $state(true);
-  let orientation: Orientation = $state('landscape');
-
   /**
    * Two kinds of document, not four siblings. A Wochenplan is one sheet of the
    * whole week; a Handzettel is a stack of slips to cut up and give away — and
@@ -51,6 +49,23 @@
 
   const activeTarget = $derived<PrintTarget>(category === 'grid' ? 'grid' : handout);
 
+  /**
+   * One control, two remembered values.
+   *
+   * Quer/Hoch means the same thing for both documents and is driven by the same
+   * buttons, but the good default is opposite: a week of lane columns is wide,
+   * a slip is a tall list. Sharing a single value would hand half the users the
+   * wrong sheet every time they switched Art.
+   */
+  let gridOrientation: Orientation = $state('landscape');
+  let handoutOrientation: Orientation = $state('portrait');
+  const orientation = $derived(category === 'grid' ? gridOrientation : handoutOrientation);
+
+  function setOrientation(next: Orientation): void {
+    if (category === 'grid') gridOrientation = next;
+    else handoutOrientation = next;
+  }
+
   const phases = $derived(orderedPhases(appState));
   /**
    * Which phases go on the sheet. A KVK and a Gruppenrotation are two different
@@ -70,7 +85,7 @@
 
   const planTarget = $derived(isPlanTarget(activeTarget) ? activeTarget : null);
   const printDoc = $derived(planTarget ? buildPrintDoc(appState, planTarget) : null);
-  const fit = $derived(printDoc ? resolveFit(printDoc, perPage) : null);
+  const fit = $derived(printDoc ? resolveFit(printDoc, perPage, orientation) : null);
   const calendarDoc = $derived(
     planTarget ? null : buildCalendarDoc(appState, includedPhaseIds),
   );
@@ -90,7 +105,7 @@
   function build() {
     const now = showStand ? standLabel() : null;
     if (planTarget && printDoc) {
-      return renderPdf(printDoc, { wkName: appState.name, stand: now, perPage });
+      return renderPdf(printDoc, { wkName: appState.name, stand: now, perPage, orientation });
     }
     return renderCalendarPdf(buildCalendarDoc(appState, includedPhaseIds), {
       wkName: appState.name,
@@ -134,7 +149,7 @@
   });
 
   const boxCount = $derived(printDoc?.boxes.length ?? 0);
-  const grid = $derived(fit ? gridFor(fit.perPage) : null);
+  const grid = $derived(fit ? gridFor(fit.perPage, orientation) : null);
   const laneCount = $derived(calendarDoc?.columns.length ?? 0);
 </script>
 
@@ -249,23 +264,25 @@
               {/if}
             </p>
           </div>
-
-          <div class="field">
-            <span class="wk-eyebrow">Ausrichtung</span>
-            <div class="seg">
-              <button
-                class="seg-btn"
-                class:seg-on={orientation === 'landscape'}
-                onclick={() => (orientation = 'landscape')}
-              >Quer</button>
-              <button
-                class="seg-btn"
-                class:seg-on={orientation === 'portrait'}
-                onclick={() => (orientation = 'portrait')}
-              >Hoch</button>
-            </div>
-          </div>
         {/if}
+
+        <!-- Shared: both documents are sheets of A4 and both can be turned. The
+             remembered value is per Art, because the sensible default is not. -->
+        <div class="field">
+          <span class="wk-eyebrow">Ausrichtung</span>
+          <div class="seg">
+            <button
+              class="seg-btn"
+              class:seg-on={orientation === 'landscape'}
+              onclick={() => setOrientation('landscape')}
+            >Quer</button>
+            <button
+              class="seg-btn"
+              class:seg-on={orientation === 'portrait'}
+              onclick={() => setOrientation('portrait')}
+            >Hoch</button>
+          </div>
+        </div>
 
         <label class="check">
           <input type="checkbox" bind:checked={showStand} />

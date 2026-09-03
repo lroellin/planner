@@ -321,20 +321,12 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   // hue in CSS (which can mix against the current theme's background and give
   // dark mode a different recipe). Saturation is reserved for state — conflict,
   // selection, spotlight — so those can still be seen on a full week's grid.
-  // Does the block start on an hour rule? If it does, the time axis beside it
-  // already says when — printing "08:00" on a card whose top edge *is* the 08:00
-  // line is the one field on the card that carries no information. A block
-  // starting at 08:30 or 15:45 sits between rules and has to say so itself.
-  // Which is what decides whether the time survives a narrow lane; see the width
-  // bands in calendar.css.
-  const startsOnTheHour = ev.startTime.endsWith(':00');
 
   const classNames = [
     'wk-ev',
     `wk-dur-${durationBand(minutes)}`,
     // A Programmpunkt is a lesson on the grid — same card, its own colour.
     subject?.kind === 'break' ? 'wk-ev-break' : 'wk-ev-lesson',
-    ...(startsOnTheHour ? [] : ['wk-ev-offgrid']),
     ...(ev.groupId === ALL_GROUPS ? ['wk-ev-multi'] : []),
     ...(hardConflict ? ['wk-ev-hard'] : hasConflict ? ['wk-ev-soft'] : []),
   ];

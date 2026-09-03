@@ -361,7 +361,6 @@ The rules come from `previewClash(state, candidate)` in the **detector**, not fr
 | Class | Meaning |
 |---|---|
 | `wk-dur-xs/sm/md/lg` | ≤20 / ≤45 / ≤75 / >75 min — how much the card shows (see `durationBand`) |
-| `wk-ev-offgrid` | The block does not start on an hour rule (08:30, 15:45) — see **What the card drops first** |
 | `wk-ev-break` / `wk-ev-lesson` | Breaks recede into a hatched, spineless band |
 | `wk-ev-multi` | Drawn once per lane, so it stays quiet |
 | `wk-ev-hard` / `wk-ev-soft` | Solid red outline + corner notch / dashed amber outline |
@@ -379,7 +378,7 @@ width (container queries on the harness) — and they used to disagree about wha
 mattered, so two cards of the same width could show different fields because one
 was taller. Both now drop from one priority order, tail first:
 
-> **room pill → Ausbildner → start time → end time → room name**
+> **room pill → Ausbildner → end time → room name → start time**
 
 The room leads because it is the *least* redundant thing on the card: a printed
 Gruppenplan is read to find out where to walk. It used to be first to go — below
@@ -390,13 +389,13 @@ drawn as a tinted pill in the room's colour, which fits every lane the app draws
 Only below 48px — an overlap splitting an already narrow lane — does it fall back
 to a plain colour tag.
 
-**The start time is dropped by information, not by pixels.** A block that starts
-on an hour rule is sitting on the axis label that already says so, and printing
-"08:00" on a card whose top edge *is* the 08:00 line is the one field carrying
-nothing. `wk-ev-offgrid` marks the blocks that start between rules (08:30, 15:45)
-and those keep their time down to the 92px floor. Under a plain width threshold
-this looked arbitrary instead: KVK's ~100px lanes kept their times and WK's ~96px
-lanes lost theirs, which read as "KVK is special" when it was four pixels.
+**The start time goes first, on every card.** A block sitting on an hour rule is
+next to an axis label that already says so, so the field carries nothing there.
+Blocks starting *between* rules (08:30, 15:45) used to be marked `wk-ev-offgrid`
+and keep their time down to the 92px floor — genuinely the only place that minute
+appeared — but it cost a slot on the one row that also carries the people and the
+place, and the minute is one click away in the quick-edit popover. The exception
+and the class are gone; the time now drops like any other field.
 
 Nothing in the meta row shrinks. A half-drawn pill or a time clipped to "13:(" is
 worse than the field being absent, so when the row cannot hold everything a whole
@@ -574,7 +573,7 @@ A teacher filter dropdown (single-select) is shown when this tab is active.
 ### Workload (`teacherLoad`, `roomLoad`)
 What one teacher or one room is booked for — count, minutes, days on duty, and the subjects that name them as a default. The config detail panes used to work this out for themselves, and it had already drifted: the teacher pane counted events on switched-off groups and the report did not, so the same week showed two different hour counts depending on where you looked. Both now read `isEventActive(state, ev)`, the one predicate for "this event is on the plan at all", which the detector uses too.
 
-The screen layout keeps its `break-after: page` rules for the browser's own print path, but the Drucken button no longer uses them — plans go through `src/print/` instead.
+The panel has no print layout of its own any more — the `@media print` block that gave each plan its own page is gone. Drucken hands the tab to the PDF dialog instead; see [Printing](#printing). (`.print-title` survives in the markup and is simply never shown.)
 
 ---
 
@@ -695,7 +694,13 @@ The toolbar's **Drucken** is a single button, not a menu. Every entry of the men
 
 ### Two categories, not four siblings
 
-The dialog asks for the **Art** first — *Wochenplan* or *Handzettel* — and only then, for a Handzettel, which one. The two take genuinely different options (phases and orientation against boxes-per-page), and flattened into one row of four buttons the controls below changed shape depending on the pick, with nothing on screen saying why.
+The dialog asks for the **Art** first — *Wochenplan* or *Handzettel* — and only then, for a Handzettel, which one. Flattened into one row of four buttons, the controls below changed shape depending on the pick with nothing on screen saying why.
+
+What is **shared**: Art, **Ausrichtung**, Stand, the preview, and the three footer actions. Both documents are sheets of A4 and both can be turned, so Quer/Hoch is one control with one pair of labels.
+
+What stays **separate**: *Phasen* (Wochenplan only — a slip has no phase axis to filter), and *Ein Blatt pro* + *Blätter pro Seite* (Handzettel only — a week grid is always one page).
+
+Ausrichtung is the interesting one: **one control, two remembered values**. Quer/Hoch means the same thing for both documents, but the good default is opposite — a week of lane columns is wide, a slip is a tall list — so sharing a single value would hand you the wrong sheet every time you switched Art. The control is shared; the state is per category.
 
 ### Cut-out plans (`boxes.ts`, `layout.ts`, `pdf.ts`)
 
@@ -709,7 +714,7 @@ The three plan reports print as *boxes* on A4 portrait — one box per Gruppe, A
 
 **Rows never wrap.** That is what makes a box's height a pure function of its row count, which is what lets `autoFit` try every grid against every box without rendering anything. A cell that will not fit falls back to its explicit short name (`Subject.shortName`, `Room.shortName`, teacher initials) and only then to an ellipsis — *derived* short names are deliberately not used here: "Aussenplatz" cut to "Ausse" earns its keep in a 70 px lane, not on paper.
 
-`autoFit` picks the **densest A4 division on which every box still fits whole** (1×1, 1×2, 2×2, 2×3, 2×4). A box too big even for a full sheet continues into a further slip labelled "Blatt 1/2". The dialog lets the user override the count, and the preview is the real PDF, so an over-dense choice shows its own overflow before any paper is spent.
+`autoFit` picks the **densest A4 division on which every box still fits whole**. The tables are transposed per orientation — Hoch 1×1, 1×2, 2×2, 2×3, 2×4; Quer 1×1, 2×1, 2×2, 3×2, 4×2 — so a slip keeps roughly the same shape either way and both offer the same counts (1, 2, 4, 6, 8). That is what lets the *Blätter pro Seite* buttons keep one set of labels no matter which way the sheet is turned. A box too big even for a full sheet continues into a further slip labelled "Blatt 1/2". The dialog lets the user override the count, and the preview is the real PDF, so an over-dense choice shows its own overflow before any paper is spent.
 
 Column widths are measured **once per document** from the content, so every slip of one report divides its width identically. Each column's floor is its short-form width, capped (45 / 24 / 30 % of the row) so a Thema with no short name cannot starve the Raum column.
 
@@ -725,15 +730,17 @@ No font is embedded: jsPDF's built-in Helvetica is WinAnsi-encoded, which covers
 - **The time range is the day's own extent**, opened out to whole hours and floored at four. Printing 07:00–19:00 when nothing starts before 08:00 spends a seventh of the sheet on a band that, on paper, cannot be scrolled past.
 - **Blocks are a tint of the subject colour with a solid bar on the left**, not the full hue: a saturated block behind 6 pt text is unreadable on paper and expensive to print, and the bar keeps the colour decodable against the Legende.
 - **Conflicts are drawn**: red border, solid for hard, dashed for soft. Long blocks are painted first, so a short one placed inside one is not hidden under it — the sheet has no z-index, only paint order.
+- **A card is a stack, not a sentence.** The Thema wraps, then the Raum gets its own line or two, then the Ausbildner — each wrapped, each falling back to its short form, each dropped whole rather than half-drawn. The single joined meta row this replaced spent one line on everything and truncated the lot: `CG · Schutzanlage Bern…` cut off the field a printed plan is read for, while nine empty lines sat underneath it. Raum precedes Ausbildner because it is the less recoverable of the two.
+- **No time on the card.** The axis states it, and the off-hour exception (a card starting 09:45 printing its own time) cost the line the Raum now uses.
 - A block under 4.6 mm (a 15-minute Pause) gets **one centred line** instead of the stacked layout; drawn blank it read as a printing artefact rather than a block.
 
-### The old browser print path
+### There is no DOM print path any more
 
-Nothing in the app routes here any more — Ctrl+P is intercepted and the menu is gone — but the browser's own File ▸ Print still reaches the DOM, and the machinery below is what makes that survivable.
+The app prints **nothing** from the DOM. `fitGridToPage()`, the `beforeprint` listener, the `<style id="wk-print-page">` page box and the `@media print` blocks in `App.svelte`, `ReportPanel.svelte` and `calendar.css` are all gone: they existed to make a screen document survive a printer, and every one of them was a second, worse renderer competing with `src/print/`.
 
-The **week grid** is the awkward one. FullCalendar sizes its columns in JS and writes the result as inline pixel widths, so a print viewport narrower than the screen leaves those widths in place and the phases overlap. `fitGridToPage()` (App.svelte, on `beforeprint`) therefore writes a `@page { size: <grid width>px <grid height>px }` rule into a dedicated `<style id="wk-print-page">`: the sheet is sized to the grid that is already laid out, and the printer's own fit-to-page scales it. The print rules only *unclip* (heights to auto, scrollers to visible) — switching `.main-area` to `display: block`, the obvious move, collapses the calendar's width and the absolutely positioned events stack at the top of the page.
+Ctrl/Cmd+P is intercepted, so the only way to reach the browser's own print is File ▸ Print. That now gets a single-page **notice** (`.print-notice` in App.svelte, `display: none` until `@media print`) saying to use the Drucken button, with the app layout, the report overlay, the toasts and any open dialog hidden. A note beats a wasted sheet of app chrome.
 
-`@fullcalendar/adaptive` had to go for this: its print mode replaces the time grid with a flat list of cards — no axis, no hour lines, no proportional positions.
+`@fullcalendar/adaptive` stays out, for the original reason and now a stronger one: its print mode replaces the time grid with a flat list of cards, and the grid is drawn by `calendarPdf.ts` anyway.
 
 ## Key Utility Functions (`src/utils/timeUtils.ts`)
 

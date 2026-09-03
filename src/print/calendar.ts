@@ -38,7 +38,7 @@ export interface GridEntry {
   time: string;
   color: string;
   subject: PrintCell;
-  teachers: string;
+  teachers: PrintCell;
   room: PrintCell;
   isBreak: boolean;
   /** Hard conflicts are drawn solid, soft ones dashed; see the renderer. */
@@ -151,7 +151,10 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
       time: `${ev.startTime}–${ev.endTime}`,
       color: subject.color,
       subject: { full: subject.name, short: subject.shortName.trim() || subject.name },
-      teachers: teachers.map(t => teacherShort(t)).join(' '),
+      teachers: {
+        full: teachers.map(t => t.name).join(', '),
+        short: teachers.map(t => teacherShort(t)).join(' '),
+      },
       room: { full: room?.name ?? '', short: room?.shortName.trim() || room?.name || '' },
       isBreak: subject.kind === 'break',
       conflict: kinds.size === 0

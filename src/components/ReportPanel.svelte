@@ -918,57 +918,9 @@
     font-weight: 600;
   }
 
-  /* ── Print: one plan per page, no app chrome ───────────────────────────── */
-  @media print {
-    :global(body.wk-report-open .app-layout) { display: none !important; }
+  /* No print layout here any more: the Drucken button hands the tab to the PDF
+     dialog (src/print/), which draws these plans as cut-out slips rather than
+     reflowing the screen document. `.print-title` stays in the markup and is
+     simply never shown; App.svelte's print rules hide this overlay outright. */
 
-    .report-overlay {
-      position: static;
-      display: block;
-      background: none;
-    }
-
-    .report-sheet {
-      width: 100%;
-      max-width: none;
-      height: auto;
-      border-radius: 0;
-      box-shadow: none;
-      overflow: visible;
-    }
-
-    .report-chrome { display: none !important; }
-
-    .report-body {
-      overflow: visible;
-      padding: 0;
-      gap: 0.9rem;
-    }
-
-    .print-title { display: block; }
-
-    .plan {
-      break-inside: avoid;
-      break-after: page;
-      border-bottom: none;
-    }
-
-    .plan:last-child { break-after: auto; }
-
-    .plan-head { position: static; background: none; }
-
-    .row {
-      font-size: 11px;
-      gap: 0.4rem 0.7rem;
-      grid-template-columns: minmax(5.5rem, max-content) minmax(0, auto) max-content minmax(0, 1fr);
-    }
-
-    .row-teacher {
-      grid-template-columns:
-        minmax(4.5rem, max-content) minmax(0, auto) max-content max-content minmax(0, 1fr);
-    }
-
-    .day-block,
-    .plan-empty { padding-left: 2.4rem; }
-  }
 </style>

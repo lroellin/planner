@@ -373,7 +373,7 @@
    because one was taller. Both now drop from the *same* priority order, tail
    first:
 
-       room pill  →  Ausbildner  →  start time  →  end time  →  room name
+       room pill  →  Ausbildner  →  end time  →  room name  →  start time
 
    The room leads because it is the least redundant thing on the card: the grid
    already states the time by where the block sits, and a printed Gruppenplan is
@@ -410,21 +410,17 @@
 
 /* Where a lane of a four-lane phase lands on a 1500px viewport. The end time and
    the room's full name go; the pill and the initials stay.
-   
-   The start time goes too — but only on a block that starts on an hour rule,
-   where the axis beside it has already said so. `wk-ev-offgrid` (08:30, 15:45)
-   keeps its time all the way down to the next band, because there the card is
-   the only thing that can say when it starts.
-   
-   Making the rule *information* rather than pixels is what stops it looking
-   arbitrary: with a plain width threshold, KVK's ~100px lanes kept their times
-   and WK's ~96px lanes lost theirs, which read as "KVK is special" when it was
-   only four pixels. */
+
+   The start time goes with them, on every card. It used to survive here on a
+   block that starts off the hour (08:30, 15:45), where the card is the only
+   thing that can say when it starts — a real piece of information, but it cost
+   a field on the one row that also has to carry the people and the place, and
+   the minute is one click away in the quick-edit popover. */
 @container wk-ev (max-width: 132px) {
   .wk-ev-t-end { display: none; }
   .wk-ev-room-name { display: none; }
   .wk-ev-meta { flex-wrap: nowrap; gap: 3px 5px; overflow: hidden; }
-  .fc-timegrid-event:not(.wk-ev-offgrid) .wk-ev-time { display: none; }
+  .wk-ev-time { display: none; }
 }
 
 /* …but a card with height to spare spends it rather than clipping. A 3 h block
@@ -446,10 +442,9 @@
 .wk-ev-time { flex-shrink: 0; }
 
 /* Below this the card stops trying to be a sentence: the short subject name, the
-   initials and the room code. Even an off-grid time goes — the row has space for
-   two things and neither the people nor the place is recoverable from anywhere
-   else on screen, where the minute is one click away in the quick-edit popover.
-   The full name of everything stays in the tooltip. */
+   initials and the room code. The row has space for two things and neither the
+   people nor the place is recoverable from anywhere else on screen. The full
+   name of everything stays in the tooltip. */
 @container wk-ev (max-width: 92px) {
   .wk-ev-name-full { display: none; }
   .wk-ev-name-short { display: inline; }
@@ -688,67 +683,10 @@
   outline-offset: -2px;
 }
 
-/* ── Print ─────────────────────────────────────────────────────────────────── */
-
-@media print {
-  .fc-timegrid-event.wk-ev {
-    box-shadow: none;
-    /* Printers drop background colours; the spine survives as a solid rule. */
-    border-left-width: 4px;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  .fc-timegrid-event.wk-selected {
-    --wk-ring: 0 0 0 0 transparent;
-    --wk-lift: none;
-    box-shadow: none;
-  }
-
-  /* The conflict ring is a *border* on ::before, so unlike the outline it
-     replaced it survives a printer that drops backgrounds — the double edge
-     prints as geometry. Only the surface-coloured gap is a shadow, so it is
-     restated here as a white ring to keep the two edges apart on paper. */
-  .fc-timegrid-event.wk-ev-hard::before,
-  .fc-timegrid-event.wk-ev-soft::before {
-    box-shadow: inset 0 0 0 2px #fff;
-  }
-
-  .fc-timegrid-event.wk-ev-hard::before { border-color: #000; }
-  .fc-timegrid-event.wk-ev-soft::before { border-color: #666; }
-
-  /* A teacher avatar is white type on a coloured disc. The disc is a background,
-     so it prints as nothing and the initials went white-on-white — the one part
-     of the card that names a person vanished. On paper it is dark type inside a
-     ruled circle instead. */
-  .wk-ev-av {
-    background: transparent !important;
-    color: #000 !important;
-    border: 1px solid #000;
-    font-weight: 700;
-  }
-
-  /* Same for the hatch: it prints as a flat grey wash that swallows the title,
-     where on screen it is a 3.5% texture. A ruled outline says "break" without
-     costing any ink the words need. */
-  .fc-timegrid-event.wk-ev-break {
-    background: none !important;
-    border-style: dashed;
-  }
-}
-
-/* FullCalendar caps its own scrollers at the on-screen height; on paper the
-   whole day has to be allowed to run past the fold. */
-@media print {
-  .fc-scroller,
-  .fc-scroller-harness,
-  .fc-view-harness {
-    height: auto !important;
-    max-height: none !important;
-    overflow: visible !important;
-  }
-
-  .fc {
-    height: auto !important;
-  }
-}
+/* ── Print ─────────────────────────────────────────────────────────────────
+   Nothing here. The week grid is no longer printed from the DOM: it is drawn
+   as a PDF in src/print/calendarPdf.ts, which owns its own colours, rules and
+   page box. The rules that used to live here — spines instead of backgrounds,
+   ruled avatars, dashed breaks, unclipped FullCalendar scrollers — were all
+   compensating for a printer dropping backgrounds, and the renderer simply
+   does not have that problem. */

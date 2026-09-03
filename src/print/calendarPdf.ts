@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import type { CalendarDoc, GridSpan } from './calendar';
 import type { PrintCell } from './boxes';
+import type { Orientation } from './layout';
 
 /**
  * The week grid, drawn rather than screenshotted.
@@ -12,7 +13,9 @@ import type { PrintCell } from './boxes';
  * depended on how wide the browser window happened to be.
  */
 
-export type Orientation = 'portrait' | 'landscape';
+// One definition, shared with the slip fitter: both documents offer the same
+// Quer/Hoch choice and the dialog drives them through the same control.
+export type { Orientation } from './layout';
 
 export interface CalendarOptions {
   wkName: string;
@@ -224,37 +227,51 @@ export function renderCalendarPdf(model: CalendarDoc, opts: CalendarOptions): js
       continue;
     }
 
+    /**
+     * The block is tall and the text is short, so the card is laid out as a
+     * stack rather than a sentence: the Thema wraps, then the Raum gets its own
+     * line (or two), then the Ausbildner. The single joined meta row this
+     * replaced spent one line on everything and truncated the lot — which cut
+     * off exactly the field a printed plan is read for ("CG · Schutzanlage
+     * Bern…") while leaving nine empty lines underneath it.
+     *
+     * Each field is wrapped, falls back to its short form, and is dropped whole
+     * rather than half-drawn. Raum comes before Ausbildner because it is the
+     * less recoverable of the two.
+     */
     const titleSize = bh < 6 ? 5.4 : bh < 12 ? 6 : 6.6;
     const lineH = titleSize * PT * 1.2;
-    const metaH = 5 * PT * 1.25;
+    const metaSize = bh < 12 ? 5 : 5.6;
+    const metaLineH = metaSize * PT * 1.25;
     let cursor = by + pad;
     const bottom = by + bh - pad;
 
-    doc.setFont('helvetica', 'bold');
+    const meta: PrintCell[] = [e.room, e.teachers].filter(v => v.full !== '');
+
+    // Leave the Raum a line to land on before letting the title use every one.
     doc.setFontSize(titleSize);
+    const reserve = meta.length > 0 ? metaLineH : 0;
+    const titleRoom = Math.floor((bottom - cursor - reserve) / lineH);
+    const maxTitleLines = Math.max(1, Math.min(titleRoom, 3));
+
+    doc.setFont('helvetica', 'bold');
     doc.setTextColor(e.isBreak ? 110 : 24, e.isBreak ? 118 : 30, e.isBreak ? 128 : 42);
-    // Reserve a line for the meta row only if there will be room for one.
-    const room = bottom - cursor;
-    const maxLines = Math.max(1, Math.floor((room - metaH) / lineH));
-    const lines = cardLines(doc, e.subject, tw, Math.min(maxLines, 3));
-    for (const line of lines) {
+    for (const line of cardLines(doc, e.subject, tw, maxTitleLines)) {
       if (cursor + lineH > bottom) break;
       doc.text(line, tx, cursor + lineH * 0.78);
       cursor += lineH;
     }
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(5);
+    doc.setFontSize(metaSize);
     doc.setTextColor(90, 100, 116);
-    // Time first: a block that does not start on an hour rule is the one the
-    // axis cannot answer for.
-    const meta = [
-      e.startMinutes % 60 === 0 ? '' : e.time,
-      e.teachers,
-      e.room.short,
-    ].filter(Boolean).join(' · ');
-    if (meta && cursor + metaH <= bottom + 0.4) {
-      doc.text(truncate(doc, meta, tw), tx, cursor + metaH * 0.78);
+    for (const value of meta) {
+      const free = Math.floor((bottom - cursor) / metaLineH);
+      if (free < 1) break;
+      for (const line of cardLines(doc, value, tw, Math.min(free, 2))) {
+        doc.text(line, tx, cursor + metaLineH * 0.78);
+        cursor += metaLineH;
+      }
     }
   }
 

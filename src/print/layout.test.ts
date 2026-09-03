@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { PrintBox, PrintDay } from './boxes';
 import {
-  GRIDS, autoFit, boxHeight, cellSize, chromeHeight, fitAt, gridFor, paginateBox, styleFor,
+  autoFit, boxHeight, cellSize, chromeHeight, fitAt, gridFor, grids, pageSize, paginateBox,
+  styleFor,
 } from './layout';
 
 function day(label: string, rows: number, withNote = false): PrintDay {
@@ -31,21 +32,40 @@ function box(key: string, days: PrintDay[]): PrintBox {
   };
 }
 
-const A4_CELL = cellSize({ cols: 1, rows: 1 });
+const A4_CELL = cellSize({ cols: 1, rows: 1 }, 'portrait');
 
 describe('cellSize', () => {
-  it('fills the printable area exactly', () => {
-    for (const grid of GRIDS) {
-      const cell = cellSize(grid);
-      expect(cell.width * grid.cols + (grid.cols - 1) * 6).toBeCloseTo(190, 6);
-      expect(cell.height * grid.rows + (grid.rows - 1) * 6).toBeCloseTo(277, 6);
+  it.each(['portrait', 'landscape'] as const)('fills the printable area exactly (%s)', o => {
+    const page = pageSize(o);
+    for (const grid of grids(o)) {
+      const cell = cellSize(grid, o);
+      expect(cell.width * grid.cols + (grid.cols - 1) * 6).toBeCloseTo(page.width - 20, 6);
+      expect(cell.height * grid.rows + (grid.rows - 1) * 6).toBeCloseTo(page.height - 20, 6);
     }
   });
 
-  it('gives every grid a distinct box count', () => {
-    const counts = GRIDS.map(g => g.cols * g.rows);
-    expect(new Set(counts).size).toBe(counts.length);
-    expect(gridFor(4)).toEqual({ cols: 2, rows: 2 });
+  it('offers the same counts either way, so the buttons need no relabelling', () => {
+    const portrait = grids('portrait').map(g => g.cols * g.rows);
+    const landscape = grids('landscape').map(g => g.cols * g.rows);
+    expect(portrait).toEqual(landscape);
+    expect(new Set(portrait).size).toBe(portrait.length);
+  });
+
+  it('transposes the divisions for Quer', () => {
+    expect(gridFor(2, 'portrait')).toEqual({ cols: 1, rows: 2 });
+    expect(gridFor(2, 'landscape')).toEqual({ cols: 2, rows: 1 });
+    expect(gridFor(4, 'portrait')).toEqual({ cols: 2, rows: 2 });
+    expect(gridFor(6, 'landscape')).toEqual({ cols: 3, rows: 2 });
+  });
+
+  it('treats a full sheet as the large tier in both orientations', () => {
+    expect(styleFor(cellSize({ cols: 1, rows: 1 }, 'portrait')).tier).toBe('lg');
+    expect(styleFor(cellSize({ cols: 1, rows: 1 }, 'landscape')).tier).toBe('lg');
+  });
+
+  it('keeps the portrait tiers exactly where they were', () => {
+    const tier = (n: number) => styleFor(cellSize(gridFor(n, 'portrait'), 'portrait')).tier;
+    expect([1, 2, 4, 6, 8].map(tier)).toEqual(['lg', 'md', 'md', 'sm', 'sm']);
   });
 });
 
@@ -120,7 +140,7 @@ describe('paginateBox', () => {
 describe('autoFit', () => {
   it('picks the densest grid on which every box still fits whole', () => {
     const small = Array.from({ length: 6 }, (_, i) => box(`g${i}`, [day('Mi', 2)]));
-    const fit = autoFit(small);
+    const fit = autoFit(small, 'portrait');
     expect(fit.overflowing).toBe(0);
     expect(fit.perPage).toBe(8);
     // Denser is not on offer, and one step sparser would waste paper.
@@ -129,14 +149,14 @@ describe('autoFit', () => {
 
   it('falls back to a sparser grid as the boxes grow', () => {
     const week = [day('Mo', 8), day('Di', 8), day('Mi', 8), day('Do', 8), day('Fr', 8)];
-    const fit = autoFit([box('a', week), box('b', week)]);
+    const fit = autoFit([box('a', week), box('b', week)], 'portrait');
     expect(fit.overflowing).toBe(0);
     expect(fit.perPage).toBeLessThan(8);
   });
 
   it('accepts continuation rather than shrinking past the sparsest grid', () => {
     const huge = [box('a', [day('Mo', 60), day('Di', 60)])];
-    const fit = autoFit(huge);
+    const fit = autoFit(huge, 'portrait');
     expect(fit.perPage).toBe(1);
     expect(fit.overflowing).toBe(1);
     expect(fit.parts.length).toBeGreaterThan(1);
@@ -145,22 +165,48 @@ describe('autoFit', () => {
 
   it('reports a page count that matches the parts it produced', () => {
     const boxes = Array.from({ length: 7 }, (_, i) => box(`g${i}`, [day('Mi', 3)]));
-    const fit = autoFit(boxes);
+    const fit = autoFit(boxes, 'portrait');
     expect(fit.pages).toBe(Math.ceil(fit.parts.length / fit.perPage));
+  });
+});
+
+describe('autoFit in Quer', () => {
+  it('solves against the landscape sheet and says so', () => {
+    const boxes = Array.from({ length: 4 }, (_, i) => box(`g${i}`, [day('Mi', 3)]));
+    const fit = autoFit(boxes, 'landscape');
+    expect(fit.orientation).toBe('landscape');
+    // Landscape divisions are the transposed ones: wider than they are tall.
+    expect(fit.grid.cols).toBeGreaterThanOrEqual(fit.grid.rows);
+    expect(fit.cell.width * fit.grid.cols + (fit.grid.cols - 1) * 6).toBeCloseTo(277, 6);
+  });
+
+  it('turns a short, wide box into a denser sheet than portrait would', () => {
+    // Few rows, so height is not the binding constraint — Quer then fits the
+    // same slips on a shallower cell.
+    const boxes = Array.from({ length: 8 }, (_, i) => box(`g${i}`, [day('Mi', 2)]));
+    expect(autoFit(boxes, 'landscape').overflowing).toBe(0);
+    expect(autoFit(boxes, 'portrait').overflowing).toBe(0);
+  });
+
+  it('honours an explicit count in Quer too', () => {
+    const fit = fitAt([box('a', [day('Mi', 2)])], 6, 'landscape');
+    expect(fit.perPage).toBe(6);
+    expect(fit.grid).toEqual({ cols: 3, rows: 2 });
+    expect(fit.orientation).toBe('landscape');
   });
 });
 
 describe('fitAt', () => {
   it('honours an explicit choice even when it overflows', () => {
     const week = [day('Mo', 10), day('Di', 10), day('Mi', 10), day('Do', 10)];
-    const fit = fitAt([box('a', week)], 8);
+    const fit = fitAt([box('a', week)], 8, 'portrait');
     expect(fit.perPage).toBe(8);
     expect(fit.overflowing).toBe(1);
   });
 
   it('agrees with boxHeight about what overflows', () => {
     const boxes = [box('a', [day('Mi', 3)]), box('b', [day('Mi', 30)])];
-    const fit = fitAt(boxes, 4);
+    const fit = fitAt(boxes, 4, 'portrait');
     const tooTall = boxes.filter(b => boxHeight(b, fit.style) > fit.cell.height);
     expect(fit.overflowing).toBe(tooTall.length);
   });

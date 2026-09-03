@@ -10,7 +10,15 @@ import type { PrintBox, PrintDay } from './boxes';
  * and the boxes of one report are all the same size by construction.
  */
 
-export const PAGE = { width: 210, height: 297 } as const; // A4 portrait, mm
+export type Orientation = 'portrait' | 'landscape';
+
+/** A4, in mm. Portrait is the default for slips; the week grid wants Quer. */
+export function pageSize(orientation: Orientation): { width: number; height: number } {
+  return orientation === 'landscape'
+    ? { width: 297, height: 210 }
+    : { width: 210, height: 297 };
+}
+
 export const MARGIN = 10;
 /** Cut gutter: the scissors go down its middle, leaving 3 mm of white per slip. */
 export const GUTTER = 6;
@@ -20,8 +28,13 @@ export interface Grid {
   rows: number;
 }
 
-/** Guillotine-friendly divisions of A4, sparsest first. */
-export const GRIDS: Grid[] = [
+/**
+ * Guillotine-friendly divisions of A4, sparsest first — transposed for Quer, so
+ * a slip stays roughly the same shape either way and the two orientations offer
+ * the same counts. That is what lets the "Blätter pro Seite" buttons keep one
+ * set of labels no matter which way the sheet is turned.
+ */
+const GRIDS_PORTRAIT: Grid[] = [
   { cols: 1, rows: 1 },
   { cols: 1, rows: 2 },
   { cols: 2, rows: 2 },
@@ -29,16 +42,31 @@ export const GRIDS: Grid[] = [
   { cols: 2, rows: 4 },
 ];
 
-export const PER_PAGE_CHOICES = GRIDS.map(g => g.cols * g.rows);
+const GRIDS_LANDSCAPE: Grid[] = [
+  { cols: 1, rows: 1 },
+  { cols: 2, rows: 1 },
+  { cols: 2, rows: 2 },
+  { cols: 3, rows: 2 },
+  { cols: 4, rows: 2 },
+];
 
-export function gridFor(perPage: number): Grid {
-  return GRIDS.find(g => g.cols * g.rows === perPage) ?? GRIDS[0]!;
+export function grids(orientation: Orientation): Grid[] {
+  return orientation === 'landscape' ? GRIDS_LANDSCAPE : GRIDS_PORTRAIT;
 }
 
-export function cellSize(grid: Grid): { width: number; height: number } {
+/** Same for both orientations, by construction of the two tables above. */
+export const PER_PAGE_CHOICES = GRIDS_PORTRAIT.map(g => g.cols * g.rows);
+
+export function gridFor(perPage: number, orientation: Orientation): Grid {
+  const table = grids(orientation);
+  return table.find(g => g.cols * g.rows === perPage) ?? table[0]!;
+}
+
+export function cellSize(grid: Grid, orientation: Orientation): { width: number; height: number } {
+  const page = pageSize(orientation);
   return {
-    width: (PAGE.width - 2 * MARGIN - (grid.cols - 1) * GUTTER) / grid.cols,
-    height: (PAGE.height - 2 * MARGIN - (grid.rows - 1) * GUTTER) / grid.rows,
+    width: (page.width - 2 * MARGIN - (grid.cols - 1) * GUTTER) / grid.cols,
+    height: (page.height - 2 * MARGIN - (grid.rows - 1) * GUTTER) / grid.rows,
   };
 }
 
@@ -90,8 +118,13 @@ const STYLES: Record<Style['tier'], Style> = {
   },
 };
 
+/**
+ * A full sheet either way is `lg`. The height floor is 150 rather than 200 so a
+ * landscape A4 (277×190) qualifies; in portrait the next cell down is 135.5 mm
+ * tall, so the same set of divisions still lands on the same tiers as before.
+ */
 export function styleFor(cell: { width: number; height: number }): Style {
-  if (cell.width >= 140 && cell.height >= 200) return STYLES.lg;
+  if (cell.width >= 140 && cell.height >= 150) return STYLES.lg;
   if (cell.height >= 120) return STYLES.md;
   return STYLES.sm;
 }
@@ -193,6 +226,7 @@ export function paginateBox(box: PrintBox, style: Style, cellHeight: number): Bo
 
 export interface Fit {
   perPage: number;
+  orientation: Orientation;
   grid: Grid;
   cell: { width: number; height: number };
   style: Style;
@@ -202,14 +236,15 @@ export interface Fit {
   pages: number;
 }
 
-export function fitAt(boxes: PrintBox[], perPage: number): Fit {
-  const grid = gridFor(perPage);
-  const cell = cellSize(grid);
+export function fitAt(boxes: PrintBox[], perPage: number, orientation: Orientation): Fit {
+  const grid = gridFor(perPage, orientation);
+  const cell = cellSize(grid, orientation);
   const style = styleFor(cell);
   const parts = boxes.flatMap(b => paginateBox(b, style, cell.height));
   const overflowing = boxes.filter(b => boxHeight(b, style) > cell.height).length;
   return {
     perPage: grid.cols * grid.rows,
+    orientation,
     grid,
     cell,
     style,
@@ -225,10 +260,10 @@ export function fitAt(boxes: PrintBox[], perPage: number): Fit {
  * box, that box simply continues, which is the honest answer rather than a
  * smaller font nobody can read across a Turnhalle.
  */
-export function autoFit(boxes: PrintBox[]): Fit {
-  for (const grid of [...GRIDS].reverse()) {
-    const fit = fitAt(boxes, grid.cols * grid.rows);
+export function autoFit(boxes: PrintBox[], orientation: Orientation): Fit {
+  for (const grid of [...grids(orientation)].reverse()) {
+    const fit = fitAt(boxes, grid.cols * grid.rows, orientation);
     if (fit.overflowing === 0) return fit;
   }
-  return fitAt(boxes, 1);
+  return fitAt(boxes, 1, orientation);
 }
