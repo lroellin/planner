@@ -735,6 +735,33 @@ No font is embedded: jsPDF's built-in Helvetica is WinAnsi-encoded, which covers
 - **No time on the card.** The axis states it, and the off-hour exception (a card starting 09:45 printing its own time) cost the line the Raum now uses.
 - A block under 4.6 mm (a 15-minute Pause) gets **one centred line** instead of the stacked layout; drawn blank it read as a printing artefact rather than a block.
 
+### The abbreviation key (`legend.ts`)
+
+A card falls back to a Kürzel the moment its lane is too narrow for the full
+name, and paper has no tooltip to recover it from. So both week grids print a
+**Abkürzungen** band listing every short form a block on *that sheet* could show,
+with its full name.
+
+`buildCalendarDoc` collects it while it builds the entries — only Themen, Räume
+and Ausbildner actually placed on the printed columns, keyed by kind + short so a
+Raum on twelve cards is listed once, and skipping anything whose Kürzel equals
+its name. It is ordered Thema → Raum → Ausbildner, the same sequence the card
+drops them in, so the key reads in the order of the block it explains.
+
+**It goes below the grid, not into it.** The grid's white space is tempting —
+nobody teaches at 07:00, the Kader lanes are empty for three days — and an
+earlier version placed the key in the largest block-free rectangle. But an empty
+cell is a statement about the week, and a key printed into one makes the plan look
+fuller than it is. A band between the grid and the footer is also always in the
+same place, which is what makes it findable.
+
+`measureLegend` lays it out against the sheet: the column width is the longest
+`KÜR = Name` in it, so the number of columns follows from the page and the
+content rather than being fixed. Entries run *down* each column before starting
+the next, so a long list reads as a list. `drawLegend` takes an ink and a muted
+colour, which is all the two sheets differ by. The grid gives up exactly the
+height the key measures; with nothing to explain, no band is reserved at all.
+
 ### Klassische Darstellung (`calendarClassicPdf.ts`)
 
 The Arbeitsprogramm used to be made in Excel, and the supervisors who sign it off
@@ -752,20 +779,31 @@ Excel footer stay out; conflicts keep the red border the Excel had no way to dra
 | Block fill | tint + a 1.1 mm colour bar | the subject colour at full strength |
 | Block text | left-aligned stack: Thema → Raum → Ausbildner | centred both ways: Thema, then one italic `Raum, Ausbildner` line |
 | Text colour | fixed slate | `getContrastColor(subject.color)`, the meta line blended 28 % toward the fill |
-| Zeit axis | once, at the left | left, **at every phase boundary**, and at the right edge |
+| Zeit axis | once, at the left | left, **between every day**, and at the right edge |
 | Header | Phase / Tag / Lane | Tag / Lane — the repeated axis already marks the boundary |
 | Rules | 30-min, grey | 15-min dotted, whole hours solid black |
 | Frame | hairline column rules | black table borders, heavy outer frame |
 | Breaks | softened fill, grey text | no special case — a Pause is its own colour |
 
-**The axes are the only real logic**, so they are a pure exported function:
-`axisPositions(model)` returns the column indexes a Zeit column is inserted
-before — `0`, every `phase.from`, and `columns.length`, deduplicated and sorted.
-The default plan gives `[0, 2, 11]`; printing one phase collapses it to the two
-edges. Column geometry follows: `colW = (usableW − axes.length·AXIS_W) / columns.length`,
-and a column's x adds `AXIS_W` for every axis at or before it. Should `colW` fall
-under 4 mm the phase axes are dropped and only the two edges kept — an axis meant
-to help read the lanes must not be what squeezes them out.
+**The axes are the only real logic**, so they are pure exported functions.
+`axisTiers(model)` returns the candidate placements densest first — the column
+indexes a Zeit column is inserted *before*, deduplicated (day 0 and phase 0 are
+both `0`) and sorted, so the running axis count is monotonic:
+
+1. before **every day** (the Excel's own rhythm — no block is more than a day away from the hour it sits on),
+2. before every **phase boundary**,
+3. the two **edges** only.
+
+`chooseAxes(model, usableW)` takes the densest tier that still leaves a lane
+column of at least 4 mm. Degrading a step at a time matters because a wide plan
+is both where the repeated axis helps most and where it costs most; collapsing
+straight to the edges threw away a phase axis the sheet could still afford. The
+default plan on A4 gets tier 1 in **both** orientations: `[0, 1, 2, 5, 8, 11]`.
+
+Column geometry follows: `colW = (usableW − axes.length·AXIS_W) / columns.length`,
+and a column's x adds `AXIS_W` for every axis at or before it. `AXIS_W` is 8 mm
+against the modern sheet's 13 — cut to what `07:00` at 6.5 pt needs, because this
+sheet pays for it once per day rather than once per page.
 
 A block's width is measured from the *first* and *last* column it covers rather
 than from `from + span`, so a Lektion ending on a phase boundary does not swallow

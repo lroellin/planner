@@ -4,6 +4,7 @@ import type { PrintCell } from './boxes';
 import type { CalendarOptions } from './calendarPdf';
 import { getContrastColor } from '../utils/colorUtils';
 import { PT, blend, cardLines, hhmm, rgb, truncate } from './pdfDraw';
+import { drawLegend, measureLegend } from './legend';
 
 /**
  * The week grid in the shape of the Excel Arbeitsprogramm this app replaced.
@@ -11,29 +12,53 @@ import { PT, blend, cardLines, hhmm, rgb, truncate } from './pdfDraw';
  * The same `CalendarDoc` the modern sheet is drawn from — same week, same
  * blocks, same conflict verdicts — laid out the way the supervisors who sign the
  * programme off have read it for years: a hard black table, saturated colour
- * blocks with centred text, and the Zeit axis repeated across the page.
+ * blocks with centred text, and the Zeit axis repeated between the days.
  *
  * Not a replica. The vertical "Aktualisieren Unterlagen" text and the Excel
  * footer stay out; this is close enough to be read without explanation.
  */
 
 const MARGIN = 8;
-/** Narrower than the modern sheet's 13 mm — this one pays for it several times. */
-const AXIS_W = 10;
+/**
+ * Narrower than the modern sheet's 13 mm: this one pays for the axis once per
+ * day, so it is cut to what "07:00" at 6.5 pt actually needs plus a hair of pad.
+ */
+const AXIS_W = 8;
 /** Below this a lane column is not worth the axis that squeezed it. */
 const MIN_COL_W = 4;
 
 const BLACK: [number, number, number] = [0, 0, 0];
+const LEGEND_SIZE = 4.9;
 
 /**
- * Column indexes before which a Zeit column is inserted: the left edge, every
- * phase boundary, and the right edge. `phases[0].from` is always 0, so the set
- * is deduplicated rather than assumed disjoint.
+ * Where the Zeit columns go, densest first.
+ *
+ * The Excel sheet repeats the axis across the page so no block is ever more than
+ * a day away from the hour it sits on — and a wide plan is exactly where that
+ * matters, which is also where the axes cost the most width. So the tiers degrade
+ * one step at a time rather than collapsing to the edges: every day, then every
+ * phase boundary, then the two edges. Each list is the column indexes a Zeit
+ * column is inserted *before*, deduplicated (day 0 and phase 0 are both `0`) and
+ * sorted, so the running axis count is monotonic.
  */
-export function axisPositions(model: CalendarDoc): number[] {
-  const positions = new Set<number>([0, model.columns.length]);
-  for (const phase of model.phases) positions.add(phase.from);
-  return [...positions].sort((a, b) => a - b);
+export function axisTiers(model: CalendarDoc): number[][] {
+  const edges = [0, model.columns.length];
+  const tier = (extra: number[]): number[] =>
+    [...new Set([...edges, ...extra])].sort((a, b) => a - b);
+  return [
+    tier(model.days.map(d => d.from)),
+    tier(model.phases.map(p => p.from)),
+    tier([]),
+  ];
+}
+
+/** The densest tier that still leaves a lane column worth printing. */
+export function chooseAxes(model: CalendarDoc, usableW: number): number[] {
+  const tiers = axisTiers(model);
+  const fits = tiers.find(
+    axes => (usableW - axes.length * AXIS_W) / model.columns.length >= MIN_COL_W,
+  );
+  return fits ?? tiers[tiers.length - 1]!;
 }
 
 /** The `Raum, Ausbildner` line under the title — one field, not two rows. */
@@ -61,14 +86,8 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
 
   // ── Axes and the geometry that follows from them ──────────────────────────
   const usableW = pageW - 2 * MARGIN;
-  let axes = axisPositions(model);
-  let colW = (usableW - axes.length * AXIS_W) / model.columns.length;
-  if (colW < MIN_COL_W) {
-    // The phase axes have eaten the lanes they were meant to help read. Fall
-    // back to one on each edge, which every sheet can afford.
-    axes = [0, model.columns.length];
-    colW = (usableW - axes.length * AXIS_W) / model.columns.length;
-  }
+  const axes = chooseAxes(model, usableW);
+  const colW = (usableW - axes.length * AXIS_W) / model.columns.length;
 
   /** Left edge of column `i`: every axis at or before it has already been paid for. */
   const colX = (i: number): number =>
@@ -78,16 +97,23 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
     MARGIN + axes.filter(a => a < p).length * AXIS_W + p * colW;
 
   const titleH = 9;
-  const footerH = 6;
   const dayH = 6;
   const laneH = 4.6;
   const headerH = dayH + laneH;
 
   const top = MARGIN + titleH;
   const gridTop = top + headerH;
-  const gridH = pageH - MARGIN - footerH - gridTop;
   const gridRight = pageW - MARGIN;
   const span = model.endMinutes - model.startMinutes;
+
+  // ── The abbreviation key sits below the grid ──────────────────────────────
+  // Outside the calendar, not in its white space: an empty cell says nobody is
+  // booked there, and a key printed into one makes the week look fuller.
+  const baseFooterH = 6;
+  const legend = measureLegend(doc, model.legend, usableW, LEGEND_SIZE);
+  const footerH = baseFooterH + (legend ? legend.height + 1.5 : 0);
+
+  const gridH = pageH - MARGIN - footerH - gridTop;
   const perMinute = gridH / span;
   const y = (minutes: number): number => gridTop + (minutes - model.startMinutes) * perMinute;
 
@@ -108,7 +134,7 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
     doc.rect(x, top, AXIS_W, dayH, 'S');
     doc.rect(x, top + dayH, AXIS_W, laneH, 'S');
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     const label = 'Zeit';
     doc.text(label, x + AXIS_W / 2 - doc.getTextWidth(label) / 2, top + dayH * 0.7);
   }
@@ -136,7 +162,7 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
   });
 
   // ── Horizontal rules: quarter hours dotted, whole hours solid black ────────
-  doc.setFontSize(7);
+  doc.setFontSize(6.5);
   for (let m = model.startMinutes; m <= model.endMinutes; m += 15) {
     const yy = y(m);
     const onHour = m % 60 === 0;
@@ -148,7 +174,7 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
     if (onHour && m < model.endMinutes) {
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(...BLACK);
-      for (const p of axes) doc.text(hhmm(m), axisX(p) + 1, yy + 2.5);
+      for (const p of axes) doc.text(hhmm(m), axisX(p) + 0.9, yy + 2.4);
     }
   }
 
@@ -260,6 +286,14 @@ export function renderCalendarClassicPdf(model: CalendarDoc, opts: CalendarOptio
       doc.text(line, cx - doc.getTextWidth(line) / 2, cursor + metaLineH * 0.8);
       cursor += metaLineH;
     }
+  }
+
+  // ── Abbreviation key ──────────────────────────────────────────────────────
+  if (legend) {
+    drawLegend(
+      doc, model.legend, legend,
+      MARGIN, pageH - MARGIN - baseFooterH - legend.height, usableW, BLACK, [70, 70, 70],
+    );
   }
 
   // ── Outer frame ───────────────────────────────────────────────────────────

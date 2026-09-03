@@ -3,6 +3,7 @@ import type { CalendarDoc, GridSpan } from './calendar';
 import type { PrintCell } from './boxes';
 import type { Orientation } from './layout';
 import { PT, cardLines, hhmm, mix, rgb, truncate } from './pdfDraw';
+import { drawLegend, measureLegend } from './legend';
 
 /**
  * The week grid, drawn rather than screenshotted.
@@ -26,6 +27,7 @@ export interface CalendarOptions {
 
 const MARGIN = 8;
 const AXIS_W = 13;
+const LEGEND_SIZE = 4.9;
 
 function drawSpanRow(
   doc: jsPDF,
@@ -72,7 +74,6 @@ export function renderCalendarPdf(model: CalendarDoc, opts: CalendarOptions): js
 
   // ── Frame ─────────────────────────────────────────────────────────────────
   const titleH = 9;
-  const footerH = 6;
   const showPhases = model.phases.length > 1;
   const phaseH = showPhases ? 5 : 0;
   const dayH = 6;
@@ -83,9 +84,19 @@ export function renderCalendarPdf(model: CalendarDoc, opts: CalendarOptions): js
   const gridW = pageW - 2 * MARGIN - AXIS_W;
   const top = MARGIN + titleH;
   const gridTop = top + headerH;
-  const gridH = pageH - MARGIN - footerH - gridTop;
   const colW = gridW / model.columns.length;
   const span = model.endMinutes - model.startMinutes;
+
+  // ── The abbreviation key sits below the grid ──────────────────────────────
+  // A card drops to a Kürzel as soon as its lane narrows, and paper has no
+  // tooltip. It goes outside the calendar rather than into its white space: an
+  // empty cell says nobody is booked there, and a key printed into one makes the
+  // week look fuller than it is.
+  const baseFooterH = 6;
+  const legend = measureLegend(doc, model.legend, pageW - 2 * MARGIN, LEGEND_SIZE);
+  const footerH = baseFooterH + (legend ? legend.height + 1.5 : 0);
+
+  const gridH = pageH - MARGIN - footerH - gridTop;
   const perMinute = gridH / span;
   const y = (minutes: number): number => gridTop + (minutes - model.startMinutes) * perMinute;
 
@@ -234,6 +245,15 @@ export function renderCalendarPdf(model: CalendarDoc, opts: CalendarOptions): js
         cursor += metaLineH;
       }
     }
+  }
+
+  // ── Abbreviation key ──────────────────────────────────────────────────────
+  if (legend) {
+    drawLegend(
+      doc, model.legend, legend,
+      MARGIN, pageH - MARGIN - baseFooterH - legend.height, pageW - 2 * MARGIN,
+      [51, 65, 85], [100, 110, 126],
+    );
   }
 
   // ── Footer ────────────────────────────────────────────────────────────────

@@ -45,11 +45,25 @@ export interface GridEntry {
   conflict: 'none' | 'soft' | 'hard';
 }
 
+/**
+ * One abbreviation the sheet may print, and what it stands for.
+ *
+ * A card falls back to a Kürzel whenever the lane is too narrow for the full
+ * name, and on paper there is no tooltip to recover it from — so every short
+ * form a printed block *could* show is listed once, with its full name.
+ */
+export interface LegendEntry {
+  short: string;
+  full: string;
+  kind: 'subject' | 'room' | 'teacher';
+}
+
 export interface CalendarDoc {
   columns: GridColumn[];
   phases: GridSpan[];
   days: GridSpan[];
   entries: GridEntry[];
+  legend: LegendEntry[];
   startMinutes: number;
   endMinutes: number;
 }
@@ -124,6 +138,13 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
   columns.forEach((c, i) => index.set(`${c.dayIndex}:${c.groupId}`, i));
 
   const entries: GridEntry[] = [];
+  // Keyed by kind+short so the same Raum on twelve cards is listed once.
+  const legend = new Map<string, LegendEntry>();
+  const note = (kind: LegendEntry['kind'], short: string, full: string): void => {
+    if (short === '' || full === '' || short === full) return;
+    legend.set(`${kind}:${short}`, { kind, short, full });
+  };
+
   for (const ev of state.events) {
     const phase = phaseForDay(state, ev.dayIndex);
     if (!phase || !phaseIds.includes(phase.id)) continue;
@@ -142,6 +163,10 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
       .filter((t): t is NonNullable<typeof t> => Boolean(t));
     const roomId = effectiveRoomId(ev, subject);
     const room = roomId ? state.rooms.find(r => r.id === roomId) ?? null : null;
+
+    note('subject', subject.shortName.trim(), subject.name);
+    if (room) note('room', room.shortName.trim() || '', room.name);
+    for (const t of teachers) note('teacher', teacherShort(t), t.name);
 
     entries.push({
       from: Math.min(...cols),
@@ -167,5 +192,14 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
   // it — the grid has no z-index, only paint order.
   entries.sort((a, b) => (b.endMinutes - b.startMinutes) - (a.endMinutes - a.startMinutes));
 
-  return { columns, phases, days, entries, startMinutes, endMinutes };
+  // Thema, Raum, Ausbildner — the order the card itself drops them in, so the
+  // legend reads in the same sequence as the block it explains.
+  const kindOrder: LegendEntry['kind'][] = ['subject', 'room', 'teacher'];
+  const legendEntries = [...legend.values()].sort((a, b) =>
+    kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind)
+    || a.short.localeCompare(b.short, 'de'));
+
+  return {
+    columns, phases, days, entries, legend: legendEntries, startMinutes, endMinutes,
+  };
 }
