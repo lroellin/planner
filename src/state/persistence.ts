@@ -210,6 +210,22 @@ export function planFileName(state: AppState): string {
   return `${slug}-${state.wkStartDate}.json`;
 }
 
+/**
+ * True once the plan still is what `createDefaultState` shipped: no teacher,
+ * no room and no lesson/Programmpunkt has been added, and nothing has been
+ * placed. This — not a separate "have they touched anything" flag — is what
+ * gates the sample-data button: loading the sample overwrites everything, so
+ * it only offers itself while there is nothing of the user's to lose.
+ */
+export function isPristineState(state: AppState): boolean {
+  return (
+    state.teachers.length === 0 &&
+    state.rooms.length === 0 &&
+    state.events.length === 0 &&
+    state.subjects.every((s) => s.kind === "break")
+  );
+}
+
 export type ParseResult =
   | { ok: true; state: AppState }
   | { ok: false; error: string };

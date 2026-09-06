@@ -16,8 +16,9 @@
   import Toasts from './components/Toasts.svelte';
   import Icon from './components/Icon.svelte';
   import {
-    getState, getIssueCount, updateEvents, removeEvents, duplicateEvents,
+    getState, getIssueCount, updateEvents, removeEvents, duplicateEvents, loadSampleData,
   } from './state/store.svelte';
+  import { isPristineState } from './state/persistence';
   import {
     getQuickEdit, closeQuickEdit, getSelectedEventId, getSelectedEventIds, setSelection,
     clearSelection, getDensity, slotHeight, suppressNextDateClick,
@@ -432,6 +433,11 @@
             <button class="empty-cta" onclick={() => requestConfig('subjects', { createSubject: true })}>
               <Icon name="plus" size={14} /> Erstes Thema anlegen
             </button>
+            {#if isPristineState(getState())}
+              <button class="empty-cta empty-cta--secondary" onclick={loadSampleData}>
+                <Icon name="calendar" size={14} /> oder Beispieldaten laden
+              </button>
+            {/if}
           {/if}
         </div>
       {/if}
@@ -809,6 +815,13 @@
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
   }
+
+  .empty-cta--secondary {
+    background: transparent;
+    color: var(--wk-text-mute);
+    border: 1.5px solid var(--wk-line-strong);
+  }
+  .empty-cta--secondary:hover { filter: none; background: var(--wk-surface-alt); }
 
   /* The app itself prints nothing any more. Wochenplan and Handzettel are
      drawn as PDFs in src/print/ and previewed in the Drucken dialog, which is

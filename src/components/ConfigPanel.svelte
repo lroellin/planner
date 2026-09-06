@@ -6,9 +6,9 @@
     eventCountForGroup,
     addPhase, updatePhase, removePhase, eventCountForPhase,
     addTeacher, addRoom,
-    setPlanName, replacePlan, resetToDefaults,
+    setPlanName, replacePlan, resetToDefaults, loadSampleData,
   } from '../state/store.svelte';
-  import { serializePlan, planFileName, parsePlan } from '../state/persistence';
+  import { serializePlan, planFileName, parsePlan, isPristineState } from '../state/persistence';
   import { generateDistinctColor, generateInitials, getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import { DAY_NAMES, fullDateLabel, orderedPhases, sortSubjects } from '../utils/timeUtils';
@@ -265,6 +265,11 @@
     // Reset so choosing the same file twice fires a change event both times.
     input.value = '';
     if (file) void handleImportFile(file);
+  }
+
+  function handleLoadSample(): void {
+    loadSampleData();
+    onclose();
   }
 
   function handleClearAll(): void {
@@ -644,6 +649,20 @@
                   onchange={(e) => setPlanName((e.currentTarget as HTMLInputElement).value.trim() || 'WK-Plan')}
                 />
               </section>
+
+              {#if isPristineState(appState)}
+                <section class="data-card">
+                  <h4 class="section-title">Beispieldaten</h4>
+                  <p class="field-hint">
+                    Lädt eine vollständige Beispielwoche — Gruppen, Ausbildner, Räume, Themen und
+                    Lektionen —, um die App auszuprobieren. Nur verfügbar, solange noch nichts erfasst
+                    wurde: das Laden ersetzt den ganzen (bisher leeren) Plan.
+                  </p>
+                  <button class="btn btn-sm gap-1.5" onclick={handleLoadSample}>
+                    <Icon name="calendar" size={14} /> Beispieldaten laden
+                  </button>
+                </section>
+              {/if}
 
               <section class="data-card">
                 <h4 class="section-title">Plandatei</h4>

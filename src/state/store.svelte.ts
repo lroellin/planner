@@ -5,6 +5,7 @@ import type {
   Teacher, Room, Subject, Group, Phase, ID, TimeWindow,
 } from '../types';
 import { saveState, loadState, createDefaultState, flushSave } from './persistence';
+import { createSampleState } from './sampleData';
 import {
   pushUndo, undoState, redoState, canUndo as _canUndo, canRedo as _canRedo, clearUndo,
   peekUndoLabel, peekRedoLabel, undoLabels,
@@ -747,6 +748,11 @@ export function resetToDefaults(): void {
   clearUndo();
   lastCoalesceKey = null;
   commit(createDefaultState());
+}
+
+/** Replaces the (pristine) plan with the demonstration week. See `isPristineState`. */
+export function loadSampleData(): void {
+  replacePlan(createSampleState());
 }
 
 export function setWkStartDate(date: string): void {

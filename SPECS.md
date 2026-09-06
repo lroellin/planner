@@ -262,6 +262,8 @@ Stored state is stepped forward one version at a time rather than reset. Each st
 
 `migrateState(raw, target)` chains the steps and returns `null` when some hop has no migration.
 
+**Sample data must move with every migration.** `src/state/sampleData.ts` (`createSampleState()`) is authored directly against `CURRENT_VERSION` — like `createDefaultState()`, not run through `migrateState` — so adding a migration step and bumping `CURRENT_VERSION` without also updating `sampleData.ts` leaves it silently one version behind (it would still pass `isValidState`, since that is a shape check, but would carry stale or missing fields). Whenever a migration adds a field, give the sample data a real value for it, not the zero-value the migration defaults old data to.
+
 - **v5 → v6**: plan `name`, `subject.content` (goals + notes), `teacher.unavailable` and `room.unavailable`.
 - **v6 → v7**: `subject.targetMinutesPerGroup`, defaulted to `0`. Removed again in v8 — kept only so a store written by a v7 build still steps forward cleanly.
 - **v7 → v8**: drops `subject.targetMinutesPerGroup`. The target and the duration were always the same number, so coverage measures against `defaultDurationMinutes` instead.
@@ -675,6 +677,17 @@ Three surfaces now carry the same way forward, all of them routing through
 blank draft. The grid hint is anchored beside the sidebar (and outside
 `.phase-scroll`, or it scrolls under the sticky day headers) rather than centred
 three phases away behind a lone ← .
+
+**Or load the sample plan.** The same empty-grid hint, and the Plan & Daten tab,
+also offer "Beispieldaten laden" (`loadSampleData()` in the store, backed by
+`createSampleState()` in `src/state/sampleData.ts`) — a full demonstration week
+(Kader days, a group rotation, breaks, a Programmpunkt, an override, a
+Stellvertretung and one deliberate conflict) so a new visitor can see the app
+doing something before entering any data of their own. Both buttons are gated
+by `isPristineState()` (`src/state/persistence.ts`: no teachers, no rooms, no
+events, no subject beyond the two default Pausen) — loading the sample
+`replacePlan`s the whole state and clears undo, so it only offers itself while
+there is nothing of the user's to overwrite.
 
 ## Losing the plan
 
