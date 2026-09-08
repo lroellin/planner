@@ -1,8 +1,9 @@
 import type {
   AppState, CalendarEvent, ConflictKind, ConflictRef, ConflictReport, GroupSelector, ID,
+  TimeWindow,
 } from '../types';
 import {
-  effectiveTeacherIds, effectiveRoomId, eventGroupIds, isEventActive,
+  effectiveTeacherIds, effectiveRoomId, eventGroupIds, isEventActive, isMultiGroupEvent,
 } from '../utils/timeUtils';
 import { describeWindow, windowOverlaps } from '../utils/availability';
 
@@ -26,6 +27,37 @@ interface Interval {
   eventId: ID;
 }
 
+/**
+ * Does this event occupy its lanes *exclusively*? Only single-lane placements
+ * do, and only they take part in group double-booking.
+ *
+ * Mittagessen, Antreten and the Schlussrapport are the frame the rest of the day
+ * is planned *around*, and they are on every lane by construction: counted as
+ * lane occupancy they collide with each other, with every lane they cover, and
+ * with any block that so much as touches them, and the panel fills with rows
+ * describing the shape of the day rather than a mistake in it. A lesson dropped
+ * across the lunch break is visible on the grid; it does not need a warning list
+ * of its own.
+ *
+ * This governs the *group* dimension alone. An Ausbildner cannot run Antreten
+ * and a Lektion at the same moment, and a Raum cannot hold both, whether or not
+ * one of them is on every lane — so the teacher, room and availability checks
+ * below take all-lanes events like any other.
+ */
+function occupiesLanesExclusively(ev: CalendarEvent): boolean {
+  return !isMultiGroupEvent(ev);
+}
+
+/**
+ * One window, named. Overlapping windows on the same resource are joined into a
+ * single row rather than raising one apiece: "Mo–Fr ganzer Tag" and "Mi
+ * Nachmittag" describe one absence, and two rows for it both double the issue
+ * count and invite the reader to look for a second mistake.
+ */
+function describeAbsence(w: TimeWindow): string {
+  return `${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`;
+}
+
 export function detectConflicts(state: AppState): ConflictReport[] {
   const teacherIntervals = new Map<ID, Interval[]>();
   const roomIntervals = new Map<ID, Interval[]>();
@@ -47,12 +79,14 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     const interval: Interval = { startMs, endMs, eventId: ev.id };
 
     // A group cannot be in two places at once, so overlaps here are hard conflicts.
-    // Breaks count too: a lesson running through a group's lunch is a real clash.
-    // Multi-group events contribute one interval per group, so they never collide
-    // with themselves.
-    for (const gid of groupIds) {
-      if (!groupIntervals.has(gid)) groupIntervals.set(gid, []);
-      groupIntervals.get(gid)!.push(interval);
+    // Breaks count too: a lesson running through a group's lunch is a real clash —
+    // as long as that lunch is on one lane. An all-lanes placement covers every
+    // lane by construction and claims none of them.
+    if (occupiesLanesExclusively(ev)) {
+      for (const gid of groupIds) {
+        if (!groupIntervals.has(gid)) groupIntervals.set(gid, []);
+        groupIntervals.get(gid)!.push(interval);
+      }
     }
 
     for (const tid of effectiveTeacherIds(ev, subject)) {
@@ -84,16 +118,16 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     for (const tid of effectiveTeacherIds(ev, subject)) {
       const teacher = state.teachers.find(t => t.id === tid);
       if (!teacher) continue;
-      for (const w of teacher.unavailable ?? []) {
-        if (!windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime)) continue;
-        reports.push({
-          kind: 'teacher-absent',
-          resourceId: tid,
-          resourceName: teacher.name,
-          involvedEventIds: [ev.id],
-          detail: `abwesend ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
-        });
-      }
+      const hits = (teacher.unavailable ?? [])
+        .filter(w => windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime));
+      if (hits.length === 0) continue;
+      reports.push({
+        kind: 'teacher-absent',
+        resourceId: tid,
+        resourceName: teacher.name,
+        involvedEventIds: [ev.id],
+        detail: `abwesend ${hits.map(describeAbsence).join(', ')}`,
+      });
     }
 
     const evRoomId = effectiveRoomId(ev, subject);
@@ -101,14 +135,15 @@ export function detectConflicts(state: AppState): ConflictReport[] {
     // "Ignore conflicts" governs double-booking; a room that is explicitly
     // blocked is unavailable to everyone, shared space or not.
     if (evRoom) {
-      for (const w of evRoom.unavailable ?? []) {
-        if (!windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime)) continue;
+      const hits = (evRoom.unavailable ?? [])
+        .filter(w => windowOverlaps(w, ev.dayIndex, ev.startTime, ev.endTime));
+      if (hits.length > 0) {
         reports.push({
           kind: 'room-blocked',
           resourceId: evRoom.id,
           resourceName: evRoom.name,
           involvedEventIds: [ev.id],
-          detail: `gesperrt ${describeWindow(w)}${w.note ? ` (${w.note})` : ''}`,
+          detail: `gesperrt ${hits.map(describeAbsence).join(', ')}`,
         });
       }
     }
@@ -258,6 +293,7 @@ export function previewClashDetail(state: AppState, candidate: ClashCandidate): 
   };
 
   const lanes = new Set(eventGroupIds(state, probe));
+  const probeHoldsLanes = occupiesLanesExclusively(probe);
   const teacherIds = new Set(effectiveTeacherIds(probe, subject));
   const roomId = effectiveRoomId(probe, subject);
   const room = roomId ? state.rooms.find(r => r.id === roomId) ?? null : null;
@@ -295,9 +331,13 @@ export function previewClashDetail(state: AppState, candidate: ClashCandidate): 
     const otherSubject = state.subjects.find(s => s.id === other.subjectId);
     if (!otherSubject) continue;
 
-    // Lanes are resolved on both sides, so a lesson dropped over the all-lanes
-    // Mittagessen reads as the group clash it is.
-    const sameLane = eventGroupIds(state, other).some(gid => lanes.has(gid));
+    // Lanes count only where both sides claim theirs exclusively — the same rule
+    // the detector applies, so the mirror and the panel cannot disagree about
+    // the all-lanes Mittagessen. Teacher and Raum are checked either way.
+    const sameLane =
+      probeHoldsLanes &&
+      occupiesLanesExclusively(other) &&
+      eventGroupIds(state, other).some(gid => lanes.has(gid));
     const sameTeacher = effectiveTeacherIds(other, otherSubject).some(tid => teacherIds.has(tid));
     const sameRoom =
       room !== null &&

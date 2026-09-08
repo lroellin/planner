@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { makeEvent, makeState, makeSubject } from '../test/fixtures';
+import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
 import { buildCalendarDoc, toMinutes } from './calendar';
 
 const ALL_PHASES = ['kader', 'gruppen'];
@@ -18,6 +18,29 @@ describe('buildCalendarDoc', () => {
     expect(doc.phases.map(p => p.label)).toEqual(['KVK', 'WK']);
     expect(doc.phases[0]).toMatchObject({ from: 0, span: 2 });
     expect(doc.phases[1]).toMatchObject({ from: 2, span: 9 });
+  });
+
+  // The screen skips the excluded lane; a single min..max bar would have drawn
+  // straight across it and given that group a Mittagessen it does not get.
+  it('breaks an all-lanes block around a lane left out of the reckoning', () => {
+    const base = makeState();
+    const doc = buildCalendarDoc({
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g2' ? { ...g, excludeFromCoverage: true } : g)),
+      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+    }, ['gruppen']);
+    expect(doc.columns.slice(0, 3).map(c => c.label)).toEqual(['G1', 'G2', 'G3']);
+    expect(doc.entries.map(e => ({ from: e.from, span: e.span })))
+      .toEqual([{ from: 0, span: 1 }, { from: 2, span: 1 }]);
+  });
+
+  it('keeps adjacent lanes of an all-lanes block as one bar', () => {
+    const doc = buildCalendarDoc(
+      state([makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' })]),
+      ['gruppen'],
+    );
+    expect(doc.entries).toHaveLength(1);
+    expect(doc.entries[0]).toMatchObject({ from: 0, span: 3 });
   });
 
   it('gives each day a header spanning exactly its own lanes', () => {
@@ -126,7 +149,8 @@ describe('buildCalendarDoc', () => {
       events: [makeEvent({ id: 'a', groupId: 'g1', dayIndex: 2 })],
     });
     const doc = buildCalendarDoc(s, ['gruppen']);
-    expect(doc.entries[0]!.subject).toEqual({ full: 'Karteneröffnung', short: 'KE' });
+    expect(doc.entries[0]!.subject)
+      .toEqual({ full: 'Karteneröffnung', short: 'KE', keys: ['subject:KE'] });
     expect(doc.entries[0]!.room.short).toBe('TS1');
   });
 
@@ -138,6 +162,8 @@ describe('buildCalendarDoc', () => {
     expect(doc.entries[0]!.teachers).toEqual({
       full: 'Anna Müller, Beat Zwahlen',
       short: 'AM BZ',
+      // Both initials, since the short form spells both — the key owes both.
+      keys: ['teacher:AM', 'teacher:BZ'],
     });
   });
 

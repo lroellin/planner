@@ -350,6 +350,7 @@
                   <span class="text-center">Aktiv</span>
                   <span>Bezeichnung</span>
                   <span class="text-center">Reihenfolge</span>
+                  <span class="text-center">Rechnet mit</span>
                   <span></span>
                   <span></span>
                 </div>
@@ -397,6 +398,20 @@
                         <Icon name="chevronDown" size={13} />
                       </button>
                     </div>
+                    <!-- Not the same switch as "Aktiv": this lane keeps its
+                         column and its Lektionen, it is simply left out of the
+                         reckoning — the group on its own programme. -->
+                    <div class="flex justify-center">
+                      <input type="checkbox" class="toggle toggle-primary toggle-sm"
+                        checked={!g.excludeFromCoverage}
+                        disabled={!g.enabled}
+                        aria-label="Gruppe rechnet mit"
+                        title={g.excludeFromCoverage
+                          ? `${g.label} hat ein eigenes Programm: keine Abdeckung, keine «alle Gruppen»-Platzierungen`
+                          : `${g.label} zählt zur Abdeckung und ist bei «alle Gruppen» dabei`}
+                        onchange={(e) => updateGroup(g.id, { excludeFromCoverage: !(e.currentTarget as HTMLInputElement).checked })}
+                      />
+                    </div>
                     <span></span>
                     <button class="mini mini-danger"
                       onclick={() => removeGroup(g.id)}
@@ -412,6 +427,11 @@
               <p class="field-hint mt-3">
                 Eine ausgeschaltete Gruppe behält ihre Lektionen. Sie werden nur nicht mehr
                 angezeigt und lösen keine Konflikte mehr aus.
+              </p>
+              <p class="field-hint mt-1">
+                <strong>Rechnet mit</strong> ausschalten für eine Gruppe mit eigenem Programm
+                (z.&nbsp;B. Kulturgüterschutz): Sie bleibt im Kalender und behält ihre Lektionen,
+                zählt aber nicht zur Abdeckung und wird bei «alle Gruppen» übersprungen.
               </p>
             {:else}
               <p class="pane-empty">Noch keine Gruppen. Unten eine hinzufügen.</p>
@@ -905,7 +925,7 @@
      of the table with 1fr of nothing between them — the slack goes after it. */
   .grid-groups {
     display: grid;
-    grid-template-columns: 1.4rem 3rem auto 3.4rem 1fr 2rem;
+    grid-template-columns: 1.4rem 3rem auto 5.6rem 5.5rem 1fr 2rem;
     gap: 0.6rem;
     align-items: center;
   }

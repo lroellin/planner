@@ -37,6 +37,17 @@ export type PrintTarget = PlanTarget | 'grid';
 export interface PrintCell {
   full: string;
   short: string;
+  /**
+   * The abbreviation-key entries this cell's *short* form depends on, as
+   * `kind:short` keys into the document's candidate legend.
+   *
+   * The week grid prints its key from what was actually drawn, not from what
+   * could have been drawn, and the renderer only learns that at the moment it
+   * gives up on `full` — at which point all it holds is this cell. So the cell
+   * carries the answer with it. Empty (or absent) when the short form needs no
+   * explaining: the cut-out plans have no key at all and set nothing.
+   */
+  keys?: string[];
 }
 
 export interface PrintRow {

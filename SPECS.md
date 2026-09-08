@@ -90,6 +90,9 @@ The columns of the timetable. Each group must attend every non-break subject exa
 - `label: string` — short display name (e.g. "G1")
 - `enabled: boolean` — disabled groups are hidden from the calendar and skipped by conflict checks, but keep all their event data
 - `order: number` — display order (left to right); can be changed via ▲/▼ buttons in Config
+- `excludeFromCoverage: boolean` — the lane is drawn and planned like any other, but is left out of every **reckoning**: coverage never asks whether it has had a Thema, and an all-lanes placement (Mittagessen, Begrüssung) skips it. The case is a group on its own programme — Kulturgüterschutz sitting the week with its own timetable. Switching it *off* is the wrong tool: that hides its lane and its lessons, and this group has both. Conflict checks still apply — the lane's own Lektionen still occupy real Ausbildner and Räume. Config calls it **Rechnet mit** (a toggle that is *on* by default, so the column reads as an inclusion rather than a punishment).
+
+`countedGroups(state, phase)` in `timeUtils` is the lane list that takes part in the reckoning; `phaseGroups(state, phase)` is the wider set — every lane the phase *draws*. They are deliberately two functions rather than one with a boolean: reaching for the wrong one is a bug either way round, and a name that says "counted" is easier to get right. Everything that resolves `ALL_GROUPS` (`eventGroupIds`, `eventInPhase`, `buildFCEvent`'s `resourceIds`, `print/calendar.ts`) uses `countedGroups`; everything that draws or lists lanes uses `phaseGroups`.
 
 ### Phases
 The week is split into contiguous **phases**, each with its own set of lanes (groups). A Kader phase typically covers Mon–Tue with only the K group; a Gruppen phase covers Wed–Fri with G1–G3. Each phase is rendered as its own independent FullCalendar instance.
@@ -139,8 +142,11 @@ The draggable blocks. Subjects are displayed **alphabetically everywhere** (`sor
   - `break` — Mittagessen, Pause. Own sidebar list, own card style (`wk-ev-break`), never counted.
   - `oneoff` — a **Programmpunkt**. Drawn as a normal lesson card; kept out of coverage, out of the sidebar badge, out of `missingLanesForSubject`, and out of the "Gehört zu Phase" pin (a coverage setting with nothing to settle here).
 
-  All three take part in teacher/room/group conflict checks — a lesson running through a group's lunch, or two Ausbildner double-booked by a Begrüssung, is a real clash either way. This replaced a boolean `isBreak`: every `!isBreak` test in the app meant "lesson", and a third kind had to make the compiler visit each of them (migration v11→v12).
-- `isMultiGroup: boolean` — placing this subject schedules it across every enabled lane of the target phase at once (used for Mittagessen, Pause)
+  What takes part in conflict checks is decided by the *placement*, not by the kind: a single-lane event of any kind does, an all-lanes one does not (see **Detection**). This replaced a boolean `isBreak`: every `!isBreak` test in the app meant "lesson", and a third kind had to make the compiler visit each of them (migration v11→v12).
+- `isMultiGroup: boolean` — placing this subject schedules it across every *counted* lane of the target phase at once (used for Mittagessen, Pause)
+- `optional: boolean` — not every group owes this Thema; a specialist lesson only some of them sit. Coverage then has nothing to measure it against, so the subject is left out of the report, out of the sidebar badge (**including the green check** — a tick would claim every group has had it) and out of `missingLanesForSubject`. It is a Thema in every other way: listed under Themen, placed per group, with its own defaults. Distinct from `kind: 'oneoff'`, which is outside coverage because it happens *once for the whole course* rather than once per group. Lives under **Erweitert** in the Subjects tab, beside "Gehört zu Phase" — the other coverage-shaping setting — and is shown only for `kind === 'lesson'`.
+
+`isCounted(subject)` in `reports.ts` is the one predicate for "owed by every lane" (`kind === 'lesson' && !optional`). The report, the sidebar badge and the lane markers all ask it, because a disagreement between them is the kind of bug nobody reports — they just stop trusting the badge. It is deliberately *not* a type predicate: `!isCounted(s)` would then narrow a known `Subject` to `never`.
 - `phaseId: ID | null` — which phase this subject is rotated through. `null` = infer from where it is placed. Set it so coverage judges a Kader lesson against the Kader lane instead of the group lanes.
 - `content: { goals: string[]; notes: string }` — what the subject is *about*, as opposed to how it is scheduled. Nested so it can grow (material, handouts, references) without widening `Subject` itself. Edited in the Subjects tab's **Content** pane; goals get a row editor (`config/GoalsEditor.svelte`) where Enter opens the next line, Backspace on an empty line steps back, and pasting a block of lines becomes one goal per line.
 
@@ -264,6 +270,10 @@ Stored state is stepped forward one version at a time rather than reset. Each st
 
 **Sample data must move with every migration.** `src/state/sampleData.ts` (`createSampleState()`) is authored directly against `CURRENT_VERSION` — like `createDefaultState()`, not run through `migrateState` — so adding a migration step and bumping `CURRENT_VERSION` without also updating `sampleData.ts` leaves it silently one version behind (it would still pass `isValidState`, since that is a shape check, but would carry stale or missing fields). Whenever a migration adds a field, give the sample data a real value for it, not the zero-value the migration defaults old data to.
 
+- **v1 → v2**: `teacher.shortName`, derived from the name (`initialsFrom`, inlined in the migration so a step never depends on app code that is free to change under it).
+- **v2 → v3**: nothing. No build ever wrote a v3 store — the version went straight from 2 to 4 in one commit — so the hop exists only to keep the chain unbroken.
+- **v3 → v4**: phases, `subject.isMultiGroup`, and the `'inherit'` sentinel. The pre-v4 model had no phases: the week was one grid over every group, rebuilt here as a single Mon–Fri phase containing every group. Events carried `teacherIds: null` / `roomId: null` for "use the subject's default", a meaning `'inherit'` now carries — `null` on a room has since come to mean the *opposite* ("explicitly no room"), so leaving it would silently strip rooms.
+- **v4 → v5**: `subject.phaseId`, seeded `null` ("read the phase from the placements"), which is what every subject did before the field existed.
 - **v5 → v6**: plan `name`, `subject.content` (goals + notes), `teacher.unavailable` and `room.unavailable`.
 - **v6 → v7**: `subject.targetMinutesPerGroup`, defaulted to `0`. Removed again in v8 — kept only so a store written by a v7 build still steps forward cleanly.
 - **v7 → v8**: drops `subject.targetMinutesPerGroup`. The target and the duration were always the same number, so coverage measures against `defaultDurationMinutes` instead.
@@ -271,6 +281,10 @@ Stored state is stepped forward one version at a time rather than reset. Each st
 - **v9 → v10**: `lastExportedAt`, seeded `null` rather than "now" — an existing plan genuinely has never been exported, and stamping it would suppress the first reminder for exactly the plans that have lived longest in one browser.
 - **v10 → v11**: `room.shortName`, the card's room code. Seeded empty like `subject.shortName`, so the derived form stays live.
 - **v11 → v12**: `subject.kind` (`'lesson' | 'break' | 'oneoff'`) replaces the boolean `subject.isBreak`, making room for the Programmpunkt. Nothing in an old store could be one, so every subject maps to `'break'` or `'lesson'`.
+
+- **v12 → v13**: `group.excludeFromCoverage` and `subject.optional`, both defaulted to `false` — the behaviour every existing plan already has.
+
+**The shape check runs in two strengths.** `isMigratableState` requires only what has existed since v1 (`version`, `wkStartDate`, and the five arrays); `isValidState` additionally requires `phases`. Old state is admitted by the first and only checked against the second *after* migrating. Requiring `phases` up front is what made every pre-v4 store fail before a single step ran, be silently replaced by a fresh default, and take the user's week with it — the v3→v4 migration existed to build those phases and was never reached.
 
 `saveState` strips `conflicts` from events and **debounces** the write by 200 ms, so a colour drag produces one localStorage write rather than one per mouse move. `flushSave()` forces a write; it is also wired to `beforeunload` and `pagehide` so nothing pending is lost.
 
@@ -300,6 +314,10 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 - **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible, and **collapsed on load** — the rail keeps the issue badge in view, and the grid is what the app is opened to look at. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
 - **Selection** (`App.svelte`): a plain click selects one card. **Ctrl/Cmd-click** toggles a card in or out of the selection, **Shift-click** adds, **dragging across empty grid** draws a marquee that selects what it covers, and **Ctrl/Cmd+A** takes everything the grid is currently drawing (so the toolbar filter narrows it too). With more than one selected, a **selection bar** appears above the toasts naming the count and offering duplicate, delete and clear — a set has no popover and no modal, so without it nothing on screen says how many are selected. Dragging one card of a selection moves the whole set by the same day/time delta; lanes are deliberately left alone, because dropping five blocks into the one lane under the pointer would stack them.
 - **Quick-edit popover** (`EventPopover.svelte`): a single click on a card selects it and opens a popover beside it with the three fields that actually change day to day — teachers, room, duration — plus copy-to-lanes, duplicate, delete and "Edit…". A double click goes straight to the full modal.
+
+  **It names the card's conflicts**, in a strip between the header and the body — where the full modal has always carried the same one. The grid draws a red edge and the conflict rail lists every clash in the week, but the panel you open *by clicking the card the edge is on* used to say nothing, so the one question it was opened to answer had to be taken to a different panel and matched up by eye. Each chip carries the events it collides with: hovering pulses them (`highlightEvents`), clicking scrolls to the first (`revealEvent`). Hard clashes are filled, soft ones outlined — the same two weights the cards are drawn in. An availability clash has no counterpart, so those chips are plain `<span>`s rather than buttons.
+
+  **The "zurück" reset links are decided from the event, not from `eventOverrides`.** That helper returns the *German labels* the card tooltip prints (`'Ausbildner'`, `'Raum'`, `'Dauer'`); the popover matched them against `'teachers'` / `'room'` / `'duration'`, so no reset link had ever appeared. It now tests `ev.teacherIds !== 'inherit'`, `ev.roomId !== 'inherit'` and the duration directly.
 - **Toasts** (`Toasts.svelte`): bottom-centre, one at a time, used by undo/redo.
 
 ### Phase Layout Detail
@@ -449,16 +467,20 @@ The keyboard path for scheduling. Sidebar chips are `<button>`s: activating one 
 
 **The flow.** Click an empty cell → placement picker → «+ Neuer Programmpunkt …» → a small dialog → the card is placed and the **quick-edit popover opens on it**.
 
-The dialog asks only what the click could not answer. Day, time and lane come from the cell and are shown read-only in the header (`Do 10.9. · 11:15–11:45 · G1`, or the whole lane list once «Alle Gruppen» is chosen). Four fields:
+The dialog asks only what the click could not answer. Day, time and lane come from the cell and are shown read-only in the header (`Do 10.9. · 11:15–11:45 · G1`, or the whole lane list once «Alle Gruppen» is chosen). Six fields:
 
 | Field | Notes |
 |---|---|
 | **Name** | Required, autofocused, Enter submits |
 | **Dauer** | `DurationField`, default 30 min — Begrüssung, Antreten and Rapport are all shorter than a lesson |
+| **Ausbildner** | Two-per-row named chips, like the quick edit's picker (initials alone do not tell Céline from Christoph). Hidden when no Ausbildner exists yet |
+| **Raum** | Plain select, "Kein Raum" first. Hidden when no Raum exists yet |
 | **Für** | «Nur G2» / «Alle Gruppen», writing `subject.isMultiGroup` → the existing `ALL_GROUPS` machinery, so all-lanes needed no new model |
 | **Farbe** | `ColorPicker`, seeded from `generateDistinctColor()` |
 
-Ausbildner and Raum are deliberately **not** in the dialog: the quick edit opens on the new card the moment it closes, and that is where those two are set everywhere else in the app — and it carries the route on to the full editor. `quickEditNewCard` measures the anchor a `requestAnimationFrame` later, since the card only exists once FullCalendar has repainted.
+**Ausbildner and Raum belong here, not in the quick edit that follows**, because they are the Programmpunkt's *defaults* (`subject.defaultTeacherIds` / `defaultRoomId`), not this one card's override. Set here, placing Antreten again on Thursday already carries them; set afterwards in the quick edit, they write an override onto a single card and leave the definition empty, so the second placement arrives bare. The event itself is still created with `teacherIds: 'inherit'` / `roomId: 'inherit'`. On a name that reuses an existing Programmpunkt, both fields are filled from that definition and disabled — the placement will get those values whatever the pickers say, so they show the truth rather than silently doing nothing.
+
+The quick edit still opens on the new card the moment the dialog closes: it is the route on to the full editor. `quickEditNewCard` measures the anchor a `requestAnimationFrame` later, since the card only exists once FullCalendar has repainted.
 
 **One commit.** `createProgrammpunkt(draft, dayIndex, startTime, groupId)` adds the subject *and* its event in a single `setState`. As two actions, one Ctrl+Z would take back the card and leave an orphan Thema in Konfiguration that nothing on the grid explained. It returns the new event id.
 
@@ -466,7 +488,7 @@ Ausbildner and Raum are deliberately **not** in the dialog: the quick edit opens
 
 **No garbage collection.** Deleting the last card leaves the definition standing, listed in the sidebar's Programmpunkte block ready to be placed again. Removing it for good is the same delete as any other Thema, in Konfiguration.
 
-**Known limitation.** Setting a Ausbildner or Raum on a Programmpunkt from either editor stores an *event override*, so its Konfiguration entry still shows no default. Nothing reads the wrong value — every report resolves effective values through `effectiveTeacherIds` / `effectiveRoomId` — so the two editors are left un-special-cased rather than growing a write-through branch each.
+**Known limitation.** Setting a Ausbildner or Raum on an *already placed* Programmpunkt from either editor still stores an *event override*, so its Konfiguration entry keeps whatever default the creation dialog gave it. Nothing reads the wrong value — every report resolves effective values through `effectiveTeacherIds` / `effectiveRoomId` — so the two editors are left un-special-cased rather than growing a write-through branch each. The creation dialog asking for both up front is what removes the common case.
 
 ---
 
@@ -485,7 +507,11 @@ Hard vs soft is decided by `isHardConflict(kind)` in `types.ts`, which both the 
 
 **Availability reports involve one event, not a pair.** They are collected in their own pass over the events and carry an optional `detail` string ("away Wed, Thu · afternoon (Kurs in Bern)") that the conflict panel prints under the resource name. `attachConflicts` gives such an event a `ConflictRef` with an empty `collidingEventIds`.
 
-Breaks (`subject.isBreak`) participate in **all three** checks. A lesson running through a group's lunch is a real clash, so group conflicts include breaks; they are only excluded from *coverage*. A multi-group event contributes one interval per resolved lane and therefore never collides with itself.
+**All-lanes placements stand outside the conflict system entirely** (`partakesInConflicts(ev)` — literally `!isMultiGroupEvent(ev)`). They neither raise a conflict nor take part in someone else's, in `detectConflicts` and in `previewClashDetail` alike, and that includes the availability pass.
+
+Mittagessen, Antreten and the Schlussrapport are the frame the rest of the day is planned *around*, and they are on every lane by construction. Left in, they collide with each other, with every lane they cover, and with any block that so much as touches them — the panel fills with rows describing the shape of the day rather than a mistake in it. A lesson dropped across the lunch break is visible on the grid; it does not need a warning list of its own. This is a change from the earlier rule, under which a lesson running through a group's lunch was a hard group clash.
+
+What *is* still checked, for a single-lane event, is every kind: a Pause placed on one lane clashes like anything else, and a Programmpunkt placed «Nur G2» is an ordinary card. A multi-group event contributes one interval per resolved lane and therefore never collides with itself either — the exclusion above simply means it contributes none.
 
 ### Annotation
 `attachConflicts(state, reports)` attaches a `conflicts: ConflictRef[]` array to each event, which the calendar's `eventContent` renderer reads to add red borders. It is separate from `detectConflicts` so that `commit` in the store detects once and shares the one result between the annotated events, the conflict panel and the badges.
@@ -527,7 +553,7 @@ Shows:
 A full-screen overlay (not a `<dialog>`) at a **fixed 86vh**, with four tabs: Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne. Three of them are the documents a WK hands out; Abdeckung is read here and acted on here. Its **Drucken** button hands the current tab to the PDF dialog and is hidden on the Abdeckung tab — see [Printing](#printing). The panel owns its tab after mount, so it reports the live one back through `ontab`; Ctrl+P has to print what is on screen.
 
 ### Coverage tab
-`buildCoverage(state)` → one section per phase. Each section lists the **Themen** (`kind === 'lesson'`) that belong to that phase, and for each group shows how many times that subject has been placed. Missing combinations are highlighted. Pausen and Programmpunkte are excluded: neither carries a per-group Soll — a Pause is placed ad hoc rather than attended, and a Programmpunkt happens once for the whole course. They still appear in the group, teacher and room plans, and a Programmpunkt still counts towards a group's `lessonMinutes` (a Begrüssung is time the group is occupied; only breaks are left out of that total).
+`buildCoverage(state)` → one section per phase. Each section lists the **Themen** that belong to that phase (`isCounted`), and for each *counted* lane (`countedGroups` — a group with `excludeFromCoverage` has no column here) shows how many times that subject has been placed. Missing combinations are highlighted. Pausen, Programmpunkte and `optional` Themen are excluded: none carries a per-group Soll — a Pause is placed ad hoc rather than attended, and a Programmpunkt happens once for the whole course. They still appear in the group, teacher and room plans, and a Programmpunkt still counts towards a group's `lessonMinutes` (a Begrüssung is time the group is occupied; only breaks are left out of that total).
 
 Coverage is measured in **minutes against the subject's own duration**, and the instance count is small print under the time. `coverageStatus(row)` is the single definition of how a row reads:
 
@@ -584,7 +610,7 @@ The panel has no print layout of its own any more — the `@media print` block t
 
 Three sections: **Themen**, **Programmpunkte** and **Pausen**. Themen is drawn even when empty (it is the only thing that names where subjects come from on a fresh plan); the other two appear only once they have something in them. Only Themen chips carry a coverage badge — the other two kinds have no lane debt to report, so `coverageForSubject` and `missingLanesForSubject` both return empty for them and the chip falls back to the plain "drag or click" tooltip. Each chip is a `<button>` (focusable and keyboard-operable) showing a spine and tint in the subject colour (a preview of the card it becomes), a drag handle, the name, a layers icon for multi-group subjects, and a coverage counter `placed/total` — green only when every lane has the subject's full duration and no lane has more, amber otherwise.
 
-Hovering or focusing a chip calls `spotlightSubject`, which dims every non-matching card on the grid — the answer to "where is this one still missing?". The tooltip names the missing lanes (`missingLanesForSubject`), including the lanes that have the subject but still owe minutes, and how many ("G2 (noch 45 min)"). A filter box appears above the list once there are more than eight subjects.
+**The spotlight hangs off the coverage badge, not off the chip.** Hovering the small «fehlt 2×» / «zu kurz» flag calls `spotlightSubject`, which dims every non-matching card on the grid and marks the lane headers that still owe the Thema. It used to fire on the chip's own `mouseenter`/`focus`, which put the calendar behind a scrim while the pointer merely crossed the list on its way somewhere — and left it there after a *click*, since clicking a chip focuses it, exactly when the user was trying to read the grid the placement dialog had opened over. Dimming the week is an answer to "where is it still missing?", so it is attached to the thing that raises the question. The `chipTitle` tooltip names the missing lanes (`missingLanesForSubject`), including the lanes that have the subject but still owe minutes, and how many ("G2 (noch 45 min)"). A filter box appears above the list once there are more than eight subjects.
 
 Chips are made draggable via FullCalendar's `Draggable` class, attached to the chip container element. Activating a chip opens `PlaceDialog` — see the drag-vs-click guard described there.
 
@@ -604,7 +630,9 @@ A `<dialog>` with six tabs (Gruppen, Phasen, Ausbildner, Räume, Themen, Plan & 
 - `src/styles/config-ui.css` — the shared visual language (`.list-panel`, `.detail-form`, `.section`, `.option-row`, `.picker-chip`, …), imported from `app.css` because these classes are used across several components.
 
 ### Groups tab
-Table with a drag handle (rows *are* the columns of the timetable, so dragging them is the matching gesture — `moveGroupToIndex`, one undo entry), enabled toggle, label input, ▲/▼ for the keyboard, delete. Add group form at the bottom. Changing `enabled` doesn't delete events; they remain but are hidden. Deleting confirms first and names how many events go with the lane (`eventCountForGroup`).
+Table with a drag handle (rows *are* the columns of the timetable, so dragging them is the matching gesture — `moveGroupToIndex`, one undo entry), **Aktiv** toggle, label input, ▲/▼ for the keyboard, **Rechnet mit** toggle, delete.
+
+The two toggles are deliberately different switches and sit apart from each other. **Aktiv** off hides the lane and its Lektionen. **Rechnet mit** off (`excludeFromCoverage`) keeps both and only leaves the lane out of the reckoning — the group on its own programme. It is disabled while the row is inactive, since a hidden lane counts for nothing either way. Two hint lines under the table say which is which. Add group form at the bottom. Changing `enabled` doesn't delete events; they remain but are hidden. Deleting confirms first and names how many events go with the lane (`eventCountForGroup`).
 
 ### Phases tab
 A **week strip** across the top shows Mon–Fri with the phase that owns each day (uncovered days are hatched in red) — phases are the one concept a new user won't guess, and this explains the model at a glance. Below it, a table with label, From/To day selects (dragging one end past the other moves the other to maintain valid range), lane checkboxes (one per group), delete. Rows are sorted by `startDay`, matching the calendar. Warning banner appears when phases overlap, leave gaps, or have no lanes. Deleting confirms first and warns how many events would stop being drawn (`eventCountForPhase`). Add phase form at bottom.
@@ -748,18 +776,53 @@ No font is embedded: jsPDF's built-in Helvetica is WinAnsi-encoded, which covers
 - **No time on the card.** The axis states it, and the off-hour exception (a card starting 09:45 printing its own time) cost the line the Raum now uses.
 - A block under 4.6 mm (a 15-minute Pause) gets **one centred line** instead of the stacked layout; drawn blank it read as a printing artefact rather than a block.
 
-### The abbreviation key (`legend.ts`)
+### The abbreviation key (`legend.ts`, `legendFit.ts`)
 
 A card falls back to a Kürzel the moment its lane is too narrow for the full
-name, and paper has no tooltip to recover it from. So both week grids print a
-**Abkürzungen** band listing every short form a block on *that sheet* could show,
-with its full name.
+name, and paper has no tooltip to recover it from. So both week grids can print
+an **Abkürzungen** band, with the full name behind each short form.
 
-`buildCalendarDoc` collects it while it builds the entries — only Themen, Räume
-and Ausbildner actually placed on the printed columns, keyed by kind + short so a
-Raum on twelve cards is listed once, and skipping anything whose Kürzel equals
-its name. It is ordered Thema → Raum → Ausbildner, the same sequence the card
-drops them in, so the key reads in the order of the block it explains.
+`buildCalendarDoc` collects the **candidate** set while it builds the entries —
+only Themen, Räume and Ausbildner actually placed on the printed columns, keyed
+by kind + short so a Raum on twelve cards is listed once, and skipping anything
+whose Kürzel equals its name. It is ordered Thema → Raum → Ausbildner, the same
+sequence the card drops them in, so the key reads in the order of the block it
+explains.
+
+**Only the abbreviations the sheet really prints are listed.** The candidate set
+is what a block *could* fall back to; on A4 most blocks turn out to have room for
+the full name, and printing all ten candidates made the band as tall as a band of
+the grid — nine of its lines explaining a Kürzel that appears nowhere on the
+page, three centimetres under the full name spelled out. The sample plan's modern
+sheet now prints **no key at all**, and the classic portrait one line.
+
+Which entries are needed is not knowable before layout, and the key's own height
+feeds back into it: a taller key leaves the grid shorter, shorter blocks
+abbreviate more, and more abbreviations make the key taller again. `resolveLegend`
+walks that loop to its fixed point. It renders the whole sheet into a **throwaway
+document**, starting from *no* key — the largest grid, therefore the fewest
+fallbacks — and grows the set until a pass asks for nothing new. Growth is
+monotone, so it terminates; it settles in two passes in practice, and a cap of six
+falls back to the full candidate list rather than printing one that
+under-explains. The starting direction matters: shrinking down from the full list
+would settle on a key missing an abbreviation the final layout goes on to print.
+
+The plumbing is three small pieces:
+
+- `PrintCell.keys?: string[]` — the `kind:short` legend keys a cell's *short*
+  form depends on. The renderer only learns a fallback happened at the moment it
+  gives up on `full`, and all it holds then is the cell, so the cell carries the
+  answer. The cut-out plans have no key and set nothing. The classic sheet's
+  `metaCell` joins Raum and Ausbildner into one line and therefore concatenates
+  both cells' keys.
+- `cardLines(…, onShort?)` and `fitLabel(…, onShort?)` in `pdfDraw.ts` report the
+  cell whenever they drop to the short form. `fitLabel` exists so the one-line
+  layout for a block under 4.6 mm — exactly the block that ends up abbreviated —
+  reports like the stacked one; both renderers had that fallback inline and
+  neither could have told anyone about it.
+- Each renderer's body is a `paint(doc, legendEntries, onShort)` closure, so the
+  probe passes and the pass that reaches the reader are literally the same code.
+  A separate measuring path would be free to disagree with the drawing one.
 
 **It goes below the grid, not into it.** The grid's white space is tempting —
 nobody teaches at 07:00, the Kader lanes are empty for three days — and an

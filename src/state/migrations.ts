@@ -15,6 +15,97 @@
 
 type Migration = (state: any) => any;
 
+/** "John Doe" → "JD". Inlined so a migration never depends on app code that
+ *  is free to change under it. */
+function initialsFrom(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  return parts.slice(0, 2).map(p => p[0]!.toUpperCase()).join('');
+}
+
+/**
+ * v1 → v2: `teacher.shortName`, the initials a card shows. Derived from the
+ * name, which is what the ad-hoc backfill this replaced already did.
+ */
+export function migrate_v1_to_v2(state: any): any {
+  return {
+    ...state,
+    version: 2,
+    teachers: (state.teachers ?? []).map((t: any) => ({
+      ...t,
+      shortName:
+        typeof t.shortName === 'string' && t.shortName !== ''
+          ? t.shortName
+          : initialsFrom(String(t.name ?? '')),
+    })),
+  };
+}
+
+/**
+ * v2 → v3: nothing. No build ever wrote a v3 store — the version went straight
+ * from 2 to 4 in one commit — so this hop exists only to keep the chain
+ * unbroken, and the whole of that change lives in the next step.
+ */
+export function migrate_v2_to_v3(state: any): any {
+  return { ...state, version: 3 };
+}
+
+/**
+ * v3 → v4: phases, multi-group subjects, and the `'inherit'` sentinel.
+ *
+ * The pre-v4 model had no phases at all: the week was one grid over every
+ * group. It is rebuilt here as a single phase spanning Mon–Fri with every group
+ * in it, which is exactly what that model meant. Events carried `teacherIds:
+ * null` / `roomId: null` for "use the subject's default", a meaning `'inherit'`
+ * now carries — `null` on a room has since come to mean the opposite
+ * ("explicitly no room"), so leaving it would silently strip rooms.
+ */
+export function migrate_v3_to_v4(state: any): any {
+  const groups = state.groups ?? [];
+  const phases = Array.isArray(state.phases) && state.phases.length > 0
+    ? state.phases
+    : [{
+        id: 'phase-migrated',
+        label: 'WK',
+        startDay: 0,
+        endDay: 4,
+        groupIds: groups.map((g: any) => g.id),
+      }];
+
+  return {
+    ...state,
+    version: 4,
+    phases,
+    subjects: (state.subjects ?? []).map((s: any) => ({
+      ...s,
+      isMultiGroup: s.isMultiGroup === true,
+    })),
+    events: (state.events ?? []).map((ev: any) => ({
+      ...ev,
+      // An array here was the short-lived pre-sentinel spelling of "every lane".
+      groupId: Array.isArray(ev.groupId) ? 'all' : ev.groupId,
+      teacherIds: ev.teacherIds == null ? 'inherit' : ev.teacherIds,
+      roomId: ev.roomId == null ? 'inherit' : ev.roomId,
+    })),
+  };
+}
+
+/**
+ * v4 → v5: `subject.phaseId`, the override that pins a Thema to one phase.
+ * Seeded null — "read the phase from the placements" — which is what every
+ * subject did before the field existed.
+ */
+export function migrate_v4_to_v5(state: any): any {
+  return {
+    ...state,
+    version: 5,
+    subjects: (state.subjects ?? []).map((s: any) => ({
+      ...s,
+      phaseId: typeof s.phaseId === 'string' ? s.phaseId : null,
+    })),
+  };
+}
+
 /**
  * v5 → v6: plan name, subject content (goals + notes), unavailability windows
  * on teachers and rooms.
@@ -138,8 +229,32 @@ export function migrate_v11_to_v12(state: any): any {
   };
 }
 
+/**
+ * v12 → v13: `group.excludeFromCoverage` and `subject.optional` — the two ways
+ * a plan says "this one is not part of the reckoning". Both default to false,
+ * which is the behaviour every existing plan already has.
+ */
+export function migrate_v12_to_v13(state: any): any {
+  return {
+    ...state,
+    version: 13,
+    groups: (state.groups ?? []).map((g: any) => ({
+      ...g,
+      excludeFromCoverage: g.excludeFromCoverage === true,
+    })),
+    subjects: (state.subjects ?? []).map((s: any) => ({
+      ...s,
+      optional: s.optional === true,
+    })),
+  };
+}
+
 /** Keyed by the version each step migrates *from*. Chained by `migrateState`. */
 const MIGRATIONS: Record<number, Migration> = {
+  1: migrate_v1_to_v2,
+  2: migrate_v2_to_v3,
+  3: migrate_v3_to_v4,
+  4: migrate_v4_to_v5,
   5: migrate_v5_to_v6,
   6: migrate_v6_to_v7,
   7: migrate_v7_to_v8,
@@ -147,6 +262,7 @@ const MIGRATIONS: Record<number, Migration> = {
   9: migrate_v9_to_v10,
   10: migrate_v10_to_v11,
   11: migrate_v11_to_v12,
+  12: migrate_v12_to_v13,
 };
 
 /**

@@ -8,15 +8,15 @@ import type { AppState, CalendarEvent, GroupSelector, Subject, TimeWindow } from
  */
 export function makeState(overrides: Partial<AppState> = {}): AppState {
   return {
-    version: 11,
+    version: 13,
     name: 'Test WK',
     lastExportedAt: null,
     wkStartDate: '2026-09-07',
     groups: [
-      { id: 'k', label: 'K', enabled: true, order: 0 },
-      { id: 'g1', label: 'G1', enabled: true, order: 1 },
-      { id: 'g2', label: 'G2', enabled: true, order: 2 },
-      { id: 'g3', label: 'G3', enabled: true, order: 3 },
+      { id: 'k', label: 'K', enabled: true, order: 0, excludeFromCoverage: false },
+      { id: 'g1', label: 'G1', enabled: true, order: 1, excludeFromCoverage: false },
+      { id: 'g2', label: 'G2', enabled: true, order: 2, excludeFromCoverage: false },
+      { id: 'g3', label: 'G3', enabled: true, order: 3, excludeFromCoverage: false },
     ],
     phases: [
       { id: 'kader', label: 'KVK', startDay: 0, endDay: 1, groupIds: ['k'] },
@@ -50,6 +50,7 @@ export function makeSubject(overrides: Partial<Subject> & { id: string }): Subje
     defaultDurationMinutes: 90,
     kind: 'lesson',
     isMultiGroup: false,
+    optional: false,
     phaseId: null,
     content: { goals: [], notes: '' },
     ...overrides,

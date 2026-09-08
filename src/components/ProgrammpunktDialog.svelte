@@ -10,16 +10,20 @@
    * chip that reads «3 fehlen» forever.
    *
    * So this dialog asks only what the click could not answer. Day, time and lane
-   * come from the cell; name, length, colour and "one lane or all of them" are
-   * the four things left. Ausbildner and Raum are deliberately *not* here:
-   * the quick edit opens on the new card the moment this closes, and that is
-   * where those two are set everywhere else in the app.
+   * come from the cell; the rest is what the new definition needs.
+   *
+   * Ausbildner and Raum are here rather than left to the quick edit, because
+   * they are the Programmpunkt's *defaults*, not this one card's override: set
+   * here, placing Antreten again on Thursday already carries them. Setting them
+   * afterwards in the quick edit writes an override onto a single card and
+   * leaves the definition empty, so the second placement arrives bare.
    */
   import { getState, createProgrammpunkt } from '../state/store.svelte';
   import {
     DAY_NAMES, dayDateLabel, addMinutesToTime, phaseForDay, phaseGroups,
   } from '../utils/timeUtils';
-  import { generateDistinctColor } from '../utils/colorUtils';
+  import { generateDistinctColor, getContrastColor } from '../utils/colorUtils';
+  import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import DurationField from './DurationField.svelte';
   import ColorPicker from './config/ColorPicker.svelte';
@@ -43,7 +47,14 @@
   // Half an hour: Begrüssung, Antreten and Rapport are all shorter than a
   // lesson, and 30 is the length the preset row starts from.
   let durationMinutes = $state(30);
-  let allGroups = $state(false);
+  // What the user picked, for a definition that does not exist yet. Once the
+  // name matches one that does, the definition's own values are shown instead
+  // (see the deriveds below) — held apart rather than written over, so clearing
+  // the name back out returns the user's own draft instead of leaving the
+  // reused Programmpunkt's Ausbildner behind on a new one.
+  let draftAllGroups = $state(false);
+  let draftTeacherIds: ID[] = $state([]);
+  let draftRoomId: ID | null = $state(null);
   // svelte-ignore state_referenced_locally
   let color = $state(generateDistinctColor(getState().subjects.map(s => s.color)));
 
@@ -67,6 +78,36 @@
 
   const canCreate = $derived(name.trim() !== '');
 
+  /**
+   * Reusing an existing Programmpunkt reuses its defaults too, so the fields
+   * show what the placement will actually get instead of a picker that silently
+   * does nothing. `isMultiGroup` belongs in that list: the store reads the lane
+   * rule off the reused definition, so a «Alle Gruppen» left live here promised
+   * something the placement would not deliver — and the header line above it
+   * spelled that promise out lane by lane.
+   */
+  const teacherIds = $derived(reused ? reused.defaultTeacherIds : draftTeacherIds);
+  const roomId = $derived(reused ? reused.defaultRoomId : draftRoomId);
+  const allGroups = $derived(reused ? reused.isMultiGroup : draftAllGroups);
+
+  function toggleTeacher(id: ID): void {
+    draftTeacherIds = draftTeacherIds.includes(id)
+      ? draftTeacherIds.filter(t => t !== id)
+      : [...draftTeacherIds, id];
+  }
+
+  /**
+   * How long it runs *this time* stays the user's, unlike the rest — the same
+   * Antreten is 15 minutes on Wednesday and 30 on Thursday. The definition only
+   * seeds the field, and only when a different one is matched.
+   */
+  let seededFrom: ID | null = null;
+  $effect(() => {
+    if (!reused || reused.id === seededFrom) return;
+    seededFrom = reused.id;
+    durationMinutes = reused.defaultDurationMinutes;
+  });
+
   const SCOPE_OPTIONS = $derived([
     { value: false, icon: 'pin' as const, label: `Nur ${laneLabel}` },
     { value: true, icon: 'users' as const, label: 'Alle Gruppen' },
@@ -76,7 +117,7 @@
     e?.preventDefault();
     if (!canCreate) return;
     const eventId = createProgrammpunkt(
-      { name, color, durationMinutes, isMultiGroup: allGroups },
+      { name, color, durationMinutes, isMultiGroup: allGroups, teacherIds, roomId },
       dayIndex,
       startTime,
       allGroups ? ALL_GROUPS : groupId,
@@ -138,6 +179,52 @@
           </div>
         </div>
 
+        {#if appState.teachers.length > 0}
+          <div class="field field-top">
+            <span class="field-name">Ausbildner</span>
+            <div class="tgrid flex-1" role="group" aria-label="Ausbildner">
+              {#each appState.teachers as t (t.id)}
+                {@const on = teacherIds.includes(t.id)}
+                <button
+                  type="button"
+                  class="tchip"
+                  class:tchip-on={on}
+                  style="--tc:{t.color}"
+                  aria-pressed={on}
+                  disabled={reused !== null}
+                  onclick={() => toggleTeacher(t.id)}
+                >
+                  <span
+                    class="av"
+                    style="background:{on ? t.color : 'transparent'}; color:{on ? getContrastColor(t.color) : 'var(--wk-text-faint)'}; border-color:{t.color}"
+                  >{teacherShort(t)}</span>
+                  <span class="tchip-name">{t.name}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if appState.rooms.length > 0}
+          <div class="field">
+            <span class="field-name">Raum</span>
+            <select
+              class="select select-bordered select-sm flex-1"
+              value={roomId ?? ''}
+              disabled={reused !== null}
+              onchange={(e) => {
+                const v = (e.currentTarget as HTMLSelectElement).value;
+                draftRoomId = v === '' ? null : v;
+              }}
+            >
+              <option value="">Kein Raum</option>
+              {#each appState.rooms as r (r.id)}
+                <option value={r.id}>{r.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
         <div class="field">
           <span class="field-name">Für</span>
           <div class="scope flex-1" role="radiogroup" aria-label="Für welche Gruppen">
@@ -148,7 +235,8 @@
                 class:scope-opt-on={allGroups === opt.value}
                 role="radio"
                 aria-checked={allGroups === opt.value}
-                onclick={() => (allGroups = opt.value)}
+                disabled={reused !== null}
+                onclick={() => (draftAllGroups = opt.value)}
               >
                 <Icon name={opt.icon} size={13} /> {opt.label}
               </button>
@@ -170,7 +258,9 @@
         {#if reused}
           <p class="hint note">
             «{reused.name}» gibt es schon — dieser Programmpunkt wird noch einmal platziert,
-            nicht ein zweites Mal angelegt.
+            nicht ein zweites Mal angelegt. Farbe, Ausbildner, Raum und «für wen» kommen
+            von dort; ändern lassen sie sich unter Konfiguration › Themen. Nur die Dauer
+            gilt für diese Platzierung.
           </p>
         {:else}
           <p class="hint note">
@@ -267,7 +357,7 @@
   .field-top .field-name { padding-top: 0.35rem; }
 
   .field-name {
-    width: 3.4rem;
+    width: 5.2rem;
     flex-shrink: 0;
     font-size: var(--wk-fs-sm);
     font-weight: 650;
@@ -276,6 +366,63 @@
   .scope {
     display: flex;
     gap: 0.35rem;
+  }
+
+  /* Two per row, like the quick edit's Ausbildner picker: a full name is what
+     tells Céline from Christoph, and initials alone do not. */
+  .tgrid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.25rem;
+  }
+
+  .tchip {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    padding: 0.2rem 0.35rem 0.2rem 0.2rem;
+    border: 1px solid var(--wk-line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-2xs);
+    font-weight: 550;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s, color 0.12s;
+  }
+  .tchip:hover:not(:disabled) { border-color: var(--tc); }
+  .tchip:disabled { cursor: default; opacity: 0.7; }
+
+  /* Same treatment as a locked Ausbildner chip: still readable, plainly not
+     yours to change while the name names an existing Programmpunkt. */
+  .scope-opt:disabled { cursor: default; opacity: 0.7; }
+  .tchip-on {
+    border-color: var(--tc);
+    background: color-mix(in oklab, var(--tc) 12%, transparent);
+    color: var(--wk-text);
+    font-weight: 650;
+  }
+
+  .tchip-name {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .av {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--wk-line);
+    background: transparent;
+    font-size: var(--wk-fs-3xs);
+    font-weight: 700;
   }
 
   .scope-opt {
@@ -306,13 +453,13 @@
   }
 
   .note {
-    padding-left: 4.15rem;
+    padding-left: 5.95rem;
   }
 
   .warn {
     font-size: var(--wk-fs-xs);
     color: color-mix(in oklab, var(--color-warning) 78%, var(--wk-text));
-    padding-left: 4.15rem;
+    padding-left: 5.95rem;
   }
 
   .sheet-foot {

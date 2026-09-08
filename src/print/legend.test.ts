@@ -29,9 +29,11 @@ describe('buildCalendarDoc legend', () => {
       events: [makeEvent({ groupId: 'g1' })],
     });
     const legend = buildCalendarDoc(state, ALL).legend;
-    // 'Funk' is its own short form; 'Seminarraum 1' has no explicit shortName;
-    // 'Beat Zwahlen' is on no event.
-    expect(legend.map(e => e.short)).toEqual(['AM']);
+    // 'Funk' is its own short form, so it needs no key; 'Beat Zwahlen' is on no
+    // event. 'Seminarraum 1' has no explicit shortName and so is *derived* to
+    // 'Sem1' — the same fallback the screen card shows, and a Kürzel a printed
+    // sheet has no tooltip to recover.
+    expect(legend.map(e => e.short)).toEqual(['Sem1', 'AM']);
   });
 
   it('orders Thema, then Raum, then Ausbildner', () => {

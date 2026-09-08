@@ -23,6 +23,23 @@ describe('subjectPhases', () => {
     const state = makeState({ events: [makeEvent({ groupId: 'k', dayIndex: 0 })] });
     expect(subjectPhases(state, 'lesson').map(p => p.id)).toEqual(['kader']);
   });
+
+  // Switching off G1 must not tell G2 and G3 they no longer owe the Thema.
+  it('falls back when every placement sits on a switched-off lane', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g1' ? { ...g, enabled: false } : g)),
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2 })],
+    };
+    expect(subjectPhases(state, 'lesson').map(p => p.id)).toEqual(['gruppen']);
+    expect(
+      buildCoverage(state)
+        .find(sec => sec.phase.id === 'gruppen')!
+        .rows.map(r => r.subject.id),
+    ).toContain('lesson');
+    expect(coverageForSubject(state, 'lesson')).toMatchObject({ placed: 0, total: 2 });
+  });
 });
 
 describe('Programmpunkte', () => {
@@ -193,6 +210,55 @@ describe('coverage', () => {
     const state = makeState({ events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2 })] });
     const gruppen = buildCoverage(state).find(s => s.phase.id === 'gruppen')!;
     expect(gruppen.rows.map(r => r.subject.id)).not.toContain('lunch');
+  });
+});
+
+describe('leaving lanes and Themen out of the reckoning', () => {
+  // A group on its own programme (Kulturgüterschutz). It keeps its lane and its
+  // Lektionen — switching it off would hide both — it is simply not counted.
+  const withIgnoredG3 = () => {
+    const base = makeState();
+    return {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g3' ? { ...g, excludeFromCoverage: true } : g)),
+    };
+  };
+
+  it('does not ask an ignored lane for a Thema', () => {
+    const state = {
+      ...withIgnoredG3(),
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2 }), makeEvent({ groupId: 'g2', dayIndex: 3 })],
+    };
+    // Two of two, not two of three: G3 owes nothing.
+    expect(coverageForSubject(state, 'lesson'))
+      .toEqual({ placed: 2, total: 2, uneven: false, short: false, over: false });
+    expect(missingLanesForSubject(state, 'lesson')).toEqual([]);
+
+    const gruppen = buildCoverage(state).find(sec => sec.phase.id === 'gruppen')!;
+    expect(gruppen.groupIds).toEqual(['g1', 'g2']);
+    expect(gruppen.rows.find(r => r.subject.id === 'lesson')!.missing).toBe(0);
+  });
+
+  it('still lets an ignored lane hold its own Lektionen', () => {
+    const state = { ...withIgnoredG3(), events: [makeEvent({ groupId: 'g3', dayIndex: 2 })] };
+    const plan = buildGroupPlans(state).find(p => p.group.id === 'g3')!;
+    expect(plan.entries).toHaveLength(1);
+  });
+
+  it('leaves an optional Thema out of coverage entirely', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      subjects: base.subjects.map(s => (s.id === 'lesson' ? { ...s, optional: true } : s)),
+    };
+    expect(coverageForSubject(state, 'lesson'))
+      .toEqual({ placed: 0, total: 0, uneven: false, short: false, over: false });
+    expect(missingLanesForSubject(state, 'lesson')).toEqual([]);
+
+    const gruppen = buildCoverage(state).find(sec => sec.phase.id === 'gruppen')!;
+    expect(gruppen.rows.map(r => r.subject.id)).not.toContain('lesson');
+    // The other Thema is untouched — `optional` is per subject, not a mode.
+    expect(gruppen.rows.map(r => r.subject.id)).toContain('other');
   });
 });
 

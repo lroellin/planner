@@ -4,7 +4,7 @@ import { formatDate } from "../utils/timeUtils";
 import { migrateState } from "./migrations";
 
 const STATE_KEY = "wk-planner-state";
-export const CURRENT_VERSION = 12;
+export const CURRENT_VERSION = 13;
 
 // A colour picker fires an input event per mouse move, so writes are coalesced
 // into one per frame-ish window instead of one per event. Anything still pending
@@ -35,10 +35,10 @@ export function createDefaultState(): AppState {
     lastExportedAt: null,
     wkStartDate: monday,
     groups: [
-      { id: kaderId, label: "K", enabled: true, order: 0 },
-      { id: groupIds[0]!, label: "G1", enabled: true, order: 1 },
-      { id: groupIds[1]!, label: "G2", enabled: true, order: 2 },
-      { id: groupIds[2]!, label: "G3", enabled: true, order: 3 },
+      { id: kaderId, label: "K", enabled: true, order: 0, excludeFromCoverage: false },
+      { id: groupIds[0]!, label: "G1", enabled: true, order: 1, excludeFromCoverage: false },
+      { id: groupIds[1]!, label: "G2", enabled: true, order: 2, excludeFromCoverage: false },
+      { id: groupIds[2]!, label: "G3", enabled: true, order: 3, excludeFromCoverage: false },
     ],
     phases: [
       {
@@ -69,6 +69,7 @@ export function createDefaultState(): AppState {
         defaultDurationMinutes: 60,
         kind: "break",
         isMultiGroup: true,
+        optional: false,
         phaseId: null,
         content: { goals: [], notes: "" },
       },
@@ -82,6 +83,7 @@ export function createDefaultState(): AppState {
         defaultDurationMinutes: 15,
         kind: "break",
         isMultiGroup: false,
+        optional: false,
         phaseId: null,
         content: { goals: [], notes: "" },
       },
@@ -138,6 +140,17 @@ if (typeof window !== "undefined") {
  * render, with no way back except devtools.
  */
 export function isValidState(value: unknown): value is AppState {
+  return isMigratableState(value) && Array.isArray((value as Partial<AppState>).phases);
+}
+
+/**
+ * The check that runs *before* the migration chain, where `phases` cannot be
+ * required: the field only exists from v4 on, and demanding it here is what made
+ * every pre-phase store fail the shape check and get silently replaced by a
+ * fresh default — the migration steps for it were never reached. Everything
+ * listed below has been in the model since v1.
+ */
+export function isMigratableState(value: unknown): value is AppState {
   if (typeof value !== "object" || value === null) return false;
   const s = value as Partial<AppState>;
   return (
@@ -147,7 +160,6 @@ export function isValidState(value: unknown): value is AppState {
     Array.isArray(s.rooms) &&
     Array.isArray(s.subjects) &&
     Array.isArray(s.groups) &&
-    Array.isArray(s.phases) &&
     Array.isArray(s.events)
   );
 }
@@ -159,9 +171,9 @@ export function loadState(): AppState {
 
     const parsed: unknown = JSON.parse(raw);
 
-    if (!isValidState(parsed)) return createDefaultState();
+    if (!isMigratableState(parsed)) return createDefaultState();
 
-    if (parsed.version === CURRENT_VERSION) return parsed;
+    if (parsed.version === CURRENT_VERSION && isValidState(parsed)) return parsed;
 
     // Step it forward. Only a hop with no migration (or state from a newer
     // build) reaches the prompt.
@@ -242,11 +254,13 @@ export function parsePlan(text: string): ParseResult {
     return { ok: false, error: "Diese Datei ist kein gültiges JSON." };
   }
 
-  if (!isValidState(parsed)) {
+  if (!isMigratableState(parsed)) {
     return { ok: false, error: "Diese Datei ist kein WK-Planer-Plan." };
   }
 
-  if (parsed.version === CURRENT_VERSION) return { ok: true, state: parsed };
+  if (parsed.version === CURRENT_VERSION && isValidState(parsed)) {
+    return { ok: true, state: parsed };
+  }
 
   const migrated = migrateState(parsed, CURRENT_VERSION);
   if (migrated && isValidState(migrated)) return { ok: true, state: migrated };

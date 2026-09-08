@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   eventGroupIds, eventInPhase, orphanEvents, phaseForDay, buildFCEvents, durationBand,
   snapToSlot, addMinutesToTime, timeDiffMinutes, eventOverrides, fullDateLabel,
+  clampGroupDelta,
 } from './timeUtils';
 import { getContrastColor } from './colorUtils';
 import { escapeHtml } from './format';
@@ -195,5 +196,29 @@ describe('fullDateLabel', () => {
   it('hands back anything it cannot parse', () => {
     expect(fullDateLabel('')).toBe('');
     expect(fullDateLabel('kaputt')).toBe('kaputt');
+  });
+});
+
+
+describe('clampGroupDelta', () => {
+  it('passes a delta through while the whole set fits', () => {
+    expect(clampGroupDelta([1, 2], 2, 0, 4)).toBe(2);
+    expect(clampGroupDelta([2, 3], -2, 0, 4)).toBe(-2);
+  });
+
+  it('stops the set at the outermost member, keeping its shape', () => {
+    // Mon+Thu dragged three days right: Thu can only go one, so neither does more.
+    expect(clampGroupDelta([0, 3], 3, 0, 4)).toBe(1);
+    expect(clampGroupDelta([1, 4], -3, 0, 4)).toBe(-1);
+  });
+
+  it('refuses to move at all when the edge is already reached', () => {
+    expect(clampGroupDelta([0, 4], 1, 0, 4)).toBe(0);
+    expect(clampGroupDelta([0, 4], -1, 0, 4)).toBe(0);
+  });
+
+  it('is a no-op for an empty set or a zero delta', () => {
+    expect(clampGroupDelta([], 3, 0, 4)).toBe(0);
+    expect(clampGroupDelta([2], 0, 0, 4)).toBe(0);
   });
 });

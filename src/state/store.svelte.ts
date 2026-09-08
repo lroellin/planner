@@ -370,6 +370,9 @@ export interface ProgrammpunktDraft {
   color: string;
   durationMinutes: number;
   isMultiGroup: boolean;
+  /** Becomes the new definition's defaults — see the note in the dialog. */
+  teacherIds: ID[];
+  roomId: ID | null;
 }
 
 /**
@@ -404,11 +407,12 @@ export function createProgrammpunkt(
     name,
     shortName: '',
     color: draft.color,
-    defaultTeacherIds: [],
-    defaultRoomId: null,
+    defaultTeacherIds: draft.teacherIds,
+    defaultRoomId: draft.roomId,
     defaultDurationMinutes: draft.durationMinutes,
     kind: 'oneoff',
     isMultiGroup: draft.isMultiGroup,
+    optional: false,
     phaseId: null,
     content: { goals: [], notes: '' },
   };
@@ -600,7 +604,7 @@ export function removeSubject(id: ID): void {
 export function addGroup(label: string): void {
   const maxOrder = _state.groups.reduce((m, g) => Math.max(m, g.order), -1);
   setState(
-    { ..._state, groups: [..._state.groups, { id: nanoid(), label, enabled: true, order: maxOrder + 1 }] },
+    { ..._state, groups: [..._state.groups, { id: nanoid(), label, enabled: true, order: maxOrder + 1, excludeFromCoverage: false }] },
     { label: `Gruppe ${label} hinzufügen` },
   );
 }

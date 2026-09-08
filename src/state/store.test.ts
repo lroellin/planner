@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  getState, createProgrammpunkt, resetToDefaults, removeEvent, undo, canUndo,
+  getState, createProgrammpunkt, resetToDefaults, removeEvent, undo, canUndo, addTeacher, addRoom,
 } from './store.svelte';
 import { ALL_GROUPS } from '../types';
 
@@ -19,7 +19,10 @@ function firstGroupId(): string {
   return wk.groupIds[0]!;
 }
 
-const DRAFT = { name: 'Begrüssung', color: '#2563eb', durationMinutes: 30, isMultiGroup: false };
+const DRAFT = {
+  name: 'Begrüssung', color: '#2563eb', durationMinutes: 30, isMultiGroup: false,
+  teacherIds: [] as string[], roomId: null,
+};
 
 describe('createProgrammpunkt', () => {
   it('adds the definition and its placement together', () => {
@@ -40,6 +43,26 @@ describe('createProgrammpunkt', () => {
     // Nothing to inherit *from* yet, but the event still points at the subject
     // so a later default set in Konfiguration reaches it.
     expect(event.teacherIds).toBe('inherit');
+  });
+
+  it('makes the dialog\'s Ausbildner and Raum the definition\'s defaults', () => {
+    // Not an override on the one card: placing the same Programmpunkt again
+    // has to arrive already carrying them.
+    const teacherId = addTeacher('Anna Müller', 'AM', '#4299e1');
+    const roomId = addRoom('Kompanieraum', '#48bb78', false);
+
+    const eventId = createProgrammpunkt(
+      { ...DRAFT, teacherIds: [teacherId], roomId }, 2, '08:00', firstGroupId(),
+    );
+
+    const state = getState();
+    const subject = state.subjects.find(s => s.name === 'Begrüssung')!;
+    expect(subject.defaultTeacherIds).toEqual([teacherId]);
+    expect(subject.defaultRoomId).toBe(roomId);
+
+    const event = state.events.find(e => e.id === eventId)!;
+    expect(event.teacherIds).toBe('inherit');
+    expect(event.roomId).toBe('inherit');
   });
 
   it('takes the all-lanes sentinel when it is for every group', () => {

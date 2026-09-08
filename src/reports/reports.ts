@@ -1,8 +1,23 @@
 import type { AppState, CalendarEvent, Group, ID, Phase, Room, Subject, Teacher } from '../types';
 import {
-  effectiveTeacherIds, effectiveRoomId, eventInPhase, phaseGroups, eventGroupIds, timeDiffMinutes,
-  sortSubjects, isEventActive,
+  effectiveTeacherIds, effectiveRoomId, eventInPhase, countedGroups, eventGroupIds,
+  timeDiffMinutes, sortSubjects, isEventActive,
 } from '../utils/timeUtils';
+
+/**
+ * Is this subject owed by every lane? Only a Thema is, and only while it is not
+ * marked `optional` — a specialist lesson some groups simply do not sit has no
+ * per-group Soll for coverage to measure against.
+ *
+ * One predicate, because the report, the sidebar badge and the lane markers all
+ * ask the same question and a disagreement between them is exactly the kind of
+ * bug nobody reports: they just stop trusting the badge.
+ */
+export function isCounted(subject: Subject | null | undefined): boolean {
+  // Deliberately not a type predicate: `!isCounted(s)` on a known Subject would
+  // then narrow to `never`, which is false — a Pause is still a Subject.
+  return subject !== null && subject !== undefined && subject.kind === 'lesson' && !subject.optional;
+}
 
 // ─── Coverage: has every group had every subject? ─────────────────────────────
 
@@ -58,7 +73,7 @@ export function coverageStatus(
 function fallbackPhase(state: AppState): Phase | null {
   return state.phases.reduce<Phase | null>(
     (widest, p) =>
-      widest === null || phaseGroups(state, p).length > phaseGroups(state, widest).length ? p : widest,
+      widest === null || countedGroups(state, p).length > countedGroups(state, widest).length ? p : widest,
     null,
   );
 }
@@ -68,7 +83,7 @@ function fallbackPhase(state: AppState): Phase | null {
  * against the group lanes and vice versa, so coverage is always measured within
  * a phase. An explicit `phaseId` settles it; otherwise the phases the subject is
  * actually placed in are used, falling back to the widest phase (the group
- * rotation) while it has no placements at all.
+ * rotation) while no phase draws it.
  */
 export function subjectPhases(state: AppState, subjectId: ID): Phase[] {
   const subject = state.subjects.find(s => s.id === subjectId);
@@ -77,11 +92,18 @@ export function subjectPhases(state: AppState, subjectId: ID): Phase[] {
     if (pinned) return [pinned];
   }
   const placed = state.events.filter(ev => ev.subjectId === subjectId);
-  if (placed.length === 0) {
+  const inPhases = state.phases.filter(p => placed.some(ev => eventInPhase(state, ev, p)));
+  // No phase draws any of it — either it has never been placed, or every
+  // placement sits on a switched-off lane. Both mean the same thing here: there
+  // is nothing to read the phase off, so the rotation is assumed. Falling
+  // through to an empty list instead would drop the Thema out of the coverage
+  // report altogether, quietly telling the lanes that are still switched on
+  // that they no longer owe it.
+  if (inPhases.length === 0) {
     const fallback = fallbackPhase(state);
     return fallback ? [fallback] : [];
   }
-  return state.phases.filter(p => placed.some(ev => eventInPhase(state, ev, p)));
+  return inPhases;
 }
 
 interface LaneTally {
@@ -96,7 +118,7 @@ interface LaneTally {
  */
 function tallyLanes(state: AppState, subjectId: ID, phase: Phase): Map<ID, LaneTally> {
   const tally = new Map<ID, LaneTally>(
-    phaseGroups(state, phase).map(g => [g.id, { count: 0, minutes: 0 }]),
+    countedGroups(state, phase).map(g => [g.id, { count: 0, minutes: 0 }]),
   );
   for (const ev of state.events) {
     if (ev.subjectId !== subjectId || !eventInPhase(state, ev, phase)) continue;
@@ -113,13 +135,13 @@ function tallyLanes(state: AppState, subjectId: ID, phase: Phase): Map<ID, LaneT
 
 export function buildCoverage(state: AppState): CoverageSection[] {
   return state.phases.map(phase => {
-    const groupIds = phaseGroups(state, phase).map(g => g.id);
+    const groupIds = countedGroups(state, phase).map(g => g.id);
 
     // Only Themen are "owed" by every lane. Pausen are placed ad hoc rather than
-    // attended, and a Programmpunkt happens once for the whole course — neither
-    // has a per-group Soll to measure against.
+    // attended, a Programmpunkt happens once for the whole course, and an
+    // optional Thema is not owed by everyone — none has a per-group Soll.
     const rows: CoverageRow[] = sortSubjects(state.subjects)
-      .filter(s => s.kind === 'lesson')
+      .filter(isCounted)
       .filter(s => subjectPhases(state, s.id).some(p => p.id === phase.id))
       .map(subject => {
         const tally = tallyLanes(state, subject.id, phase);
@@ -153,9 +175,9 @@ export function coverageForSubject(
   subjectId: ID,
 ): { placed: number; total: number; uneven: boolean; short: boolean; over: boolean } {
   const subject = state.subjects.find(s => s.id === subjectId);
-  // Only a Thema is owed by every lane; a Pause or a Programmpunkt has nothing
-  // to be short of, so the badge has nothing to say about it.
-  if (!subject || subject.kind !== 'lesson') {
+  // Only a Thema is owed by every lane; a Pause, a Programmpunkt or an optional
+  // Thema has nothing to be short of, so the badge has nothing to say about it.
+  if (!subject || !isCounted(subject)) {
     return { placed: 0, total: 0, uneven: false, short: false, over: false };
   }
   const target = subject.defaultDurationMinutes;
@@ -166,7 +188,7 @@ export function coverageForSubject(
   let over = false;
 
   for (const phase of subjectPhases(state, subjectId)) {
-    const groups = phaseGroups(state, phase);
+    const groups = countedGroups(state, phase);
     if (groups.length === 0) continue;
     const tally = tallyLanes(state, subjectId, phase);
     const totals = groups.map(g => tally.get(g.id)?.minutes ?? 0);
@@ -191,12 +213,12 @@ export function coverageForSubject(
  */
 export function missingLanesForSubject(state: AppState, subjectId: ID): string[] {
   const subject = state.subjects.find(s => s.id === subjectId);
-  if (!subject || subject.kind !== 'lesson') return [];
+  if (!subject || !isCounted(subject)) return [];
   const target = subject.defaultDurationMinutes;
   const labels: string[] = [];
   for (const phase of subjectPhases(state, subjectId)) {
     const tally = tallyLanes(state, subjectId, phase);
-    for (const group of phaseGroups(state, phase)) {
+    for (const group of countedGroups(state, phase)) {
       const lane = tally.get(group.id) ?? { count: 0, minutes: 0 };
       if (lane.count === 0) labels.push(group.label);
       else if (lane.minutes < target) {
@@ -215,13 +237,13 @@ export function missingLanesForSubject(state: AppState, subjectId: ID): string[]
  */
 export function missingLaneIdsForSubject(state: AppState, subjectId: ID, phase: Phase): ID[] {
   const subject = state.subjects.find(s => s.id === subjectId);
-  if (!subject || subject.kind !== 'lesson') return [];
+  if (!subject || !isCounted(subject)) return [];
   // A Kader subject is not owed by the group lanes, and vice versa.
   if (!subjectPhases(state, subjectId).some(p => p.id === phase.id)) return [];
 
   const target = subject.defaultDurationMinutes;
   const tally = tallyLanes(state, subjectId, phase);
-  return phaseGroups(state, phase)
+  return countedGroups(state, phase)
     .filter(group => {
       const lane = tally.get(group.id) ?? { count: 0, minutes: 0 };
       return lane.count === 0 || lane.minutes < target;

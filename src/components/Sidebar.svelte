@@ -4,7 +4,7 @@
   import { getState } from '../state/store.svelte';
   import { spotlightSubject, requestPlacement, requestConfig } from '../state/ui.svelte';
   import {
-    coverageForSubject, missingLanesForSubject, missingLaneIdsForSubject, subjectPhases,
+    coverageForSubject, missingLanesForSubject, missingLaneIdsForSubject, subjectPhases, isCounted,
   } from '../reports/reports';
   import { sortSubjects } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
@@ -94,7 +94,11 @@
   // "Uneven" has no missing lane to name, so it gets its own sentence rather
   // than an empty list.
   function chipTitle(subject: Subject): string {
-    if (subject.kind !== 'lesson') return `${subject.name} — auf den Kalender ziehen oder anklicken`;
+    if (!isCounted(subject)) {
+      return subject.optional && subject.kind === 'lesson'
+        ? `${subject.name} — nicht für alle Gruppen, zählt nicht zur Abdeckung`
+        : `${subject.name} — auf den Kalender ziehen oder anklicken`;
+    }
     const cov = coverageForSubject(appState, subject.id);
     const missing = missingLanesForSubject(appState, subject.id);
     if (missing.length > 0) {
@@ -167,10 +171,6 @@
                 title={chipTitle(subject)}
                 onpointerdown={onChipPointerDown}
                 onclick={(e) => onChipClick(subject.id, e)}
-                onmouseenter={() => spotlightSubject(subject.id)}
-                onmouseleave={() => spotlightSubject(null)}
-                onfocus={() => spotlightSubject(subject.id)}
-                onblur={() => spotlightSubject(null)}
               >
                 <span class="chip-spine"></span>
                 <span class="chip-line">
@@ -182,19 +182,35 @@
                   <!-- A green "3/3" while the coverage report calls the same row
                        uneven is the badge people look at all day being the one
                        that is wrong, so the chip carries the report's verdict. -->
-                  {#if section.coverage && chipState(subject).kind === 'complete'}
+                  {#if section.coverage && isCounted(subject) && chipState(subject).kind === 'complete'}
                     <Icon name="check" size={12} class="chip-done" />
                   {/if}
                 </span>
-                {#if section.coverage}
+                <!-- An optional Thema is not owed by every lane, so it has
+                     neither a gap to report nor a completion to tick: it gets
+                     the same silence a Pause does, not a green check that would
+                     claim every group has had it. -->
+                {#if section.coverage && isCounted(subject)}
                   {@const st = chipState(subject)}
                   {#if st.kind !== 'complete'}
                     <!-- Its own line: at 208px the badge and the name were
                          competing for the same run of pixels and the name lost —
                          "Persönliche Ausr…", "Schutzanlage Be…" — when the name
                          is the whole affordance. -->
+                    <!-- The spotlight hangs off *this* badge, not off the whole
+                         chip. Dimming the week and marking the owing lanes is an
+                         answer to "where is it still missing?", and asking it by
+                         sweeping the pointer down the list — or merely by
+                         clicking a chip, which leaves the grid dark under a
+                         focused button — put the calendar behind a scrim exactly
+                         when the user was trying to read it. -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <span class="chip-foot">
-                      <span class="chip-flag chip-flag-{st.kind}">
+                      <span
+                        class="chip-flag chip-flag-{st.kind}"
+                        onmouseenter={() => spotlightSubject(subject.id)}
+                        onmouseleave={() => spotlightSubject(null)}
+                      >
                         {#if st.kind === 'missing'}<Icon name="alert" size={10} />{/if}
                         {st.label}
                       </span>
@@ -385,6 +401,7 @@
 
   .chip-flag {
     display: inline-flex;
+    cursor: help;
     align-items: center;
     gap: 0.2rem;
     font-size: var(--wk-fs-2xs);

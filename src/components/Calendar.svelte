@@ -13,9 +13,9 @@
   } from '../state/ui.svelte';
   import { previewClashDetail } from '../conflicts/detector';
   import {
-    groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate, clampDayIndex,
-    formatTime, isMultiGroupEvent, addMinutesToTime,
-    sortSubjects, type FCEventTeacher, type FCEventRoom,
+    groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
+    formatTime, isMultiGroupEvent, addMinutesToTime, clampGroupDelta, DAY_NAMES,
+    sortSubjects, timeDiffMinutes, type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { missingLaneIdsForSubject } from '../reports/reports';
   import { getContrastColor } from '../utils/colorUtils';
@@ -40,6 +40,8 @@
 
   // The grid runs 07:00–19:00 so the fringes stay reachable, but the training
   // day is 08:00–17:00 — the band a click is pulled back into.
+  const GRID_MIN_MIN = 7 * 60;   // keep in step with slotMinTime/slotMaxTime below
+  const GRID_MAX_MIN = 19 * 60;
   const DAY_START_MIN = 8 * 60;
   const DAY_END_MIN = 17 * 60;
 
@@ -140,6 +142,11 @@
     openQuickEdit(id, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
   }
 
+  /** Minutes since midnight, for comparing against the grid's own bounds. */
+  function minutesOfDay(time: string): number {
+    return timeDiffMinutes('00:00', time);
+  }
+
   function handleEventDrop(info: EventDropArg): void {
     const eventId = info.event.extendedProps['eventId'] as ID;
     const newStart = info.event.start!;
@@ -150,10 +157,29 @@
     // under the pointer would stack them, which is never the intent.
     const selection = getSelectedEventIds();
     if (selection.length > 1 && selection.includes(eventId)) {
-      const dayDelta = info.delta.days;
-      const minuteDelta = info.delta.milliseconds / 60_000;
+      const moving = getState().events.filter(ev => selection.includes(ev.id));
+      // The set moves as one. Clamping each block to the week on its own is what
+      // the single-card path wants and what a selection must not have: the ones
+      // already on Friday stop, the rest keep going, and the shape of the
+      // selection changes under a single undo entry. Same for the day's own
+      // bounds, which `addMinutesToTime` would otherwise fold to 00:00/23:59.
+      const dayDelta = clampGroupDelta(
+        moving.map(ev => ev.dayIndex), info.delta.days, 0, DAY_NAMES.length - 1,
+      );
+      const minuteDelta = clampGroupDelta(
+        moving.flatMap(ev => [minutesOfDay(ev.startTime), minutesOfDay(ev.endTime)]),
+        info.delta.milliseconds / 60_000,
+        GRID_MIN_MIN,
+        GRID_MAX_MIN,
+      );
+      if (dayDelta === 0 && minuteDelta === 0) {
+        // Nothing can move, so nothing is recorded — and FullCalendar has
+        // already drawn the drop, so the view has to be put back.
+        info.revert();
+        return;
+      }
       updateEvents(selection, ev => ({
-        dayIndex: clampDayIndex(ev.dayIndex + dayDelta),
+        dayIndex: ev.dayIndex + dayDelta,
         startTime: addMinutesToTime(ev.startTime, minuteDelta),
         endTime: addMinutesToTime(ev.endTime, minuteDelta),
       }), 'verschieben');

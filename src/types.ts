@@ -80,6 +80,16 @@ export interface Subject {
   defaultDurationMinutes: number;
   kind: SubjectKind;
   isMultiGroup: boolean; // if true, placing schedules it for every lane of the phase at once
+  /**
+   * True when not every group owes this Thema — a specialist lesson only some
+   * of them sit. Coverage then has nothing to measure it against, so it is left
+   * out of the report and its sidebar chip carries no "fehlt noch" badge. It is
+   * still a Thema in every other way: placed per group, with its own defaults.
+   *
+   * Distinct from `kind: 'oneoff'`, which is outside coverage because it happens
+   * *once for the whole course* rather than once per group.
+   */
+  optional: boolean;
   // Which phase this subject is rotated through. null = infer from where it is
   // placed. Setting it makes coverage exact for subjects that belong to one
   // phase only (a Kader lesson must not be judged against the group lanes).
@@ -92,6 +102,16 @@ export interface Group {
   label: string;
   enabled: boolean;
   order: number;
+  /**
+   * The lane is planned and drawn like any other, but is left out of every
+   * *reckoning*: coverage never asks whether it has had a Thema, and an
+   * all-lanes placement (Mittagessen, Begrüssung) skips it.
+   *
+   * The case is a group on its own programme — Kulturgüterschutz sitting the
+   * week with its own timetable. Switching it off is the wrong tool: that hides
+   * its lane and its lessons, and this group very much has both.
+   */
+  excludeFromCoverage: boolean;
 }
 
 // A contiguous stretch of the week with its own set of group lanes. The Kader

@@ -1,9 +1,9 @@
 import { isHardConflict, type AppState, type ID } from '../types';
 import type { PrintCell } from './boxes';
 import {
-  effectiveRoomId, effectiveTeacherIds, orderedPhases, phaseForDay, phaseGroups,
+  effectiveRoomId, effectiveTeacherIds, eventGroupIds, orderedPhases, phaseForDay, phaseGroups,
 } from '../utils/timeUtils';
-import { teacherShort } from '../utils/format';
+import { roomShort, subjectShort, teacherShort } from '../utils/format';
 import { DAY_NAMES, dayDateLabel } from '../utils/timeUtils';
 
 /**
@@ -49,13 +49,21 @@ export interface GridEntry {
  * One abbreviation the sheet may print, and what it stands for.
  *
  * A card falls back to a Kürzel whenever the lane is too narrow for the full
- * name, and on paper there is no tooltip to recover it from — so every short
- * form a printed block *could* show is listed once, with its full name.
+ * name, and on paper there is no tooltip to recover it from — so the sheet needs
+ * a key. `CalendarDoc.legend` is the *candidate* set: every short form the
+ * placed blocks could possibly show. Which of them a given sheet actually prints
+ * depends on how much room its blocks turn out to have, so the renderer narrows
+ * this list to what it really drew — see `resolveLegend` in `legendFit.ts`.
  */
 export interface LegendEntry {
   short: string;
   full: string;
   kind: 'subject' | 'room' | 'teacher';
+}
+
+/** How a `LegendEntry` is addressed from a `PrintCell.keys`. */
+export function legendKey(kind: LegendEntry['kind'], short: string): string {
+  return `${kind}:${short}`;
 }
 
 export interface CalendarDoc {
@@ -99,6 +107,26 @@ function timeRange(state: AppState, dayIndexes: Set<number>): [number, number] {
   return end - start >= 240 ? [start, end] : [start, Math.min(GRID_END, start + 240)];
 }
 
+/**
+ * Split column indices into the contiguous stretches they actually form.
+ *
+ * A block used to be drawn as one bar from the lowest column it touches to the
+ * highest, which is right for every event whose lanes sit next to each other —
+ * and wrong for the one case where they do not. A group left out of the
+ * reckoning keeps its column but is skipped by the shared Mittagessen, so with
+ * lanes G1 · G2(excluded) · G3 the break resolves to columns 0 and 2 and a
+ * single bar printed straight across G2, giving it a lunch the screen does not.
+ */
+function contiguousRuns(cols: number[]): { from: number; span: number }[] {
+  const runs: { from: number; span: number }[] = [];
+  for (const col of [...cols].sort((a, b) => a - b)) {
+    const last = runs.at(-1);
+    if (last && col === last.from + last.span) last.span++;
+    else runs.push({ from: col, span: 1 });
+  }
+  return runs;
+}
+
 export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
   const columns: GridColumn[] = [];
   const phases: GridSpan[] = [];
@@ -140,10 +168,16 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
   const entries: GridEntry[] = [];
   // Keyed by kind+short so the same Raum on twelve cards is listed once.
   const legend = new Map<string, LegendEntry>();
-  const note = (kind: LegendEntry['kind'], short: string, full: string): void => {
-    if (short === '' || full === '' || short === full) return;
-    legend.set(`${kind}:${short}`, { kind, short, full });
+  // Returns the key the cell should carry, or null when the short form needs no
+  // explaining (there is none, or it *is* the full name).
+  const note = (kind: LegendEntry['kind'], short: string, full: string): string | null => {
+    if (short === '' || full === '' || short === full) return null;
+    const key = legendKey(kind, short);
+    legend.set(key, { kind, short, full });
+    return key;
   };
+  const keys = (...maybe: (string | null)[]): string[] =>
+    maybe.filter((k): k is string => k !== null);
 
   for (const ev of state.events) {
     const phase = phaseForDay(state, ev.dayIndex);
@@ -151,8 +185,12 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
     const subject = state.subjects.find(s => s.id === ev.subjectId);
     if (!subject) continue;
 
+    // Through eventGroupIds, so the printed sheet resolves the all-lanes
+    // sentinel exactly as the screen does — a group left out of the reckoning
+    // keeps its own column but is skipped by the shared Mittagessen.
+    const laneIds = new Set(eventGroupIds(state, ev));
     const cols = phaseGroups(state, phase)
-      .filter(lane => ev.groupId === 'all' || ev.groupId === lane.id)
+      .filter(lane => laneIds.has(lane.id))
       .map(lane => index.get(`${ev.dayIndex}:${lane.id}`))
       .filter((i): i is number => i !== undefined);
     if (cols.length === 0) continue;
@@ -164,23 +202,37 @@ export function buildCalendarDoc(state: AppState, phaseIds: ID[]): CalendarDoc {
     const roomId = effectiveRoomId(ev, subject);
     const room = roomId ? state.rooms.find(r => r.id === roomId) ?? null : null;
 
-    note('subject', subject.shortName.trim(), subject.name);
-    if (room) note('room', room.shortName.trim() || '', room.name);
-    for (const t of teachers) note('teacher', teacherShort(t), t.name);
+    // The *same* short forms the screen falls back to. An empty `shortName`
+    // means "derive it" everywhere else in the app; taking it literally here
+    // printed "Schutzanlage Bern-West" into a lane the grid renders as "SBW",
+    // and — since `note` skips a short that equals its full name — left it out
+    // of the key as well.
+    const subjectKeys = keys(note('subject', subjectShort(subject), subject.name));
+    const roomKeys = room ? keys(note('room', roomShort(room), room.name)) : [];
+    const teacherKeys = keys(...teachers.map(t => note('teacher', teacherShort(t), t.name)));
 
-    entries.push({
-      from: Math.min(...cols),
-      span: Math.max(...cols) - Math.min(...cols) + 1,
+    for (const run of contiguousRuns(cols)) entries.push({
+      from: run.from,
+      span: run.span,
       startMinutes: toMinutes(ev.startTime),
       endMinutes: toMinutes(ev.endTime),
       time: `${ev.startTime}–${ev.endTime}`,
       color: subject.color,
-      subject: { full: subject.name, short: subject.shortName.trim() || subject.name },
+      subject: {
+        full: subject.name,
+        short: subjectShort(subject),
+        keys: subjectKeys,
+      },
       teachers: {
         full: teachers.map(t => t.name).join(', '),
         short: teachers.map(t => teacherShort(t)).join(' '),
+        keys: teacherKeys,
       },
-      room: { full: room?.name ?? '', short: room?.shortName.trim() || room?.name || '' },
+      room: {
+        full: room?.name ?? '',
+        short: room ? roomShort(room) : '',
+        keys: roomKeys,
+      },
       isBreak: subject.kind === 'break',
       conflict: kinds.size === 0
         ? 'none'

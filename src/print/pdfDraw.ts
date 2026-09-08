@@ -55,20 +55,46 @@ export function truncate(doc: jsPDF, text: string, maxWidth: number): string {
   return `${cut}…`;
 }
 
+/**
+ * Told which cells were drawn in their short form, so the abbreviation key can
+ * list those and nothing else. Optional everywhere: the cut-out plans have no
+ * key and pass none.
+ */
+export type ShortSink = (cell: PrintCell) => void;
+
 /** Wrapped lines for a card, falling back to the short name before truncating. */
 export function cardLines(
   doc: jsPDF,
   value: PrintCell,
   width: number,
   maxLines: number,
+  onShort?: ShortSink,
 ): string[] {
   if (maxLines <= 0) return [];
   let lines = doc.splitTextToSize(value.full, width) as string[];
   if (lines.length > maxLines && value.short !== value.full) {
     lines = doc.splitTextToSize(value.short, width) as string[];
+    onShort?.(value);
   }
   if (lines.length <= maxLines) return lines;
   const kept = lines.slice(0, maxLines);
   kept[maxLines - 1] = truncate(doc, kept[maxLines - 1]!, width);
   return kept;
+}
+
+/**
+ * The single centred label a block too short for the stacked layout gets: the
+ * full name while it fits, the Kürzel otherwise. Same fallback as `cardLines`,
+ * and it has to report the same way — a 15-minute Pause is exactly the block
+ * that ends up abbreviated.
+ */
+export function fitLabel(
+  doc: jsPDF,
+  value: PrintCell,
+  width: number,
+  onShort?: ShortSink,
+): string {
+  if (doc.getTextWidth(value.full) <= width) return truncate(doc, value.full, width);
+  if (value.short !== value.full) onShort?.(value);
+  return truncate(doc, value.short, width);
 }

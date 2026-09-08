@@ -70,6 +70,7 @@
     defaultDurationMinutes: 60,
     kind: 'lesson',
     isMultiGroup: false,
+    optional: false,
     phaseId: null,
     content: { goals: [], notes: '' },
   });
@@ -360,6 +361,27 @@
         <Icon name="chevronRight" size={12} /> Erweitert
       </summary>
       <div class="advanced-body form-field">
+        <!-- The other half of "not everyone owes this": a Programmpunkt is
+             outside coverage because it happens *once*, this because only some
+             groups sit it. The chip loses its «fehlt» badge either way. -->
+        <label class="opt-row">
+          <input
+            type="checkbox"
+            class="checkbox checkbox-sm"
+            checked={view.optional}
+            onchange={(e) => set({ optional: (e.currentTarget as HTMLInputElement).checked })}
+          />
+          <span class="opt-text">
+            <span class="opt-title">Nicht für alle Gruppen</span>
+            <span class="opt-sub">
+              Nur einzelne Gruppen besuchen dieses Thema. Es zählt dann nicht zur Abdeckung:
+              keine Auswertungszeile, kein «fehlt noch»-Hinweis am Chip.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div class="advanced-body form-field">
         <span class="field-label">Gehört zu Phase</span>
         <p class="field-hint">
           Die Abdeckung wird pro Phase gerechnet: Ein Thema, das nur das Kader hat, darf nicht an
@@ -430,6 +452,19 @@
 </form>
 
 <style>
+  /* A checkbox with its explanation beside it, matching the `choice-opt` pair
+     above without pretending to be a two-way choice. */
+  .opt-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    cursor: pointer;
+  }
+
+  .opt-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+  .opt-title { font-size: var(--wk-fs-sm); font-weight: 650; }
+  .opt-sub { font-size: var(--wk-fs-xs); color: var(--wk-text-faint); line-height: 1.45; }
+
   .pane-switch {
     display: flex;
     gap: 0.15rem;

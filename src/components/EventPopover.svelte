@@ -2,17 +2,19 @@
   import {
     getState, updateEvent, removeEvent, duplicateEvents, splitEvent, copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
-  import { closeQuickEdit, selectEvent, type QuickEdit } from '../state/ui.svelte';
+  import {
+    closeQuickEdit, selectEvent, revealEvent, highlightEvents, clearHighlight, type QuickEdit,
+  } from '../state/ui.svelte';
   import {
     DAY_NAMES, addMinutesToTime, timeDiffMinutes, effectiveTeacherIds, effectiveRoomId,
-    eventOverrides, snapToSlot, splitRange,
+    snapToSlot, splitRange,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import DurationField from './DurationField.svelte';
   import TimeField from './TimeField.svelte';
-  import type { ID } from '../types';
+  import { CONFLICT_KIND_LABELS, isHardConflict, type ID } from '../types';
 
   interface Props {
     quick: QuickEdit;
@@ -28,8 +30,60 @@
   const teacherIds = $derived(ev ? effectiveTeacherIds(ev, subject) : []);
   const roomId = $derived(ev ? effectiveRoomId(ev, subject) : null);
   const minutes = $derived(ev ? timeDiffMinutes(ev.startTime, ev.endTime) : 60);
-  const overrides = $derived(ev && subject ? eventOverrides(ev, subject) : []);
+  /**
+   * Which of the three fields departs from the Thema's default, and so needs its
+   * "zurück" link. Asked of the event directly rather than through
+   * `eventOverrides`, whose answers are the *German labels* the card's tooltip
+   * prints ("Ausbildner", "Raum", "Dauer") — this matched them against
+   * 'teachers' / 'room' / 'duration', so no reset link had ever appeared.
+   */
+  const overrides = $derived({
+    teachers: ev !== null && ev.teacherIds !== 'inherit',
+    room: ev !== null && ev.roomId !== 'inherit',
+    duration:
+      ev !== null && subject !== null && minutes !== subject.defaultDurationMinutes,
+  });
   const spareLanes = $derived(ev ? lanesWithoutEvent(ev.id) : []);
+
+  /**
+   * What is wrong with *this* card, named.
+   *
+   * The grid draws a red edge and the conflict rail lists every clash in the
+   * week, but the popover — the panel you open by clicking the card the edge is
+   * on — said nothing at all, so the one question it was opened to answer had to
+   * be taken to a different panel and matched up by eye. The full modal has
+   * carried this strip all along; it is the same data, one click earlier.
+   *
+   * Each chip carries the cards it collides with, so it can point at them:
+   * hovering pulses them on the grid, clicking scrolls to the first. An
+   * availability clash has no counterpart — being booked while away involves one
+   * card — so those are inert, and say so by not being buttons.
+   */
+  const clashes = $derived.by(() => {
+    if (!ev?.conflicts) return [];
+    return ev.conflicts.map(c => {
+      const name =
+        c.kind === 'teacher' || c.kind === 'teacher-absent'
+          ? appState.teachers.find(t => t.id === c.resourceId)?.name
+        : c.kind === 'room' || c.kind === 'room-blocked'
+          ? appState.rooms.find(r => r.id === c.resourceId)?.name
+        : appState.groups.find(g => g.id === c.resourceId)?.label;
+      return {
+        kind: c.kind,
+        name: name ?? c.resourceId,
+        hard: isHardConflict(c.kind),
+        others: c.collidingEventIds,
+      };
+    });
+  });
+
+  function goToClash(eventIds: ID[]): void {
+    const target = eventIds[0];
+    if (target === undefined) return;
+    clearHighlight();
+    closeQuickEdit();
+    revealEvent(target);
+  }
 
 
   let el: HTMLDivElement | undefined = $state();
@@ -212,6 +266,32 @@
       </button>
     </header>
 
+    {#if clashes.length > 0 && mode === 'main'}
+      <div class="clashes">
+        {#each clashes as c (c.kind + c.name)}
+          {#if c.others.length > 0}
+            <button
+              type="button"
+              class="clash clash-go"
+              class:clash-hard={c.hard}
+              title="Zur überschneidenden Lektion springen"
+              onmouseenter={() => highlightEvents(c.others)}
+              onmouseleave={clearHighlight}
+              onclick={() => goToClash(c.others)}
+            >
+              <Icon name="alert" size={10} />
+              {CONFLICT_KIND_LABELS[c.kind]} {c.name}
+            </button>
+          {:else}
+            <span class="clash" class:clash-hard={c.hard}>
+              <Icon name="alert" size={10} />
+              {CONFLICT_KIND_LABELS[c.kind]} {c.name}
+            </span>
+          {/if}
+        {/each}
+      </div>
+    {/if}
+
     {#if mode === 'split'}
       <div class="quick-body">
         <div class="quick-row">
@@ -282,7 +362,7 @@
         <div class="quick-row">
           <div class="quick-label">
             <span class="wk-eyebrow">Ausbildner</span>
-            {#if overrides.includes('teachers')}
+            {#if overrides.teachers}
               <button class="quick-reset" onclick={() => resetField('teachers')} title="Zurück zur Themenvorgabe">
                 <Icon name="reset" size={11} /> zurück
               </button>
@@ -319,7 +399,7 @@
         <div class="quick-row">
           <div class="quick-label">
             <span class="wk-eyebrow">Raum</span>
-            {#if overrides.includes('room')}
+            {#if overrides.room}
               <button class="quick-reset" onclick={() => resetField('room')} title="Zurück zur Themenvorgabe">
                 <Icon name="reset" size={11} /> zurück
               </button>
@@ -341,7 +421,7 @@
         <div class="quick-row">
           <div class="quick-label">
             <span class="wk-eyebrow">Dauer</span>
-            {#if overrides.includes('duration')}
+            {#if overrides.duration}
               <button class="quick-reset" onclick={() => resetField('duration')} title="Zurück zur Themenvorgabe">
                 <Icon name="reset" size={11} /> zurück
               </button>
@@ -440,6 +520,42 @@
     border-radius: 4px;
   }
   .quick-x:hover { color: var(--wk-text); background: var(--wk-surface-alt); }
+
+  /* Between the header and the body, where the modal puts the same strip: it is
+     about the whole card, not about any one field below it. */
+  .clashes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    padding: 0.4rem 0.55rem;
+    border-bottom: 1px solid var(--wk-line);
+    background: color-mix(in oklab, var(--color-warning) 8%, var(--wk-surface));
+  }
+
+  .clash {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.1rem 0.4rem;
+    border: 1px solid color-mix(in oklab, var(--color-warning) 45%, transparent);
+    border-radius: 999px;
+    background: none;
+    font-size: var(--wk-fs-3xs);
+    font-weight: 650;
+    color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
+  }
+
+  /* Hard clashes are the ones that cannot stand, so they are filled rather than
+     outlined — the same two weights the grid draws the cards in. */
+  .clash-hard {
+    border-color: color-mix(in oklab, var(--color-error) 45%, transparent);
+    background: color-mix(in oklab, var(--color-error) 13%, transparent);
+    color: color-mix(in oklab, var(--color-error) 85%, var(--wk-text));
+  }
+
+  .clash-go { cursor: pointer; }
+  .clash-go:hover { background: color-mix(in oklab, var(--color-warning) 22%, transparent); }
+  .clash-hard.clash-go:hover { background: color-mix(in oklab, var(--color-error) 24%, transparent); }
 
   .quick-body {
     display: flex;

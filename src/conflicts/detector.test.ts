@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { detectConflicts, attachConflicts, previewClash } from './detector';
 import { ALL, makeEvent, makeState, makeSubject, makeWindow } from '../test/fixtures';
+import { eventGroupIds } from '../utils/timeUtils';
 
 const kinds = (state: Parameters<typeof detectConflicts>[0]) =>
   detectConflicts(state).map(c => c.kind).sort();
@@ -80,17 +81,68 @@ describe('detectConflicts', () => {
     expect(detectConflicts(state)).toEqual([]);
   });
 
-  it('treats a lesson running through a multi-group lunch as a group clash', () => {
+  // An all-lanes placement is the frame the day is planned around, not a
+  // booking that competes with one for a lane — see occupiesLanesExclusively.
+  it('leaves a lesson running through a multi-group lunch alone', () => {
     const state = makeState({
       events: [
         makeEvent({ id: 'lunch-ev', subjectId: 'lunch', groupId: ALL, startTime: '12:00', endTime: '13:00' }),
         makeEvent({ groupId: 'g2', teacherIds: [], roomId: null, startTime: '12:30', endTime: '14:00' }),
       ],
     });
+    expect(detectConflicts(state)).toEqual([]);
+  });
+
+  // Standing outside the *lane* reckoning does not put an all-lanes event
+  // outside the rest of it: one Ausbildner cannot run Antreten and a Lektion at
+  // the same moment, whoever else is in the room.
+  it('raises a teacher conflict for an all-lanes event', () => {
+    const state = makeState({
+      events: [
+        makeEvent({ id: 'antreten', subjectId: 'lunch', groupId: ALL, teacherIds: ['t1'], startTime: '08:00', endTime: '09:00' }),
+        makeEvent({ id: 'lektion', groupId: 'g2', teacherIds: ['t1'], roomId: null, startTime: '08:30', endTime: '10:00' }),
+      ],
+    });
     const reports = detectConflicts(state);
     expect(reports).toHaveLength(1);
-    expect(reports[0]!.kind).toBe('group');
-    expect(reports[0]!.resourceId).toBe('g2');
+    expect(reports[0]!.kind).toBe('teacher');
+    expect([...reports[0]!.involvedEventIds].sort()).toEqual(['antreten', 'lektion']);
+  });
+
+  it('raises a room conflict for an all-lanes event', () => {
+    const state = makeState({
+      events: [
+        makeEvent({ id: 'antreten', subjectId: 'lunch', groupId: ALL, teacherIds: [], roomId: 'r1', startTime: '08:00', endTime: '09:00' }),
+        makeEvent({ id: 'lektion', groupId: 'g2', teacherIds: [], roomId: 'r1', startTime: '08:30', endTime: '10:00' }),
+      ],
+    });
+    const reports = detectConflicts(state);
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.kind).toBe('room');
+  });
+
+  it('raises an absence conflict for an all-lanes event', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      teachers: base.teachers.map(t =>
+        t.id === 't1' ? { ...t, unavailable: [makeWindow([2])] } : t,
+      ),
+      events: [
+        makeEvent({ subjectId: 'lunch', groupId: ALL, teacherIds: ['t1'], roomId: null, dayIndex: 2 }),
+      ],
+    };
+    expect(detectConflicts(state).map(r => r.kind)).toEqual(['teacher-absent']);
+  });
+
+  it('skips the lane of a group left out of the reckoning for an all-lanes event', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g3' ? { ...g, excludeFromCoverage: true } : g)),
+      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2 })],
+    };
+    expect(eventGroupIds(state, state.events[0]!)).toEqual(['g1', 'g2']);
   });
 
   it('does not let a multi-group event collide with itself', () => {
@@ -213,10 +265,10 @@ describe('availability', () => {
   it('ignores absences for events whose lanes are all disabled', () => {
     const state = makeState({
       groups: [
-        { id: 'k', label: 'K', enabled: true, order: 0 },
-        { id: 'g1', label: 'G1', enabled: false, order: 1 },
-        { id: 'g2', label: 'G2', enabled: true, order: 2 },
-        { id: 'g3', label: 'G3', enabled: true, order: 3 },
+        { id: 'k', label: 'K', enabled: true, order: 0, excludeFromCoverage: false },
+        { id: 'g1', label: 'G1', enabled: false, order: 1, excludeFromCoverage: false },
+        { id: 'g2', label: 'G2', enabled: true, order: 2, excludeFromCoverage: false },
+        { id: 'g3', label: 'G3', enabled: true, order: 3, excludeFromCoverage: false },
       ],
       teachers: [
         { id: 't1', name: 'Anna Müller', shortName: 'AM', color: '#4299e1',
@@ -258,11 +310,38 @@ describe('previewClash', () => {
     ...over,
   });
 
-  it('sees the all-lanes break a lesson would be dropped onto', () => {
+  it('does not flag a drop onto an all-lanes break that shares nothing else', () => {
     const state = makeState({
-      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, teacherIds: [], roomId: null, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
     });
-    expect(previewClash(state, candidate())).toBe('hard');
+    expect(previewClash(state, candidate())).toBeNull();
+  });
+
+  it('does not flag an all-lanes placement over a lane it would cover', () => {
+    const state = makeState({
+      events: [makeEvent({ groupId: 'g1', teacherIds: [], roomId: null, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate({
+      subjectId: 'lunch', groupId: ALL, teacherIds: [], roomId: null,
+    }))).toBeNull();
+  });
+
+  // The lane is not the only thing a drop can cost — the mirror has to agree
+  // with the panel, which now names the Ausbildner clash.
+  it('flags an all-lanes placement that double-books an Ausbildner', () => {
+    const state = makeState({
+      events: [makeEvent({ groupId: 'g1', teacherIds: ['t1'], roomId: null, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate({
+      subjectId: 'lunch', groupId: ALL, teacherIds: ['t1'], roomId: null,
+    }))).toBe('hard');
+  });
+
+  it('flags a drop that shares an Ausbildner with an all-lanes break', () => {
+    const state = makeState({
+      events: [makeEvent({ subjectId: 'lunch', groupId: ALL, teacherIds: ['t1'], roomId: null, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
+    });
+    expect(previewClash(state, candidate({ teacherIds: ['t1'], roomId: null }))).toBe('hard');
   });
 
   it('resolves the subject defaults for a chip that has not been dropped yet', () => {

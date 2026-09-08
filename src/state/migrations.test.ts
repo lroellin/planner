@@ -177,8 +177,44 @@ describe('migrateState', () => {
   });
 
   it('refuses a version with no path to the target', () => {
-    // Newer than this build, and a hop nothing knows how to make.
+    // Newer than this build, and older than the oldest step there is.
     expect(migrateState({ version: 99 }, CURRENT_VERSION)).toBeNull();
-    expect(migrateState({ version: 1 }, CURRENT_VERSION)).toBeNull();
+    expect(migrateState({ version: 0 }, CURRENT_VERSION)).toBeNull();
+  });
+
+  // The chain now starts at v1 — the version the very first build wrote. A store
+  // that old used to fail the shape check before any step ran (it predates
+  // `phases`), be replaced by a fresh default, and take the user's week with it.
+  it('carries a v1 store all the way to the current version', () => {
+    const out = migrateState({
+      version: 1,
+      wkStartDate: '2026-09-07',
+      groups: [{ id: 'g1', label: 'G1', enabled: true, order: 0 }],
+      teachers: [{ id: 't1', name: 'Anna Müller', color: '#4299e1' }],
+      rooms: [{ id: 'r1', name: 'Seminarraum', color: '#48bb78', excludeFromConflictCheck: false }],
+      subjects: [{
+        id: 's1', name: 'Karteneröffnung', color: '#9f7aea',
+        defaultTeacherIds: ['t1'], defaultRoomId: 'r1',
+        defaultDurationMinutes: 90, isBreak: false,
+      }],
+      events: [{
+        id: 'e1', subjectId: 's1', groupId: 'g1', dayIndex: 0,
+        startTime: '08:00', endTime: '09:30', teacherIds: null, roomId: null,
+      }],
+    }, CURRENT_VERSION);
+
+    expect(out).not.toBeNull();
+    expect(out.version).toBe(CURRENT_VERSION);
+    expect(out.teachers[0].shortName).toBe('AM');
+    // The pre-phase model was one grid over the whole week for every group.
+    expect(out.phases).toHaveLength(1);
+    expect(out.phases[0].groupIds).toEqual(['g1']);
+    // `null` used to mean "use the subject's default"; on a room it now means
+    // the opposite, so both fields have to become the sentinel.
+    expect(out.events[0].teacherIds).toBe('inherit');
+    expect(out.events[0].roomId).toBe('inherit');
+    expect(out.subjects[0].kind).toBe('lesson');
+    expect(out.subjects[0].optional).toBe(false);
+    expect(out.groups[0].excludeFromCoverage).toBe(false);
   });
 });

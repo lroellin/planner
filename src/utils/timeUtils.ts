@@ -119,6 +119,27 @@ export function clampDayIndex(dayIndex: number): number {
 }
 
 /**
+ * The largest part of `delta` that keeps every one of `values` within
+ * [`min`, `max`] — how far a *set* can move together.
+ *
+ * Clamping each block on its own is what a single dragged card wants and what a
+ * selection must not have: the blocks already at the edge stop, the rest keep
+ * going, and the selection silently changes shape under one undo entry. This
+ * moves all of them or none of them, as far as the outermost one allows.
+ */
+export function clampGroupDelta(
+  values: number[],
+  delta: number,
+  min: number,
+  max: number,
+): number {
+  if (values.length === 0 || delta === 0) return 0;
+  return delta > 0
+    ? Math.max(0, Math.min(delta, max - Math.max(...values)))
+    : Math.min(0, Math.max(delta, min - Math.min(...values)));
+}
+
+/**
  * Display order for subjects: alphabetical, everywhere. The stored array is in
  * insertion order, which is meaningless to look through once there are twenty
  * of them. Breaks are kept in their own list by the callers that separate them.
@@ -142,6 +163,20 @@ export function phaseGroups(state: AppState, phase: Phase): Group[] {
     .sort((a, b) => a.order - b.order);
 }
 
+/**
+ * The lanes of a phase that take part in the *reckoning*: they owe every Thema,
+ * and an all-lanes placement lands on them.
+ *
+ * `phaseGroups` is the wider set — every lane the phase *draws*. A group with
+ * `excludeFromCoverage` is drawn like any other and keeps its own timetable; it
+ * is simply not counted. The two are deliberately different functions: reaching
+ * for the wrong one is a bug either way round, and a name that says "counted"
+ * is easier to get right than a boolean argument.
+ */
+export function countedGroups(state: AppState, phase: Phase): Group[] {
+  return phaseGroups(state, phase).filter(g => !g.excludeFromCoverage);
+}
+
 // Stored order is insertion order; the week always has to read left to right.
 export function orderedPhases(state: AppState): Phase[] {
   return [...state.phases].sort((a, b) => a.startDay - b.startDay);
@@ -153,15 +188,16 @@ export function phaseForDay(state: AppState, dayIndex: number): Phase | null {
   return state.phases.find(p => dayIndex >= p.startDay && dayIndex <= p.endDay) ?? null;
 }
 
-// The lanes an event actually occupies. ALL_GROUPS resolves to the enabled lanes
+// The lanes an event actually occupies. ALL_GROUPS resolves to the counted lanes
 // of the phase covering its day, so a lunch break follows the phase rather than
-// the lane list that happened to exist when it was dropped.
+// the lane list that happened to exist when it was dropped — and skips the group
+// that is running its own programme.
 export function eventGroupIds(state: AppState, ev: CalendarEvent): ID[] {
   if (ev.groupId !== ALL_GROUPS) {
     return isEnabled(state, ev.groupId) ? [ev.groupId] : [];
   }
   const phase = phaseForDay(state, ev.dayIndex);
-  return phase ? phaseGroups(state, phase).map(g => g.id) : [];
+  return phase ? countedGroups(state, phase).map(g => g.id) : [];
 }
 
 export function isMultiGroupEvent(ev: CalendarEvent): boolean {
@@ -192,7 +228,7 @@ function isEnabled(state: AppState, groupId: ID): boolean {
 // count — otherwise an event could pass this check and still render nowhere.
 export function eventInPhase(state: AppState, ev: CalendarEvent, phase: Phase): boolean {
   if (ev.dayIndex < phase.startDay || ev.dayIndex > phase.endDay) return false;
-  if (ev.groupId === ALL_GROUPS) return phaseGroups(state, phase).length > 0;
+  if (ev.groupId === ALL_GROUPS) return countedGroups(state, phase).length > 0;
   return phase.groupIds.includes(ev.groupId) && isEnabled(state, ev.groupId);
 }
 
@@ -314,7 +350,7 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   // Multi-group events occupy every lane the rendering phase draws; single-lane
   // events name their one resource.
   const resourceProp: { resourceId: ID } | { resourceIds: ID[] } = ev.groupId === ALL_GROUPS
-    ? { resourceIds: phase ? phaseGroups(state, phase).map(g => g.id) : eventGroupIds(state, ev) }
+    ? { resourceIds: phase ? countedGroups(state, phase).map(g => g.id) : eventGroupIds(state, ev) }
     : { resourceId: ev.groupId };
 
   // No inline colours: the card is a neutral surface tinted from the subject
