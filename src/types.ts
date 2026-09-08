@@ -79,7 +79,13 @@ export interface Subject {
    */
   defaultDurationMinutes: number;
   kind: SubjectKind;
-  isMultiGroup: boolean; // if true, placing schedules it for every lane of the phase at once
+  /**
+   * If true, placing schedules it for the whole phase at once rather than one
+   * lane. Which lanes that is depends on `kind` — a Pause or Programmpunkt
+   * reaches every lane the phase draws, a Thema only the counted ones. See
+   * `lanesForMultiGroup`.
+   */
+  isMultiGroup: boolean;
   /**
    * True when not every group owes this Thema — a specialist lesson only some
    * of them sit. Coverage then has nothing to measure it against, so it is left
@@ -103,13 +109,22 @@ export interface Group {
   enabled: boolean;
   order: number;
   /**
-   * The lane is planned and drawn like any other, but is left out of every
-   * *reckoning*: coverage never asks whether it has had a Thema, and an
-   * all-lanes placement (Mittagessen, Begrüssung) skips it.
+   * The lane is planned and drawn like any other, but is left out of the
+   * *rotation*. Two things follow, and only these two:
    *
-   * The case is a group on its own programme — Kulturgüterschutz sitting the
-   * week with its own timetable. Switching it off is the wrong tool: that hides
-   * its lane and its lessons, and this group very much has both.
+   * - Coverage never asks whether it has had a Thema, so it raises no
+   *   "fehlt noch" and appears in no coverage column.
+   * - An all-lanes *Thema* — the Übung, the Wissenskontrolle — is not placed
+   *   for it. It is off doing its own programme at that hour.
+   *
+   * Everything else still reaches it. An all-lanes Pause or Programmpunkt
+   * (Mittagessen, Begrüssung, Kaderrapport, WK-Abschluss) lands on its lane like
+   * any other, because a group on its own programme still eats and still falls
+   * in. See `lanesForMultiGroup`, which is where that line is drawn.
+   *
+   * The case is Kulturgüterschutz sitting the same days as the rotation with its
+   * own timetable. Switching the group off is the wrong tool: that hides its lane
+   * and its lessons, and this group very much has both.
    */
   excludeFromCoverage: boolean;
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getState, placeSubject } from '../state/store.svelte';
   import {
-    DAY_NAMES, phaseForDay, phaseGroups, snapToSlot, addMinutesToTime, dayDateLabel,
+    DAY_NAMES, phaseForDay, phaseGroups, lanesForMultiGroup, snapToSlot, addMinutesToTime, dayDateLabel,
   } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
   import TimeField from './TimeField.svelte';
@@ -36,6 +36,13 @@
     laneOptions.some(g => g.id === groupId) ? groupId : laneOptions[0]?.id ?? '',
   );
   const isMultiGroup = $derived(subject?.isMultiGroup ?? false);
+  // Which lanes «alle Gruppen» actually reaches for *this* subject: a Thema
+  // skips the group on its own programme, a Pause or Programmpunkt does not.
+  // Naming the lanes and then not placing on all of them is a promise broken
+  // between the dialog and the grid.
+  const sharedLanes = $derived(
+    targetPhase ? lanesForMultiGroup(appState, targetPhase, subject) : [],
+  );
   const canPlace = $derived(laneOptions.length > 0);
   const previewEnd = $derived(
     addMinutesToTime(snapToSlot(startTime), subject?.defaultDurationMinutes ?? 60),
@@ -134,7 +141,7 @@
             {#if isMultiGroup}
               <span class="hint flex-1">
                 Alle Gruppen von {targetPhase?.label ?? 'der Phase'}
-                {#if laneOptions.length > 0}({laneOptions.map(g => g.label).join(', ')}){/if}
+                {#if sharedLanes.length > 0}({sharedLanes.map(g => g.label).join(', ')}){/if}
               </span>
             {:else}
               <select

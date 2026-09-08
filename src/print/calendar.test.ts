@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
-import { buildCalendarDoc, toMinutes } from './calendar';
+import { buildCalendarDoc, contiguousRuns, toMinutes } from './calendar';
 
 const ALL_PHASES = ['kader', 'gruppen'];
 
@@ -20,9 +20,7 @@ describe('buildCalendarDoc', () => {
     expect(doc.phases[1]).toMatchObject({ from: 2, span: 9 });
   });
 
-  // The screen skips the excluded lane; a single min..max bar would have drawn
-  // straight across it and given that group a Mittagessen it does not get.
-  it('breaks an all-lanes block around a lane left out of the reckoning', () => {
+  it('covers a lane left out of the reckoning with the all-lanes block', () => {
     const base = makeState();
     const doc = buildCalendarDoc({
       ...base,
@@ -30,8 +28,8 @@ describe('buildCalendarDoc', () => {
       events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' })],
     }, ['gruppen']);
     expect(doc.columns.slice(0, 3).map(c => c.label)).toEqual(['G1', 'G2', 'G3']);
-    expect(doc.entries.map(e => ({ from: e.from, span: e.span })))
-      .toEqual([{ from: 0, span: 1 }, { from: 2, span: 1 }]);
+    expect(doc.entries).toHaveLength(1);
+    expect(doc.entries[0]).toMatchObject({ from: 0, span: 3 });
   });
 
   it('keeps adjacent lanes of an all-lanes block as one bar', () => {
@@ -171,5 +169,24 @@ describe('buildCalendarDoc', () => {
     const doc = buildCalendarDoc(state([makeEvent({ groupId: 'g1' })]), []);
     expect(doc.columns).toHaveLength(0);
     expect(doc.entries).toHaveLength(0);
+  });
+});
+
+
+// The state model has no way to hand `buildCalendarDoc` a gapped column set
+// today — every lane an all-lanes block covers is a lane the phase draws. This
+// is tested directly rather than through a fixture so the grid keeps drawing the
+// right thing if that ever stops being true: `from`/`span` alone cannot say
+// "these two columns but not the one between them".
+describe('contiguousRuns', () => {
+  it('joins a run and splits at a gap', () => {
+    expect(contiguousRuns([0, 1, 2])).toEqual([{ from: 0, span: 3 }]);
+    expect(contiguousRuns([0, 2])).toEqual([{ from: 0, span: 1 }, { from: 2, span: 1 }]);
+    expect(contiguousRuns([3, 0, 1])).toEqual([{ from: 0, span: 2 }, { from: 3, span: 1 }]);
+  });
+
+  it('handles the single and empty cases', () => {
+    expect(contiguousRuns([4])).toEqual([{ from: 4, span: 1 }]);
+    expect(contiguousRuns([])).toEqual([]);
   });
 });

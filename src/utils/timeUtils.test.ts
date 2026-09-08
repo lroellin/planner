@@ -6,7 +6,7 @@ import {
 } from './timeUtils';
 import { getContrastColor } from './colorUtils';
 import { escapeHtml } from './format';
-import { ALL, makeEvent, makeState } from '../test/fixtures';
+import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
 
 describe('eventGroupIds', () => {
   it('resolves the ALL sentinel to the enabled lanes of the covering phase', () => {
@@ -220,5 +220,41 @@ describe('clampGroupDelta', () => {
   it('is a no-op for an empty set or a zero delta', () => {
     expect(clampGroupDelta([], 3, 0, 4)).toBe(0);
     expect(clampGroupDelta([2], 0, 0, 4)).toBe(0);
+  });
+});
+
+
+// Which lanes «alle Gruppen» reaches turns on *what* is placed, not on who is in
+// the phase. See `lanesForMultiGroup`.
+describe('eventGroupIds for an all-lanes placement', () => {
+  function withOwnProgramme(subject: Parameters<typeof makeSubject>[0]) {
+    const base = makeState();
+    const state = {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g2' ? { ...g, excludeFromCoverage: true } : g)),
+      subjects: [...base.subjects, makeSubject(subject)],
+    };
+    return eventGroupIds(state, makeEvent({ subjectId: subject.id, groupId: ALL, dayIndex: 2 }));
+  }
+
+  it('reaches the group on its own programme with a Pause', () => {
+    expect(withOwnProgramme({ id: 'p', kind: 'break', isMultiGroup: true }))
+      .toEqual(['g1', 'g2', 'g3']);
+  });
+
+  it('reaches it with a Programmpunkt', () => {
+    expect(withOwnProgramme({ id: 'o', kind: 'oneoff', isMultiGroup: true }))
+      .toEqual(['g1', 'g2', 'g3']);
+  });
+
+  it('skips it for a Thema — it is not in the rotation', () => {
+    expect(withOwnProgramme({ id: 'l', kind: 'lesson', isMultiGroup: true }))
+      .toEqual(['g1', 'g3']);
+  });
+
+  it('still reaches every counted lane when nothing is excluded', () => {
+    const state = makeState({ subjects: [...makeState().subjects, makeSubject({ id: 'l', kind: 'lesson', isMultiGroup: true })] });
+    expect(eventGroupIds(state, makeEvent({ subjectId: 'l', groupId: ALL, dayIndex: 2 })))
+      .toEqual(['g1', 'g2', 'g3']);
   });
 });

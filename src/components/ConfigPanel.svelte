@@ -399,16 +399,17 @@
                       </button>
                     </div>
                     <!-- Not the same switch as "Aktiv": this lane keeps its
-                         column and its Lektionen, it is simply left out of the
-                         reckoning — the group on its own programme. -->
+                         column, its Lektionen, its Mittagessen and every
+                         Programmpunkt. It is only out of the rotation — the
+                         group on its own programme. -->
                     <div class="flex justify-center">
                       <input type="checkbox" class="toggle toggle-primary toggle-sm"
                         checked={!g.excludeFromCoverage}
                         disabled={!g.enabled}
                         aria-label="Gruppe rechnet mit"
                         title={g.excludeFromCoverage
-                          ? `${g.label} hat ein eigenes Programm: keine Abdeckung, keine «alle Gruppen»-Platzierungen`
-                          : `${g.label} zählt zur Abdeckung und ist bei «alle Gruppen» dabei`}
+                          ? `${g.label} hat ein eigenes Programm: keine Abdeckung und keine gemeinsamen Themen, Pausen und Programmpunkte aber schon`
+                          : `${g.label} zählt zur Abdeckung`}
                         onchange={(e) => updateGroup(g.id, { excludeFromCoverage: !(e.currentTarget as HTMLInputElement).checked })}
                       />
                     </div>
@@ -430,8 +431,10 @@
               </p>
               <p class="field-hint mt-1">
                 <strong>Rechnet mit</strong> ausschalten für eine Gruppe mit eigenem Programm
-                (z.&nbsp;B. Kulturgüterschutz): Sie bleibt im Kalender und behält ihre Lektionen,
-                zählt aber nicht zur Abdeckung und wird bei «alle Gruppen» übersprungen.
+                (z.&nbsp;B. Kulturgüterschutz): Sie bleibt im Kalender und behält ihre Lektionen.
+                Gemeinsame Pausen und Programmpunkte (Mittagessen, Begrüssung, Schlussrapport)
+                bekommt sie weiterhin — gemeinsame <em>Themen</em> wie die Übung nicht, und zur
+                Abdeckung zählt sie nicht.
               </p>
             {:else}
               <p class="pane-empty">Noch keine Gruppen. Unten eine hinzufügen.</p>

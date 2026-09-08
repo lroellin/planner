@@ -111,13 +111,15 @@ function timeRange(state: AppState, dayIndexes: Set<number>): [number, number] {
  * Split column indices into the contiguous stretches they actually form.
  *
  * A block used to be drawn as one bar from the lowest column it touches to the
- * highest, which is right for every event whose lanes sit next to each other —
- * and wrong for the one case where they do not. A group left out of the
- * reckoning keeps its column but is skipped by the shared Mittagessen, so with
- * lanes G1 · G2(excluded) · G3 the break resolves to columns 0 and 2 and a
- * single bar printed straight across G2, giving it a lunch the screen does not.
+ * highest, which quietly assumed that the lanes an event covers are always
+ * neighbours. That invariant is held by `eventGroupIds`, three modules away: an
+ * all-lanes block covers every lane its phase draws, and those are exactly the
+ * columns built above. `from`/`span` cannot express "these two columns but not
+ * the one between them", so if that assumption ever changes the grid would print
+ * a lunch for a group that has none — silently, and only on paper. Splitting the
+ * runs here costs eight lines and removes the coupling.
  */
-function contiguousRuns(cols: number[]): { from: number; span: number }[] {
+export function contiguousRuns(cols: number[]): { from: number; span: number }[] {
   const runs: { from: number; span: number }[] = [];
   for (const col of [...cols].sort((a, b) => a - b)) {
     const last = runs.at(-1);

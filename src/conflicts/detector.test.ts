@@ -135,14 +135,16 @@ describe('detectConflicts', () => {
     expect(detectConflicts(state).map(r => r.kind)).toEqual(['teacher-absent']);
   });
 
-  it('skips the lane of a group left out of the reckoning for an all-lanes event', () => {
+  // Left out of the reckoning is not left out of the day: the group on its own
+  // programme still eats at 12:00.
+  it('keeps the lane of a group left out of the reckoning for an all-lanes event', () => {
     const base = makeState();
     const state = {
       ...base,
       groups: base.groups.map(g => (g.id === 'g3' ? { ...g, excludeFromCoverage: true } : g)),
       events: [makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2 })],
     };
-    expect(eventGroupIds(state, state.events[0]!)).toEqual(['g1', 'g2']);
+    expect(eventGroupIds(state, state.events[0]!)).toEqual(['g1', 'g2', 'g3']);
   });
 
   it('does not let a multi-group event collide with itself', () => {

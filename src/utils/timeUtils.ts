@@ -165,13 +165,14 @@ export function phaseGroups(state: AppState, phase: Phase): Group[] {
 
 /**
  * The lanes of a phase that take part in the *reckoning*: they owe every Thema,
- * and an all-lanes placement lands on them.
+ * coverage measures them, and an all-lanes *Thema* is placed for them.
  *
- * `phaseGroups` is the wider set — every lane the phase *draws*. A group with
- * `excludeFromCoverage` is drawn like any other and keeps its own timetable; it
- * is simply not counted. The two are deliberately different functions: reaching
- * for the wrong one is a bug either way round, and a name that says "counted"
- * is easier to get right than a boolean argument.
+ * `phaseGroups` is the wider set — every lane the phase draws, and every lane an
+ * all-lanes Pause or Programmpunkt reaches. A group with `excludeFromCoverage`
+ * is drawn and planned like any other; it is simply not counted. The two are
+ * deliberately different functions: reaching for the wrong one is a bug either
+ * way round, and a name that says "counted" is easier to get right than a
+ * boolean argument. `lanesForMultiGroup` picks between them.
  */
 export function countedGroups(state: AppState, phase: Phase): Group[] {
   return phaseGroups(state, phase).filter(g => !g.excludeFromCoverage);
@@ -188,16 +189,52 @@ export function phaseForDay(state: AppState, dayIndex: number): Phase | null {
   return state.phases.find(p => dayIndex >= p.startDay && dayIndex <= p.endDay) ?? null;
 }
 
-// The lanes an event actually occupies. ALL_GROUPS resolves to the counted lanes
-// of the phase covering its day, so a lunch break follows the phase rather than
-// the lane list that happened to exist when it was dropped — and skips the group
-// that is running its own programme.
+/**
+ * Which lanes an «alle Gruppen» placement of this subject reaches — and the one
+ * place that question is answered, because getting it wrong is invisible until
+ * someone reads a printed plan.
+ *
+ * It turns on what is being placed, not on who is in the phase:
+ *
+ * - A Pause or a Programmpunkt is the *frame of the day* — Mittagessen,
+ *   Begrüssung, Kaderrapport, WK-Abschluss. Everyone drawn in the phase is at
+ *   it, the group on its own programme included: KGS still eats at 12:00 and
+ *   still stands at the Schlussrapport.
+ * - A Thema is the *rotation*. Placing one for «alle Gruppen» — the Übung, the
+ *   Wissenskontrolle — means the groups that sit the rotation, which is exactly
+ *   the set coverage measures. KGS is off doing its own Aktualisieren
+ *   Unterlagen and is not in the Übung.
+ *
+ * Both halves used to be wrong in turn: resolving against the counted lanes
+ * alone denied that group its lunch, and resolving against every drawn lane put
+ * it in an exercise it is not part of — on top of its own timetable.
+ */
+export function lanesForMultiGroup(
+  state: AppState,
+  phase: Phase,
+  subject: Subject | null | undefined,
+): Group[] {
+  // An unknown subject (deleted out from under its events) is treated as the
+  // frame: those events are dropped by their callers anyway.
+  return subject?.kind === 'lesson' ? countedGroups(state, phase) : phaseGroups(state, phase);
+}
+
+function subjectOf(state: AppState, ev: CalendarEvent): Subject | undefined {
+  return state.subjects.find(s => s.id === ev.subjectId);
+}
+
+/**
+ * The lanes an event actually occupies. ALL_GROUPS resolves against the phase
+ * covering its day, so a shared placement follows the phase rather than the lane
+ * list that happened to exist when it was dropped — see `lanesForMultiGroup` for
+ * which lanes that is.
+ */
 export function eventGroupIds(state: AppState, ev: CalendarEvent): ID[] {
   if (ev.groupId !== ALL_GROUPS) {
     return isEnabled(state, ev.groupId) ? [ev.groupId] : [];
   }
   const phase = phaseForDay(state, ev.dayIndex);
-  return phase ? countedGroups(state, phase).map(g => g.id) : [];
+  return phase ? lanesForMultiGroup(state, phase, subjectOf(state, ev)).map(g => g.id) : [];
 }
 
 export function isMultiGroupEvent(ev: CalendarEvent): boolean {
@@ -228,7 +265,9 @@ function isEnabled(state: AppState, groupId: ID): boolean {
 // count — otherwise an event could pass this check and still render nowhere.
 export function eventInPhase(state: AppState, ev: CalendarEvent, phase: Phase): boolean {
   if (ev.dayIndex < phase.startDay || ev.dayIndex > phase.endDay) return false;
-  if (ev.groupId === ALL_GROUPS) return countedGroups(state, phase).length > 0;
+  if (ev.groupId === ALL_GROUPS) {
+    return lanesForMultiGroup(state, phase, subjectOf(state, ev)).length > 0;
+  }
   return phase.groupIds.includes(ev.groupId) && isEnabled(state, ev.groupId);
 }
 
@@ -350,7 +389,11 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
   // Multi-group events occupy every lane the rendering phase draws; single-lane
   // events name their one resource.
   const resourceProp: { resourceId: ID } | { resourceIds: ID[] } = ev.groupId === ALL_GROUPS
-    ? { resourceIds: phase ? countedGroups(state, phase).map(g => g.id) : eventGroupIds(state, ev) }
+    ? {
+        resourceIds: phase
+          ? lanesForMultiGroup(state, phase, subject).map(g => g.id)
+          : eventGroupIds(state, ev),
+      }
     : { resourceId: ev.groupId };
 
   // No inline colours: the card is a neutral surface tinted from the subject

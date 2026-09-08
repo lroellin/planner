@@ -42,6 +42,62 @@ describe('subjectPhases', () => {
   });
 });
 
+// The KGS case: a group sitting the same days as the rotation on a programme of
+// its own. It is at every fixed point of the day and in none of the Themen.
+describe('a group left out of the reckoning', () => {
+  /**
+   * G1 runs its own programme. The week has a shared Mittagessen (Pause), a
+   * shared Antreten (Programmpunkt) and a shared Übung (Thema) — the three kinds
+   * an «alle Gruppen» placement can be.
+   */
+  function ownProgramme() {
+    const base = makeState();
+    return {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g1' ? { ...g, excludeFromCoverage: true } : g)),
+      subjects: [
+        ...base.subjects,
+        makeSubject({ id: 'antreten', name: 'Antreten', kind: 'oneoff', isMultiGroup: true, defaultTeacherIds: [], defaultRoomId: null }),
+        makeSubject({ id: 'uebung', name: 'Übung', kind: 'lesson', isMultiGroup: true, defaultTeacherIds: [], defaultRoomId: null, defaultDurationMinutes: 120 }),
+      ],
+      events: [
+        makeEvent({ subjectId: 'antreten', groupId: ALL, dayIndex: 2, startTime: '08:00', endTime: '08:15' }),
+        makeEvent({ subjectId: 'uebung', groupId: ALL, dayIndex: 2, startTime: '09:00', endTime: '11:00' }),
+        makeEvent({ subjectId: 'lunch', groupId: ALL, dayIndex: 2, startTime: '12:00', endTime: '13:00' }),
+        makeEvent({ groupId: 'g2', dayIndex: 2, startTime: '13:00', endTime: '14:30' }),
+      ],
+    };
+  }
+
+  const planFor = (label: string) =>
+    buildGroupPlans(ownProgramme()).find(p => p.group.label === label)!;
+
+  // Its plan used to have no lunch in it at all; then, briefly, it had the Übung.
+  it('gets the Pause and the Programmpunkt, not the Thema', () => {
+    expect(planFor('G1').entries.map(e => e.subject.name)).toEqual(['Antreten', 'Mittagessen']);
+  });
+
+  it('leaves the counted lanes with all three', () => {
+    expect(planFor('G2').entries.map(e => e.subject.name))
+      .toEqual(['Antreten', 'Übung', 'Mittagessen', 'Karteneröffnung']);
+  });
+
+  it('is still left out of coverage', () => {
+    const section = buildCoverage(ownProgramme()).find(s => s.phase.id === 'gruppen')!;
+    expect(section.groupIds).toEqual(['g2', 'g3']);
+    const row = section.rows.find(r => r.subject.id === 'lesson')!;
+    expect([...row.counts.keys()]).toEqual(['g2', 'g3']);
+    expect(missingLanesForSubject(ownProgramme(), 'lesson')).toEqual(['G3']);
+  });
+
+  // An all-lanes Thema is owed by the counted lanes and delivered to all of
+  // them at once, so it is complete — the excluded lane must not read as a gap.
+  it('does not make an all-lanes Thema look unplanned', () => {
+    expect(coverageForSubject(ownProgramme(), 'uebung')).toMatchObject({ placed: 2, total: 2 });
+    expect(missingLanesForSubject(ownProgramme(), 'uebung')).toEqual([]);
+  });
+});
+
 describe('Programmpunkte', () => {
   /** A Begrüssung on Wednesday morning for G1, and nothing else of it. */
   function withOneOff() {
