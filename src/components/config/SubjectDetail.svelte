@@ -372,10 +372,10 @@
             onchange={(e) => set({ optional: (e.currentTarget as HTMLInputElement).checked })}
           />
           <span class="opt-text">
-            <span class="opt-title">Nicht für alle Gruppen</span>
+            <span class="opt-title">Zählt nicht zur Abdeckung</span>
             <span class="opt-sub">
-              Nur einzelne Gruppen besuchen dieses Thema. Es zählt dann nicht zur Abdeckung:
-              keine Auswertungszeile, kein «fehlt noch»-Hinweis am Chip.
+              Nur einzelne Gruppen besuchen dieses Thema — es bekommt keine Auswertungszeile
+              und keinen «fehlt noch»-Hinweis am Chip.
             </span>
           </span>
         </label>

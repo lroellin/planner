@@ -96,7 +96,7 @@
   function chipTitle(subject: Subject): string {
     if (!isCounted(subject)) {
       return subject.optional && subject.kind === 'lesson'
-        ? `${subject.name} — nicht für alle Gruppen, zählt nicht zur Abdeckung`
+        ? `${subject.name} — nur für einzelne Gruppen, zählt nicht zur Abdeckung`
         : `${subject.name} — auf den Kalender ziehen oder anklicken`;
     }
     const cov = coverageForSubject(appState, subject.id);

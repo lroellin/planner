@@ -101,8 +101,8 @@
     windows={view.unavailable}
     onchange={setWindows}
     title="Sperrzeiten"
-    emptyText="Die ganze Woche verfügbar. Ist der Raum an einem Tag belegt, unten hinzufügen."
-    hint="Eine Lektion in einer Sperrzeit wird als weicher Konflikt gemeldet, wie eine Doppelbelegung."
+    emptyText="Die ganze Woche verfügbar. Sperrzeiten unten hinzufügen."
+    hint="Eine Lektion in einer Sperrzeit ist ein weicher Konflikt, wie eine doppelte Belegung."
     notePlaceholder="Grund (optional) — z. B. belegt durch Feuerwehr"
   />
 

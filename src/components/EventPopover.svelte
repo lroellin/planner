@@ -14,7 +14,7 @@
   import Icon from './Icon.svelte';
   import DurationField from './DurationField.svelte';
   import TimeField from './TimeField.svelte';
-  import { CONFLICT_KIND_LABELS, isHardConflict, type ID } from '../types';
+  import { conflictNote, isHardConflict, type ID } from '../types';
 
   interface Props {
     quick: QuickEdit;
@@ -280,12 +280,12 @@
               onclick={() => goToClash(c.others)}
             >
               <Icon name="alert" size={10} />
-              {CONFLICT_KIND_LABELS[c.kind]} {c.name}
+              {conflictNote(c.kind, c.name)}
             </button>
           {:else}
             <span class="clash" class:clash-hard={c.hard}>
               <Icon name="alert" size={10} />
-              {CONFLICT_KIND_LABELS[c.kind]} {c.name}
+              {conflictNote(c.kind, c.name)}
             </span>
           {/if}
         {/each}
@@ -364,7 +364,7 @@
             <span class="wk-eyebrow">Ausbildner</span>
             {#if overrides.teachers}
               <button class="quick-reset" onclick={() => resetField('teachers')} title="Zurück zur Themenvorgabe">
-                <Icon name="reset" size={11} /> zurück
+                <Icon name="reset" size={11} /> Vorgabe
               </button>
             {/if}
           </div>
@@ -401,7 +401,7 @@
             <span class="wk-eyebrow">Raum</span>
             {#if overrides.room}
               <button class="quick-reset" onclick={() => resetField('room')} title="Zurück zur Themenvorgabe">
-                <Icon name="reset" size={11} /> zurück
+                <Icon name="reset" size={11} /> Vorgabe
               </button>
             {/if}
           </div>
@@ -423,7 +423,7 @@
             <span class="wk-eyebrow">Dauer</span>
             {#if overrides.duration}
               <button class="quick-reset" onclick={() => resetField('duration')} title="Zurück zur Themenvorgabe">
-                <Icon name="reset" size={11} /> zurück
+                <Icon name="reset" size={11} /> Vorgabe
               </button>
             {/if}
           </div>

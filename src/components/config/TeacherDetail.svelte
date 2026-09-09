@@ -92,8 +92,8 @@
     windows={view.unavailable}
     onchange={setWindows}
     title="Abwesenheiten"
-    emptyText="Die ganze Woche anwesend. Fehlt jemand an einem Tag, unten hinzufügen."
-    hint="Eine Lektion in einer Abwesenheit ist ein harter Konflikt, wie eine Doppelbuchung."
+    emptyText="Die ganze Woche anwesend. Abwesenheiten unten hinzufügen."
+    hint="Eine Lektion in einer Abwesenheit ist ein harter Konflikt, wie eine doppelte Einteilung."
     notePlaceholder="Grund (optional) — z. B. Kurs in Schwarzenburg"
   />
 

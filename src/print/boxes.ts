@@ -205,7 +205,7 @@ function roomBoxes(state: AppState): PrintBox[] {
     .filter(plan => plan.entries.length > 0)
     .map(plan => ({
       key: plan.room.id,
-      kicker: 'Raumbelegung',
+      kicker: 'Raumplan',
       title: plan.room.name,
       summary: [
         `${plan.entries.length} ${plan.entries.length === 1 ? 'Belegung' : 'Belegungen'} · ${formatDuration(plan.bookedMinutes)}`,
@@ -245,7 +245,7 @@ export function buildPrintDoc(state: AppState, target: PlanTarget): PrintDoc {
 }
 
 export const TARGET_LABELS: Record<PrintTarget, string> = {
-  grid: 'Kalender',
+  grid: 'Arbeitsprogramm',
   groups: 'Gruppenpläne',
   teachers: 'Ausbildnerpläne',
   rooms: 'Raumpläne',

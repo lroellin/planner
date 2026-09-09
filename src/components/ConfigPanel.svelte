@@ -72,7 +72,7 @@
     },
     rooms: {
       short: 'Räume werden auf weiche Konflikte geprüft.',
-      long: 'Bei geteilten Flächen wie «draussen» die Konfliktprüfung ausschalten: Dort stören sich zwei Gruppen nicht.',
+      long: 'Bei geteilten Flächen wie «draussen» «Konflikte ignorieren» einschalten: Dort stören sich zwei Gruppen nicht.',
     },
     subjects: {
       short: 'Themen werden auf den Kalender gezogen und dort zu Lektionen.',
@@ -80,7 +80,7 @@
     },
     data: {
       short: 'Der Plan liegt in diesem Browser. Wer ihn sichern oder weitergeben will, exportiert ihn als Datei.',
-      long: 'Alles liegt im localStorage dieses Browsers: Wer die Website-Daten löscht, löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei, ein Import überschreibt den aktuellen. Die App verwaltet keine Plansammlung — die Datei ist das Archiv.',
+      long: 'Alles liegt im localStorage dieses Browsers: Wer die Website-Daten löscht, löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei, ein Import überschreibt den aktuellen. Die App verwaltet keine Plansammlung: Wer mehrere Pläne aufbewahren will, legt sie als Dateien ab.',
     },
   };
 
@@ -350,7 +350,7 @@
                   <span class="text-center">Aktiv</span>
                   <span>Bezeichnung</span>
                   <span class="text-center">Reihenfolge</span>
-                  <span class="text-center">Rechnet mit</span>
+                  <span class="text-center">Abdeckung</span>
                   <span></span>
                   <span></span>
                 </div>
@@ -406,7 +406,7 @@
                       <input type="checkbox" class="toggle toggle-primary toggle-sm"
                         checked={!g.excludeFromCoverage}
                         disabled={!g.enabled}
-                        aria-label="Gruppe rechnet mit"
+                        aria-label="Gruppe zählt zur Abdeckung"
                         title={g.excludeFromCoverage
                           ? `${g.label} hat ein eigenes Programm: keine Abdeckung und keine gemeinsamen Themen, Pausen und Programmpunkte aber schon`
                           : `${g.label} zählt zur Abdeckung`}
@@ -430,11 +430,11 @@
                 angezeigt und lösen keine Konflikte mehr aus.
               </p>
               <p class="field-hint mt-1">
-                <strong>Rechnet mit</strong> ausschalten für eine Gruppe mit eigenem Programm
+                <strong>Abdeckung</strong> ausschalten für eine Gruppe mit eigenem Programm
                 (z.&nbsp;B. Kulturgüterschutz): Sie bleibt im Kalender und behält ihre Lektionen.
                 Gemeinsame Pausen und Programmpunkte (Mittagessen, Begrüssung, Schlussrapport)
-                bekommt sie weiterhin — gemeinsame <em>Themen</em> wie die Übung nicht, und zur
-                Abdeckung zählt sie nicht.
+                bekommt sie weiterhin, gemeinsame <em>Themen</em> wie die Übung nicht. Zur
+                Abdeckung zählt sie nicht mehr.
               </p>
             {:else}
               <p class="pane-empty">Noch keine Gruppen. Unten eine hinzufügen.</p>
@@ -629,7 +629,7 @@
             {#if s.kind === 'break'}
               <span class="row-tag">Pause</span>
             {:else if s.kind === 'oneoff'}
-              <span class="row-tag">Punkt</span>
+              <span class="row-tag">Programmpunkt</span>
             {/if}
           {/snippet}
           {#snippet detail()}

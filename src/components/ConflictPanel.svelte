@@ -138,7 +138,7 @@
 
 <div class="panel">
   <header class="panel-head">
-    <span class="wk-eyebrow flex-1">Konflikte</span>
+    <span class="wk-eyebrow flex-1">Probleme</span>
     {#if issueCount > 0}
       <span class="head-count">{issueCount}</span>
     {/if}
@@ -198,8 +198,8 @@
       <div class="all-clear">
         <Icon name="check" size={15} />
         <div>
-          <div class="all-clear-title">Keine Konflikte</div>
-          <div class="all-clear-note">Niemand und nichts ist doppelt eingeteilt.</div>
+          <div class="all-clear-title">Keine Probleme</div>
+          <div class="all-clear-note">Niemand ist doppelt eingeteilt, und jede Lektion liegt in einer Phase.</div>
         </div>
       </div>
     {/if}
@@ -253,9 +253,10 @@
 
     {#if conflicts.length > 0}
       <p class="foot-note">
-        Mit der Maus über eine Zeile fahren zeigt die Lektion im Kalender. «+15′» verschiebt die
-        spätere Lektion so, dass sie sich nicht mehr überschneidet; ob dort etwas anderes liegt,
-        meldet die Liste danach. Raumkonflikte sind nur ein Hinweis, alle anderen nicht.
+        Wer mit der Maus über eine Zeile fährt, sieht die Lektion im Kalender. «+15′» verschiebt
+        die spätere Lektion so, dass sie sich nicht mehr überschneidet; ob dort etwas anderes
+        liegt, meldet die Liste danach. Raumkonflikte sind weiche Konflikte und nur ein Hinweis,
+        alle anderen sind hart.
       </p>
     {/if}
   </div>

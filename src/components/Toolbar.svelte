@@ -251,7 +251,7 @@
     <button
       class="plan-name"
       onclick={() => (configOpen = true)}
-      title="Umbenennen unter Konfiguration → Plan &amp; Daten"
+      title="Umbenennen unter Konfiguration › Plan &amp; Daten"
     >{appState.name}</button>
 
     <label class="filter" title="Nur Lektionen eines Ausbildners, eines Raums oder einer Gruppe zeigen">
@@ -475,13 +475,17 @@
             <div class="pop-title wk-eyebrow">Zeilenhöhe</div>
             <div class="pop-density">{@render densityControl()}</div>
           {/if}
-          <div class="pop-title wk-eyebrow">Ansicht</div>
+          <!-- "Ansicht" belongs to the Legende, which only lands in this menu
+               on a narrow bar. Above that width the group collapsed to a single
+               Tastenkürzel item under a heading that did not describe it. -->
           {#if tight}
+            <div class="pop-title wk-eyebrow">Ansicht</div>
             <button class="pop-item pop-item-row" onclick={() => (menu = 'legend')}>
               <Icon name="palette" size={14} />
               <span class="pop-item-label">Legende</span>
             </button>
           {/if}
+          <div class="pop-title wk-eyebrow">Hilfe</div>
           <button
             class="pop-item pop-item-row"
             onclick={() => { menu = null; onshowshortcuts(); }}

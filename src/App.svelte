@@ -450,7 +450,7 @@
       <SidePanel
         side="right"
         bind:open={conflictsOpen}
-        label="Konflikte"
+        label="Probleme"
         width="268px"
         badge={conflictCount}
         overlay
@@ -491,7 +491,7 @@
     >
       <Icon name="trash" size={13} /> Löschen
     </button>
-    <button class="selbar-btn" onclick={clearSelection}>Aufheben</button>
+    <button class="selbar-btn" onclick={clearSelection}>Auswahl aufheben</button>
     <div class="selbar-sep"></div>
     <!-- The only contextual place these are taught. The shortcut sheet lists
          them, but its button lives in the "⋯" menu below 1360px and nothing
@@ -553,8 +553,8 @@
 <div class="print-notice">
   <h1>Dieser Plan wird nicht aus dem Browser gedruckt.</h1>
   <p>
-    Im WK-Planer auf <strong>Drucken</strong> klicken – oder
-    <strong>Ctrl/Cmd + P</strong>. Dort entstehen <strong>Wochenplan</strong> und
+    Im WK-Planer auf <strong>Drucken</strong> klicken — oder
+    <strong>Ctrl/Cmd + P</strong>. Dort entstehen <strong>Arbeitsprogramm</strong> und
     <strong>Handzettel</strong> als PDF, mit Schnittmarken, Phasenauswahl,
     Ausrichtung und Vorschau.
   </p>
@@ -823,7 +823,7 @@
   }
   .empty-cta--secondary:hover { filter: none; background: var(--wk-surface-alt); }
 
-  /* The app itself prints nothing any more. Wochenplan and Handzettel are
+  /* The app itself prints nothing any more. Arbeitsprogramm and Handzettel are
      drawn as PDFs in src/print/ and previewed in the Drucken dialog, which is
      what Ctrl/Cmd+P opens — so there is no second, worse print layout of the
      DOM to keep in step with them. Only the browser's own File > Print still

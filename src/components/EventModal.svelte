@@ -13,7 +13,7 @@
   import Icon from './Icon.svelte';
   import TimeField from './TimeField.svelte';
   import DurationField from './DurationField.svelte';
-  import { ALL_GROUPS, CONFLICT_KIND_LABELS, isHardConflict, type ID } from '../types';
+  import { ALL_GROUPS, conflictNote, isHardConflict, type ID } from '../types';
 
   interface Props {
     eventId: ID;
@@ -259,7 +259,7 @@
           {#each conflictNotes as note (note.kind + note.name)}
             <span class="clash" class:clash-hard={note.hard}>
               <Icon name="alert" size={11} />
-              {CONFLICT_KIND_LABELS[note.kind]} {note.name}
+              {conflictNote(note.kind, note.name)}
             </span>
           {/each}
         </div>
@@ -413,7 +413,7 @@
         {#if showCopy}
           <div class="inset inset-col">
             <div class="flex items-center gap-2 w-full">
-              <span class="inset-label">Kopieren auf</span>
+              <span class="inset-label">Auf Gruppen kopieren</span>
               {#if spareLanes.length === 0}
                 <span class="hint">Alle anderen Gruppen haben diese Lektion zu dieser Zeit schon.</span>
               {:else}

@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { detectConflicts, attachConflicts, previewClash } from './detector';
 import { ALL, makeEvent, makeState, makeSubject, makeWindow } from '../test/fixtures';
+import { CONFLICT_KIND_LABELS, conflictNote } from '../types';
+import type { ConflictKind } from '../types';
 import { eventGroupIds } from '../utils/timeUtils';
 
 const kinds = (state: Parameters<typeof detectConflicts>[0]) =>
@@ -392,5 +394,32 @@ describe('previewClash', () => {
       events: [makeEvent({ id: 'moving', groupId: 'g1', startTime: '12:00', endTime: '13:00' })],
     });
     expect(previewClash(state, candidate({ eventId: 'moving' }))).toBe(null);
+  });
+});
+
+describe('conflict wording', () => {
+  const KINDS: ConflictKind[] = ['teacher', 'room', 'group', 'teacher-absent', 'room-blocked'];
+
+  // The editors concatenate this into one span, so every kind has to come out
+  // as a German phrase — `{label} {name}` used to yield "Abwesend Anna Müller".
+  it('names the resource before its state', () => {
+    expect(conflictNote('teacher', 'Anna Müller')).toBe('Anna Müller doppelt eingeteilt');
+    expect(conflictNote('group', 'G1')).toBe('G1 doppelt eingeteilt');
+    expect(conflictNote('room', 'Kompanie')).toBe('Kompanie doppelt belegt');
+    expect(conflictNote('teacher-absent', 'Anna Müller')).toBe('Anna Müller abwesend');
+    expect(conflictNote('room-blocked', 'Turnhalle')).toBe('Turnhalle gesperrt');
+  });
+
+  it('starts every note with the name it was given', () => {
+    for (const kind of KINDS) expect(conflictNote(kind, 'X')).toMatch(/^X /);
+  });
+
+  // The panel's card header has ~225px for the eyebrow *and* the resource name.
+  // A label that spells the state out truncated the name to a third of itself.
+  it('keeps the panel eyebrow to a single short word', () => {
+    for (const kind of KINDS) {
+      expect(CONFLICT_KIND_LABELS[kind]).not.toContain(' ');
+      expect(CONFLICT_KIND_LABELS[kind].length).toBeLessThanOrEqual(11);
+    }
   });
 });

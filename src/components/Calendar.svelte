@@ -488,12 +488,17 @@
         // the icon was repeated across the whole day to say what the unbroken
         // band already says. Only the first lane carries any text at all —
         // see `.wk-day-first` in calendar.css.
+        //
+        // Soft covers both `room` and `room-blocked`, so the tooltip cannot
+        // name the double-booking: a Lektion inside a Sperrzeit is soft too.
+        // "Weicher Konflikt" is what the Legende calls it; the element's own
+        // title above spells out which kinds actually fired.
         const flags = [
           overrides.length > 0
             ? `<span class="wk-ev-flag" title="Weicht von der Themenvorgabe ab: ${escapeHtml(overrides.join(', '))}">${iconSvg('pencil', 11)}</span>`
             : '',
           hasConflict
-            ? `<span class="wk-ev-flag ${hard ? 'wk-ev-flag-hard' : 'wk-ev-flag-soft'}" title="${hard ? 'Harter Konflikt' : 'Raum doppelt belegt'}">${iconSvg('alert', 12)}</span>`
+            ? `<span class="wk-ev-flag ${hard ? 'wk-ev-flag-hard' : 'wk-ev-flag-soft'}" title="${hard ? 'Harter Konflikt' : 'Weicher Konflikt'}">${iconSvg('alert', 12)}</span>`
             : '',
         ].join('');
 

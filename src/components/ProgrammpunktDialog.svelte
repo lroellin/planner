@@ -258,7 +258,7 @@
         {#if reused}
           <p class="hint note">
             «{reused.name}» gibt es schon — dieser Programmpunkt wird noch einmal platziert,
-            nicht ein zweites Mal angelegt. Farbe, Ausbildner, Raum und «für wen» kommen
+            nicht ein zweites Mal angelegt. Farbe, Ausbildner, Raum und die Gruppenwahl übernimmt er
             von dort; ändern lassen sie sich unter Konfiguration › Themen. Nur die Dauer
             gilt für diese Platzierung.
           </p>

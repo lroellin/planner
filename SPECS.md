@@ -35,7 +35,7 @@ afterwards, so it no longer matches that review round.
 | # | Term | Names | Where it shows |
 |---|---|---|---|
 | 11 | **platzieren** / Platzierung | Putting a Lektion on the calendar, and the result | "Thema platzieren" dialog, Thema setup section "Vorgaben" |
-| 12 | **Kalender** | The calendar grid itself | Empty hint, conflict panel ("Im Kalender zeigen"), sidebar hint |
+| 12 | **Kalender** | The calendar grid **on screen**. The printed week is the **Arbeitsprogramm** (#29b) and is never called a Kalender: the Drucken dialog used to title itself "Drucken – Kalender" above a button labelled *Wochenplan*, and saved `kalender-….pdf` | Empty hint, conflict panel ("Im Kalender zeigen"), sidebar hint |
 | 13 | **Vorgabe** / Vorgaben | A Thema's defaults (Ausbildner, Raum, Dauer) that a new Lektion inherits and may override | Thema setup section, "aus der Themenvorgabe" |
 | 14 | **Dauer** | How long a Thema takes — **and therefore what every Gruppe owes of it**. There is no separate target: a 2 h 30 min Thema needs 2 h 30 min per Gruppe, in one Lektion or split as 1 h 30 min + 1 h. Coverage measures placed minutes against it | Thema setup, event modal, quick-edit, coverage table ("Soll 2 h 30 min") |
 | 15 | **Abdeckung** | Coverage — has every Gruppe had every Thema for its full Dauer | Reports tab, config intro |
@@ -46,12 +46,12 @@ afterwards, so it no longer matches that review round.
 
 | # | Term | Names | Where it shows |
 |---|---|---|---|
-| 18 | **Konflikt** / Konflikte | Two Lektionen clashing over a Ausbildner, a Gruppe or a Raum, or one booked into an absence | Right-hand panel heading, card tooltips |
-| 19 | **harter / weicher Konflikt** | Hard = Ausbildner, Gruppe, absence. Weich = Raum double-booking (advisory) | Card tooltip, conflict panel footnote |
-| 20 | **Problem** / Probleme | The toolbar badge count: Konflikte **plus** orphan Lektionen. Deliberately wider than #18 because the badge counts both | Toolbar badge ("7 Probleme") |
+| 18 | **Konflikt** / Konflikte | Two Lektionen clashing over a Ausbildner, a Gruppe or a Raum, or one booked into an absence. Names the *kind* of thing, not the panel: the panel is **Probleme** (#20) | Summary chips ("3× Ausbildner"), card tooltips |
+| 19 | **harter / weicher Konflikt** | Hard = Ausbildner, Gruppe, absence. Weich = Raum double-booking **and** Sperrzeit, both advisory. The card's warning icon says exactly these two words — naming the double-booking there was wrong for the Sperrzeit half | Card icon tooltip, Legende, conflict panel footnote |
+| 20 | **Problem** / Probleme | Konflikte **plus** orphan Lektionen. Deliberately wider than #18, and therefore the name of the **right-hand panel** as well as the badge that opens it — the panel holds an *Ausserhalb der Phasen* section that is not a Konflikt | Toolbar badge ("7 Probleme"), right-hand panel heading, collapsed rail |
 | 21 | **Ausserhalb der Phasen** | Orphan Lektionen — on no phase's day/lane combination, so nothing shows them. *Kalender* is deliberately not used: there is one FullCalendar per Phase, which is an implementation fact the user never sees | Conflict panel card, placement warnings, phase-delete confirm |
-| 22 | **abwesend** / Abwesenheiten | `Teacher.unavailable` — when an Ausbildner is not there. The adjective labels one booking (conflict card, list tag); the noun heads the editor | Config list tag, conflict card kind, "Abwesenheiten" editor title |
-| 23 | **gesperrt** / Sperrzeiten | `Room.unavailable` — when a Raum is blocked. Same split as #22: adjective on a booking, noun on the editor | Config list tag, conflict card kind, "Sperrzeiten" editor title |
+| 22 | **abwesend** / Abwesenheiten | `Teacher.unavailable` — when an Ausbildner is not there. The adjective labels one booking (conflict card eyebrow, list tag); the noun heads the editor. As *running* text it goes after the name — *Anna Müller abwesend*, never "Abwesend Anna Müller" (see `conflictNote`) | Config list tag, conflict card kind, "Abwesenheiten" editor title |
+| 23 | **gesperrt** / Sperrzeiten | `Room.unavailable` — when a Raum is blocked by something outside the plan. Same split as #22: adjective on a booking, noun on the editor, *Turnhalle gesperrt* in running text. Never **belegt** (#37) — that is the opposite thing | Config list tag, conflict card kind, "Sperrzeiten" editor title |
 | 24 | **fehlt n×** / **zu kurz** / **zu lang** / **ungleich** | The four not-done states, as one parallel set. *fehlt n×* = a Gruppe has none of it; *zu kurz* = has it, but under its Dauer; *zu lang* = over its Dauer; *ungleich* = every Gruppe has the full Dauer but not the same amount | Coverage status pill, sidebar chip badge |
 | 25 | **vollständig** | Nothing missing, short, long or uneven. Marked by *no* pill — see F2 in `DESIGN-PASS.md` | Sidebar chip check mark |
 
@@ -62,7 +62,8 @@ afterwards, so it no longer matches that review round.
 | 27 | **Auswertungen** | The reports overlay (Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne) | Toolbar button, overlay title |
 | 28 | **Konfiguration** | The settings dialog | Toolbar button, dialog title |
 | 29 | **Plan** | The whole week's data — one plan per browser. *Planname*, *Plandatei* | Toolbar, Plan & Daten tab |
-| 29a | **Darstellung** | How the Wochenplan is drawn on paper: *Modern* (the app's own sheet) or *Klassisch* (the look of the former Excel-Arbeitsprogramm). Deliberately not an *Art* — both draw the same week, so the choice is a rendering and not a second document. A Handzettel has none | Drucken dialog |
+| 29a | **Darstellung** | How the Arbeitsprogramm is rendered on paper: *Modern* (the app's own sheet) or *Klassisch* (the look of the Excel sheet it replaced). Deliberately not an *Art* — both render the same week, so the choice is a rendering and not a second document. A Handzettel has none | Drucken dialog |
+| 29b | **Arbeitsprogramm** | The printed week: one A4 sheet of the whole plan, the *Art* opposite a Handzettel. The name the Zivilschutz already uses for this document, and the one thing it is called everywhere — the Art toggle, the dialog title, the PDF metadata, the file name, the shortcut sheet and the browser-print notice. Never *Wochenplan* (a fourth name for it) and never *Kalender* (#12, which is the screen) | Drucken dialog, `TARGET_LABELS.grid`, `arbeitsprogramm-….pdf` |
 | 30 | **Verlauf** | The undo history menu | Undo caret tooltip, menu title ("Rückgängig bis …") |
 | 31 | **Rückgängig / Wiederholen** | Undo / redo | Toolbar tooltips, toasts |
 | 32 | **Schnellbearbeitung** | The popover beside a clicked Lektion | Popover aria-label, shortcut sheet |
@@ -70,7 +71,7 @@ afterwards, so it no longer matches that review round.
 | 34 | **Legende** | The colour key for Ausbildner, Räume, Themen | Toolbar button |
 | 35 | **Kürzel** | `shortName` on Ausbildner, Raum **and** Thema — what a card shows when the lane is too narrow for the full name. One word for all three; *Kurzname* was a fourth name for the same field | Ausbildner, Raum and Thema detail fields |
 | 36 | **Pensum** | A Ausbildner's booked hours for the week | Ausbildner detail panel heading |
-| 37 | **Belegung** / Belegungen | A Raum's bookings for the week | Raum detail panel heading, room plans |
+| 37 | **Belegung** / Belegungen | A Raum's bookings for the week — the Lektionen **in** it. Never a Sperrzeit (#23), which is the opposite: the Sperrzeiten editor sits directly under a "Belegung diese Woche" counter, and telling the user to add a window when the room is "belegt" said the reverse of what it meant | Raum detail panel heading, room plans |
 | 38 | **Stellvertretung** | A Ausbildner running a Thema they are not the Vorgabe for; the counterpart is *abgegeben* | Ausbildner plans |
 | 39 | **Lernziele / Notizen** | `Subject.content` — what the Thema is about | Thema "Inhalt" tab |
 | 40 | **Planung / Inhalt** | The two sub-tabs of a Thema: how it is scheduled vs. what it is about. *Einrichtung* read as installation | Thema detail |
@@ -78,7 +79,26 @@ afterwards, so it no longer matches that review round.
 
 **Gendered agreement.** Two of these changed grammatical gender in an earlier rename and the surrounding words have to follow: `die Lehrperson` → **der** Ausbildner, `das Raster` → **den** Kalender. A blind find-and-replace leaves "auf das Kalender ziehen" and "Sie wird von allen Lektionen entfernt" behind. `Gruppenführer` → `Ausbildner` was gender-neutral (both masculine) and needed no such follow-up.
 
-**One word per thing.** The grid is **der Kalender** — never *Stundenplan*, *Wochenraster* or *Raster*. Things are **angezeigt**, never *gezeichnet*: drawing is what the code does, not what the user sees.
+**One word per thing.** The grid is **der Kalender** — never *Stundenplan*,
+*Wochenraster* or *Raster* — and only on screen; on paper it is **das
+Arbeitsprogramm** (#29b). Things are **angezeigt**, never *gezeichnet*: drawing
+is what the code does, not what the user sees. On paper the verbs are
+*gesetzt* / *gedruckt* / *dargestellt*, for the same reason.
+
+**A label is not a sentence.** A conflict kind has two shapes and they are not
+interchangeable. `CONFLICT_KIND_LABELS` is the **eyebrow**: one short word in its
+own element, above the resource name (Probleme panel card, calendar tooltip kind
+list). `conflictNote(kind, name)` is the **phrase**: one span of running text for
+the event editors, which had been concatenating `{kind} {name}` into "Abwesend
+Anna Müller". The phrase names the resource first and its state second, which is
+grammatical for all five kinds. Do not merge them — spelling the state out in the
+eyebrow truncated the name to 48px of the card header's 225px, and the name is
+the half worth reading.
+
+**One glyph per idiom.** `›` for a path into the config ("Konfiguration ›
+Themen"); `→` is reserved for *becomes* in code comments and migrations. `—` is
+the parenthetical dash in prose; `–` only ever joins a range (`08:00–09:30`,
+`Mo–Fr`).
 
 ---
 
@@ -90,7 +110,7 @@ The columns of the timetable. Each group must attend every non-break subject exa
 - `label: string` — short display name (e.g. "G1")
 - `enabled: boolean` — disabled groups are hidden from the calendar and skipped by conflict checks, but keep all their event data
 - `order: number` — display order (left to right); can be changed via ▲/▼ buttons in Config
-- `excludeFromCoverage: boolean` — the lane is drawn and planned like any other, but is left out of every **reckoning**: coverage never asks whether it has had a Thema, and an all-lanes placement (Mittagessen, Begrüssung) skips it. The case is a group on its own programme — Kulturgüterschutz sitting the week with its own timetable. Switching it *off* is the wrong tool: that hides its lane and its lessons, and this group has both. Conflict checks still apply — the lane's own Lektionen still occupy real Ausbildner and Räume. Config calls it **Rechnet mit** (a toggle that is *on* by default, so the column reads as an inclusion rather than a punishment).
+- `excludeFromCoverage: boolean` — the lane is drawn and planned like any other, but is left out of every **reckoning**: coverage never asks whether it has had a Thema, and an all-lanes placement (Mittagessen, Begrüssung) skips it. The case is a group on its own programme — Kulturgüterschutz sitting the week with its own timetable. Switching it *off* is the wrong tool: that hides its lane and its lessons, and this group has both. Conflict checks still apply — the lane's own Lektionen still occupy real Ausbildner and Räume. Config calls the column **Abdeckung** (#15) — a toggle that is *on* by default, so it reads as an inclusion rather than a punishment. It used to read *Rechnet mit*, which named neither what it counts nor what its own tooltip already said ("zählt zur Abdeckung").
 
 `countedGroups(state, phase)` in `timeUtils` is the lane list that takes part in the reckoning; `phaseGroups(state, phase)` is the wider set — every lane the phase *draws*. They are deliberately two functions rather than one with a boolean: reaching for the wrong one is a bug either way round, and a name that says "counted" is easier to get right. Everything that resolves `ALL_GROUPS` (`eventGroupIds`, `eventInPhase`, `buildFCEvent`'s `resourceIds`, `print/calendar.ts`) uses `countedGroups`; everything that draws or lists lanes uses `phaseGroups`.
 
@@ -144,7 +164,7 @@ The draggable blocks. Subjects are displayed **alphabetically everywhere** (`sor
 
   What takes part in conflict checks is decided by the *placement*, not by the kind: a single-lane event of any kind does, an all-lanes one does not (see **Detection**). This replaced a boolean `isBreak`: every `!isBreak` test in the app meant "lesson", and a third kind had to make the compiler visit each of them (migration v11→v12).
 - `isMultiGroup: boolean` — placing this subject schedules it across every *counted* lane of the target phase at once (used for Mittagessen, Pause)
-- `optional: boolean` — not every group owes this Thema; a specialist lesson only some of them sit. Coverage then has nothing to measure it against, so the subject is left out of the report, out of the sidebar badge (**including the green check** — a tick would claim every group has had it) and out of `missingLanesForSubject`. It is a Thema in every other way: listed under Themen, placed per group, with its own defaults. Distinct from `kind: 'oneoff'`, which is outside coverage because it happens *once for the whole course* rather than once per group. Lives under **Erweitert** in the Subjects tab, beside "Gehört zu Phase" — the other coverage-shaping setting — and is shown only for `kind === 'lesson'`.
+- `optional: boolean` — not every group owes this Thema; a specialist lesson only some of them sit. Coverage then has nothing to measure it against, so the subject is left out of the report, out of the sidebar badge (**including the green check** — a tick would claim every group has had it) and out of `missingLanesForSubject`. It is a Thema in every other way: listed under Themen, placed per group, with its own defaults. Distinct from `kind: 'oneoff'`, which is outside coverage because it happens *once for the whole course* rather than once per group. Lives under **Erweitert** in the Subjects tab, labelled **Zählt nicht zur Abdeckung** and beside "Gehört zu Phase" — the other coverage-shaping setting — and is shown only for `kind === 'lesson'`. The label names the coverage axis on purpose: as *Nicht für alle Gruppen* it sat two rows under *Platziert für: Einzelne Gruppe / Alle Gruppen* and read as a third option on that unrelated control.
 
 `isCounted(subject)` in `reports.ts` is the one predicate for "owed by every lane" (`kind === 'lesson' && !optional`). The report, the sidebar badge and the lane markers all ask it, because a disagreement between them is the kind of bug nobody reports — they just stop trusting the badge. It is deliberately *not* a type predicate: `!isCounted(s)` would then narrow a known `Subject` to `never`.
 - `phaseId: ID | null` — which phase this subject is rotated through. `null` = infer from where it is placed. Set it so coverage judges a Kader lesson against the Kader lane instead of the group lanes.
@@ -308,7 +328,7 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 └──────────────┴──────────────────┴──────────────────────┴───────────────────┘
 ```
 
-- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the conflict panel, Reports, a **Drucken** button opening the print dialog, a **keyboard-shortcuts** button and Config.
+- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the **Probleme** panel, Reports, a **Drucken** button opening the print dialog, a **keyboard-shortcuts** button and Config.
 - **Left sidebar** (`SidePanel.svelte` wrapping `Sidebar.svelte`): collapsible. Draggable subject chips split into Subjects and Breaks; each chip previews the card it will become (same spine, same tint recipe) and carries a coverage counter. Hovering a chip **spotlights** it on the grid — everything else dims — and its tooltip names the lanes still missing it. A filter box appears once there are more than eight subjects. Chips are buttons; activating one opens `PlaceDialog`.
 - **Calendar area**: a flex row of phase segments. Each segment's `flex-grow` is proportional to `days × maxLanes`, so columns stay the same width across the week regardless of how many lanes a phase has. A `phase-label` strip shows phase names above the segments. Both segments share a single outer scroll container — `height: auto` + `stickyHeaderDates: true` on each FC instance means headers pin and bodies scroll together.
 - **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible, and **collapsed on load** — the rail keeps the issue badge in view, and the grid is what the app is opened to look at. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
@@ -516,7 +536,12 @@ What *is* still checked, for a single-lane event, is every kind: a Pause placed 
 ### Annotation
 `attachConflicts(state, reports)` attaches a `conflicts: ConflictRef[]` array to each event, which the calendar's `eventContent` renderer reads to add red borders. It is separate from `detectConflicts` so that `commit` in the store detects once and shares the one result between the annotated events, the conflict panel and the badges.
 
-### Conflict Panel (`ConflictPanel.svelte`)
+### Probleme Panel (`ConflictPanel.svelte`)
+
+**Headed "Probleme", not "Konflikte"** (#20). It holds an *Ausserhalb der
+Phasen* section that is no conflict at all, its own subline counts Probleme,
+and the badge that opens it says Probleme. The file keeps its name; the
+*Konflikt* cards inside it keep theirs.
 
 **It floats over the grid rather than taking width from it.** `SidePanel` gets an
 `overlay` prop; App wraps it in a 40px `.right-dock` that keeps the collapsed
@@ -630,9 +655,9 @@ A `<dialog>` with six tabs (Gruppen, Phasen, Ausbildner, Räume, Themen, Plan & 
 - `src/styles/config-ui.css` — the shared visual language (`.list-panel`, `.detail-form`, `.section`, `.option-row`, `.picker-chip`, …), imported from `app.css` because these classes are used across several components.
 
 ### Groups tab
-Table with a drag handle (rows *are* the columns of the timetable, so dragging them is the matching gesture — `moveGroupToIndex`, one undo entry), **Aktiv** toggle, label input, ▲/▼ for the keyboard, **Rechnet mit** toggle, delete.
+Table with a drag handle (rows *are* the columns of the timetable, so dragging them is the matching gesture — `moveGroupToIndex`, one undo entry), **Aktiv** toggle, label input, ▲/▼ for the keyboard, **Abdeckung** toggle, delete.
 
-The two toggles are deliberately different switches and sit apart from each other. **Aktiv** off hides the lane and its Lektionen. **Rechnet mit** off (`excludeFromCoverage`) keeps both and only leaves the lane out of the reckoning — the group on its own programme. It is disabled while the row is inactive, since a hidden lane counts for nothing either way. Two hint lines under the table say which is which. Add group form at the bottom. Changing `enabled` doesn't delete events; they remain but are hidden. Deleting confirms first and names how many events go with the lane (`eventCountForGroup`).
+The two toggles are deliberately different switches and sit apart from each other. **Aktiv** off hides the lane and its Lektionen. **Abdeckung** off (`excludeFromCoverage`) keeps both and only leaves the lane out of the reckoning — the group on its own programme. It is disabled while the row is inactive, since a hidden lane counts for nothing either way. Two hint lines under the table say which is which. Add group form at the bottom. Changing `enabled` doesn't delete events; they remain but are hidden. Deleting confirms first and names how many events go with the lane (`eventCountForGroup`).
 
 ### Phases tab
 A **week strip** across the top shows Mon–Fri with the phase that owns each day (uncovered days are hatched in red) — phases are the one concept a new user won't guess, and this explains the model at a glance. Below it, a table with label, From/To day selects (dragging one end past the other moves the other to maintain valid range), lane checkboxes (one per group), delete. Rows are sorted by `startDay`, matching the calendar. Warning banner appears when phases overlap, leave gaps, or have no lanes. Deleting confirms first and warns how many events would stop being drawn (`eventCountForPhase`). Add phase form at bottom.
@@ -732,15 +757,15 @@ on the sixth tab of a dialog.
 
 Everything printable is generated as a **real PDF** (`src/print/`, jsPDF) and previewed in the dialog before it is printed. **Abdeckung is not printable**: it is an analysis table you act on in the app, not something anyone hands out.
 
-The toolbar's **Drucken** is a single button, not a menu. Every entry of the menu it replaced opened this same dialog and then asked the same question again with the answer already filled in. **Ctrl/Cmd+P** opens the same dialog — on the report you are looking at if the Auswertungen overlay is open, otherwise on the Wochenplan. It is handled before the text-field guard in `handleGridKeys`, because printing is not an editing action.
+The toolbar's **Drucken** is a single button, not a menu. Every entry of the menu it replaced opened this same dialog and then asked the same question again with the answer already filled in. **Ctrl/Cmd+P** opens the same dialog — on the report you are looking at if the Auswertungen overlay is open, otherwise on the Arbeitsprogramm. It is handled before the text-field guard in `handleGridKeys`, because printing is not an editing action.
 
 ### Two categories, not four siblings
 
-The dialog asks for the **Art** first — *Wochenplan* or *Handzettel* — and only then, for a Handzettel, which one. Flattened into one row of four buttons, the controls below changed shape depending on the pick with nothing on screen saying why.
+The dialog asks for the **Art** first — *Arbeitsprogramm* or *Handzettel* — and only then, for a Handzettel, which one. Flattened into one row of four buttons, the controls below changed shape depending on the pick with nothing on screen saying why.
 
 What is **shared**: Art, **Ausrichtung**, Stand, the preview, and the three footer actions. Both documents are sheets of A4 and both can be turned, so Quer/Hoch is one control with one pair of labels.
 
-What stays **separate**: *Phasen* (Wochenplan only — a slip has no phase axis to filter), and *Ein Blatt pro* + *Blätter pro Seite* (Handzettel only — a week grid is always one page).
+What stays **separate**: *Phasen* (Arbeitsprogramm only — a slip has no phase axis to filter), and *Ein Blatt pro* + *Blätter pro Seite* (Handzettel only — a week grid is always one page).
 
 Ausrichtung is the interesting one: **one control, two remembered values**. Quer/Hoch means the same thing for both documents, but the good default is opposite — a week of lane columns is wide, a slip is a tall list — so sharing a single value would hand you the wrong sheet every time you switched Art. The control is shared; the state is per category.
 
@@ -841,11 +866,12 @@ height the key measures; with nothing to explain, no band is reserved at all.
 ### Klassische Darstellung (`calendarClassicPdf.ts`)
 
 The Arbeitsprogramm used to be made in Excel, and the supervisors who sign it off
-have read that sheet for years. **Darstellung** — *Modern* (default) or
-*Klassisch* — draws the same `CalendarDoc` the other way, so the plan can be
-handed upwards in the shape its readers already know. It is a rendering, not a
-document: the Art, the Phasen, the Ausrichtung and the Stand all still apply, and
-only the Wochenplan has it (the Excel had no handout).
+have read that sheet for years — which is why the printed week carries that name
+in the app too (#29b). **Darstellung** — *Modern* (default) or *Klassisch* —
+renders the same `CalendarDoc` the other way, so the plan can be handed upwards
+in the shape its readers already know. It is a rendering, not a document: the
+Art, the Phasen, the Ausrichtung and the Stand all still apply, and only the
+Arbeitsprogramm has it (the Excel had no handout).
 
 It is **not a replica**. The vertical "Aktualisieren Unterlagen" text and the
 Excel footer stay out; conflicts keep the red border the Excel had no way to draw.

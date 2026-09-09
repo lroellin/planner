@@ -29,11 +29,11 @@
   let perPage: number | 'auto' = $state('auto');
   let showStand = $state(true);
   /**
-   * Two kinds of document, not four siblings. A Wochenplan is one sheet of the
-   * whole week; a Handzettel is a stack of slips to cut up and give away — and
-   * they take different options for that reason. Flattened into one row of four
-   * buttons, the options below changed shape depending on which was picked, with
-   * nothing on screen saying why.
+   * Two kinds of document, not four siblings. An Arbeitsprogramm is one sheet of
+   * the whole week; a Handzettel is a stack of slips to cut up and give away —
+   * and they take different options for that reason. Flattened into one row of
+   * four buttons, the options below changed shape depending on which was picked,
+   * with nothing on screen saying why.
    */
   type Category = 'grid' | 'handout';
   const HANDOUTS: PlanTarget[] = ['groups', 'teachers', 'rooms'];
@@ -63,8 +63,8 @@
   const orientation = $derived(category === 'grid' ? gridOrientation : handoutOrientation);
 
   /**
-   * How the Wochenplan is drawn on paper. `classic` reproduces the look of the
-   * Excel Arbeitsprogramm this app replaced — the sheet the supervisors who sign
+   * How the Arbeitsprogramm is rendered on paper. `classic` reproduces the look
+   * of the Excel sheet this app replaced — the one the supervisors who sign
    * it off already know how to read. Same week, same blocks, same conflicts;
    * only the drawing differs, so it is a Darstellung and not another Art.
    *
@@ -174,7 +174,7 @@
 >
   <div bind:this={sheetEl} class="sheet" tabindex="-1">
     <header class="sheet-head">
-      <h3 class="sheet-title">Drucken – {TARGET_LABELS[activeTarget]}</h3>
+      <h3 class="sheet-title">Drucken — {TARGET_LABELS[activeTarget]}</h3>
       <button class="sheet-x" onclick={onclose} aria-label="Schliessen">
         <Icon name="x" size={16} />
       </button>
@@ -189,7 +189,7 @@
               class="seg-btn"
               class:seg-on={category === 'grid'}
               onclick={() => (category = 'grid')}
-            >Wochenplan</button>
+            >Arbeitsprogramm</button>
             <button
               class="seg-btn"
               class:seg-on={category === 'handout'}
@@ -200,7 +200,7 @@
             {#if category === 'grid'}
               Die ganze Woche auf einer Seite.
             {:else}
-              Ein Blatt pro Gruppe, Ausbildner oder Raum – zum Ausschneiden und Verteilen.
+              Ein Blatt pro Gruppe, Ausbildner oder Raum — zum Ausschneiden und Verteilen.
             {/if}
           </p>
         </div>
@@ -295,7 +295,7 @@
               >Klassisch</button>
             </div>
             <p class="hint">
-              Klassisch zeichnet den Wochenplan wie das frühere Excel-Arbeitsprogramm.
+              Klassisch übernimmt das Layout des früheren Excel-Arbeitsprogramms.
             </p>
           </div>
         {/if}
@@ -328,7 +328,7 @@
             Entlang der Schnittmarken am Seitenrand schneiden. Jedes Blatt trägt Name,
             Kurs und Stand, damit es einzeln lesbar bleibt.
           {:else}
-            Der Wochenplan wird auf eine A4-Seite gezeichnet und passt sich ihr an.
+            Das Arbeitsprogramm wird auf eine A4-Seite gesetzt und passt sich ihr an.
             Konflikte sind rot umrandet: durchgezogen hart, gestrichelt weich.
             {#if calendarStyle === 'classic'}
               Die klassische Darstellung wiederholt die Zeitspalte an jedem

@@ -122,7 +122,7 @@
   </button>
 
   {#if rows.length > 0}
-    <p class="field-hint">Enter öffnet die nächste Zeile · eine eingefügte Liste füllt mehrere Zeilen</p>
+    <p class="field-hint">Enter legt die nächste Zeile an · eine eingefügte Liste füllt mehrere Zeilen</p>
   {/if}
 </div>
 

@@ -61,7 +61,7 @@ function drawSpanRow(
 export function renderCalendarPdf(model: CalendarDoc, opts: CalendarOptions): jsPDF {
   const newDoc = (): jsPDF => {
     const d = new jsPDF({ unit: 'mm', format: 'a4', orientation: opts.orientation });
-    d.setProperties({ title: `Wochenplan – ${opts.wkName}`, creator: 'WK-Planer' });
+    d.setProperties({ title: `Arbeitsprogramm – ${opts.wkName}`, creator: 'WK-Planer' });
     return d;
   };
 

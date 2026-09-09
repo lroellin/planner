@@ -171,8 +171,12 @@ export type ConflictKind =
 export const HARD_CONFLICT_KINDS: ConflictKind[] = ['teacher', 'group', 'teacher-absent'];
 
 /**
- * What each kind is called on screen. One map, because the conflict panel and
- * the card tooltip both name the same thing and had no reason to disagree.
+ * The short label for a kind, used where it sits in its own element beside the
+ * resource name — the Probleme panel's card eyebrow ("RAUM" over "Kompanie"),
+ * and the joined kind list in the calendar card's tooltip. It is a label, not a
+ * sentence, and the panel's card header only has ~225px for the label *and* the
+ * name: spelling the state out here ("Ausbildner abwesend") pushed the name,
+ * which is the half worth reading, down to a truncated 48px.
  */
 export const CONFLICT_KIND_LABELS: Record<ConflictKind, string> = {
   teacher: 'Ausbildner',
@@ -181,6 +185,28 @@ export const CONFLICT_KIND_LABELS: Record<ConflictKind, string> = {
   'teacher-absent': 'Abwesend',
   'room-blocked': 'Gesperrt',
 };
+
+/**
+ * The same conflict as running text, for the chips in the event editors, which
+ * put the label and the name in *one* span. There `{label} {name}` produced
+ * "Abwesend Anna Müller" — the resource nouns concatenate acceptably, the two
+ * state adjectives do not. Naming the resource first and its state second is
+ * grammatical for all five, and reuses the wording the Probleme panel's own
+ * empty state already has ("doppelt eingeteilt").
+ */
+export function conflictNote(kind: ConflictKind, name: string): string {
+  switch (kind) {
+    case 'teacher':
+    case 'group':
+      return `${name} doppelt eingeteilt`;
+    case 'room':
+      return `${name} doppelt belegt`;
+    case 'teacher-absent':
+      return `${name} abwesend`;
+    case 'room-blocked':
+      return `${name} gesperrt`;
+  }
+}
 
 export function isHardConflict(kind: ConflictKind): boolean {
   return HARD_CONFLICT_KINDS.includes(kind);

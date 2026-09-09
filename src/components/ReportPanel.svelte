@@ -57,7 +57,7 @@
     coverage: 'Abdeckung',
     groups: 'Gruppenpläne',
     teachers: 'Ausbildnerpläne',
-    rooms: 'Raumbelegung',
+    rooms: 'Raumpläne',
   };
 
   const appState = $derived(getState());
@@ -199,7 +199,7 @@
           <div class="banner banner-warn">
             <Icon name="alert" size={15} />
             {#if totalMissing > 0}
-              {totalMissing}-mal fehlt einer Gruppe ein Thema noch ganz.
+              {totalMissing}-mal hat eine Gruppe ein Thema noch gar nicht.
             {/if}
             {#if totalShort > 0}
               {totalShort} {totalShort === 1 ? 'Thema hat' : 'Themen haben'} bei mindestens einer Gruppe
