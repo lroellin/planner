@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { detectConflicts, attachConflicts, previewClash } from './detector';
+import {
+  detectConflicts, attachConflicts, previewClash, previewClashDetail, firstFreeSlot,
+} from './detector';
 import { ALL, makeEvent, makeState, makeSubject, makeWindow } from '../test/fixtures';
 import { CONFLICT_KIND_LABELS, conflictNote } from '../types';
 import type { ConflictKind } from '../types';
@@ -421,5 +423,147 @@ describe('conflict wording', () => {
       expect(CONFLICT_KIND_LABELS[kind]).not.toContain(' ');
       expect(CONFLICT_KIND_LABELS[kind].length).toBeLessThanOrEqual(11);
     }
+  });
+});
+
+describe('firstFreeSlot', () => {
+  const WINDOW = { start: '08:00', end: '17:00' };
+  const probe = (groupId: string) => ({
+    eventId: null,
+    subjectId: 'lesson',
+    groupId,
+    dayIndex: 2,
+    teacherIds: 'inherit' as const,
+    roomId: 'inherit' as const,
+  });
+
+  it('returns the top of the window when the lane is empty', () => {
+    const state = makeState({ events: [] });
+    expect(firstFreeSlot(state, probe('g1'), 60, WINDOW)).toBe('08:00');
+  });
+
+  it('steps past what is already there', () => {
+    // The dialog used to seed a hardcoded 08:00 and drop the new Lektion on top
+    // of this one.
+    const state = makeState({
+      events: [makeEvent({
+        id: 'e1', subjectId: 'lesson', groupId: 'g1', dayIndex: 2,
+        startTime: '08:00', endTime: '09:00',
+      })],
+    });
+    expect(firstFreeSlot(state, probe('g1'), 60, WINDOW)).toBe('09:00');
+  });
+
+  it('treats a soft clash as taken — proposing one unasked is proposing a mistake', () => {
+    // Same room, different lane: advisory once made, never a suggestion.
+    const state = makeState({
+      events: [makeEvent({
+        id: 'e1', subjectId: 'lesson', groupId: 'g2', dayIndex: 2,
+        startTime: '08:00', endTime: '09:00', teacherIds: [],
+      })],
+    });
+    expect(firstFreeSlot(state, probe('g1'), 60, WINDOW)).not.toBe('08:00');
+  });
+
+  it('gives up rather than lying when the day is full', () => {
+    const events = [];
+    for (let h = 8; h < 17; h++) {
+      events.push(makeEvent({
+        id: `e${h}`, subjectId: 'lesson', groupId: 'g1', dayIndex: 2,
+        startTime: `${String(h).padStart(2, '0')}:00`,
+        endTime: `${String(h + 1).padStart(2, '0')}:00`,
+      }));
+    }
+    expect(firstFreeSlot(makeState({ events }), probe('g1'), 60, WINDOW)).toBeNull();
+  });
+
+  it('needs a run long enough for the whole Lektion', () => {
+    // A 30-minute hole cannot hold a 60-minute Thema.
+    const state = makeState({
+      events: [
+        makeEvent({ id: 'a', subjectId: 'lesson', groupId: 'g1', dayIndex: 2, startTime: '08:00', endTime: '09:00' }),
+        makeEvent({ id: 'b', subjectId: 'lesson', groupId: 'g1', dayIndex: 2, startTime: '09:30', endTime: '11:00' }),
+      ],
+    });
+    expect(firstFreeSlot(state, probe('g1'), 60, WINDOW)).toBe('11:00');
+  });
+});
+
+/**
+ * The drag mirror and the Probleme panel are two readings of one rule set. Every
+ * case where they could answer differently belongs here, because the symptom —
+ * a red mirror over a slot that turns out to be fine — is invisible in the code
+ * and only shows up as the user learning to distrust the tint.
+ */
+describe('previewClashDetail agrees with detectConflicts', () => {
+  /** G2 switched off, so anything on its lane is drawn nowhere. */
+  const hiddenLane = () => makeState({
+    groups: [
+      { id: 'k', label: 'K', enabled: true, order: 0, excludeFromCoverage: false },
+      { id: 'g1', label: 'G1', enabled: true, order: 1, excludeFromCoverage: false },
+      { id: 'g2', label: 'G2', enabled: false, order: 2, excludeFromCoverage: false },
+      { id: 'g3', label: 'G3', enabled: true, order: 3, excludeFromCoverage: false },
+    ],
+    events: [
+      makeEvent({
+        id: 'hidden', groupId: 'g2', dayIndex: 2,
+        startTime: '09:00', endTime: '10:00', teacherIds: ['t1'], roomId: 'r1',
+      }),
+    ],
+  });
+
+  /** A probe on the same Ausbildner, the same Raum and the same hour. */
+  const at = (groupId: string) => ({
+    eventId: null,
+    subjectId: 'lesson',
+    groupId,
+    dayIndex: 2,
+    teacherIds: ['t1'] as string[],
+    roomId: 'r1' as string,
+  });
+  const onto = (groupId: string) => ({
+    ...at(groupId),
+    startTime: '09:00',
+    endTime: '10:00',
+  });
+
+  it('the detector ignores a Lektion whose every lane is switched off', () => {
+    expect(detectConflicts(hiddenLane())).toEqual([]);
+  });
+
+  it('so the mirror must not go red over it either', () => {
+    // It used to: the probe walked every event in the week, and this one shares
+    // both the Ausbildner and the Raum. The tint promised a clash that no panel
+    // would ever list once the block was dropped.
+    expect(previewClashDetail(hiddenLane(), onto('g1'))).toEqual({ level: null, eventIds: [] });
+  });
+
+  it('and firstFreeSlot must not step past the slot it occupies', () => {
+    // The dialog seeds itself from this, so a hidden event used to push the
+    // proposed start an hour later than it needed to be.
+    expect(firstFreeSlot(hiddenLane(), at('g1'), 60, { start: '09:00', end: '17:00' }))
+      .toBe('09:00');
+  });
+
+  it('both see it again once its lane is switched back on', () => {
+    const state = hiddenLane();
+    const shown = {
+      ...state,
+      groups: state.groups.map(g => (g.id === 'g2' ? { ...g, enabled: true } : g)),
+    };
+    // The probe is not a stored event, so the detector needs a real second one
+    // to have a pair to report at all.
+    const withPair = {
+      ...shown,
+      events: [
+        ...shown.events,
+        makeEvent({
+          id: 'shown', groupId: 'g1', dayIndex: 2,
+          startTime: '09:00', endTime: '10:00', teacherIds: ['t1'], roomId: 'r1',
+        }),
+      ],
+    };
+    expect(detectConflicts(withPair).map(c => c.kind).sort()).toEqual(['room', 'teacher']);
+    expect(previewClashDetail(shown, onto('g1'))).toEqual({ level: 'hard', eventIds: ['hidden'] });
   });
 });

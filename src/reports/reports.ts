@@ -1,7 +1,8 @@
 import type { AppState, CalendarEvent, Group, ID, Phase, Room, Subject, Teacher } from '../types';
 import {
   effectiveTeacherIds, effectiveRoomId, eventInPhase, countedGroups, eventGroupIds,
-  timeDiffMinutes, sortSubjects, isEventActive,
+  timeDiffMinutes, sortSubjects, isEventActive, eventOverrides, formatDuration,
+  orderedPhases,
 } from '../utils/timeUtils';
 
 /**
@@ -134,7 +135,10 @@ function tallyLanes(state: AppState, subjectId: ID, phase: Phase): Map<ID, LaneT
 }
 
 export function buildCoverage(state: AppState): CoverageSection[] {
-  return state.phases.map(phase => {
+  // Week order, like the grid and every printed sheet. The stored array is in
+  // insertion order, so adding the KVK phase after the WK phase listed the
+  // Abdeckung report back to front against the calendar beside it.
+  return orderedPhases(state).map(phase => {
     const groupIds = countedGroups(state, phase).map(g => g.id);
 
     // Only Themen are "owed" by every lane. Pausen are placed ad hoc rather than
@@ -304,7 +308,13 @@ export interface PlanEntry {
   startTime: string;
   endTime: string;
   groupLabels: string[];
-  roomName: string | null;
+  /**
+   * The Raum itself, not its name. `boxes.ts` needs the Kürzel and could only
+   * get back to it by searching `state.rooms` *by name* — which quietly picks
+   * the wrong one of two rooms that share a name, and is a second way of
+   * answering a question this entry was already holding the answer to.
+   */
+  room: Room | null;
   status: EntryStatus;
   /** Who took it over ('handed-over') or who they are standing in for ('covering'). */
   counterparts: Teacher[];
@@ -379,7 +389,7 @@ export function buildTeacherPlans(state: AppState): TeacherPlan[] {
         startTime: ev.startTime,
         endTime: ev.endTime,
         groupLabels: groupIds.map(groupLabel).filter((l): l is string => l !== null),
-        roomName: roomId ? state.rooms.find(r => r.id === roomId)?.name ?? null : null,
+        room: roomId ? state.rooms.find(r => r.id === roomId) ?? null : null,
         status,
         counterparts: counterpartIds
           .map(id => state.teachers.find(t => t.id === id))
@@ -414,7 +424,8 @@ export interface ScheduleEntry {
   minutes: number;
   subject: Subject;
   teachers: Teacher[];
-  roomName: string | null;
+  /** See `PlanEntry.room`. */
+  room: Room | null;
   groupLabels: string[];
 }
 
@@ -447,7 +458,7 @@ function toEntry(state: AppState, eventId: ID): ScheduleEntry | null {
     teachers: effectiveTeacherIds(ev, subject)
       .map(id => state.teachers.find(t => t.id === id))
       .filter((t): t is Teacher => Boolean(t)),
-    roomName: roomId ? state.rooms.find(r => r.id === roomId)?.name ?? null : null,
+    room: roomId ? state.rooms.find(r => r.id === roomId) ?? null : null,
     groupLabels: eventGroupIds(state, ev)
       .map(id => state.groups.find(g => g.id === id)?.label)
       .filter((l): l is string => Boolean(l)),
@@ -506,4 +517,157 @@ export function buildRoomPlans(state: AppState): RoomPlan[] {
       bookedMinutes: entries.reduce((n, e) => n + e.minutes, 0),
     };
   });
+}
+
+// ─── Abweichungen: what has been changed away from the Themenvorgabe ──────────
+
+/** The three fields a Lektion can carry its own value for. */
+export type DeviationField = 'Ausbildner' | 'Raum' | 'Dauer';
+
+export interface DeviationChange {
+  field: DeviationField;
+  /** What the Themenvorgabe says. */
+  from: string;
+  /** What this Lektion actually has. */
+  to: string;
+}
+
+export interface DeviationEntry {
+  eventId: ID;
+  dayIndex: number;
+  startTime: string;
+  endTime: string;
+  groupLabels: string[];
+  changes: DeviationChange[];
+  /**
+   * The Dauer is the only thing that differs, and the lanes this Lektion is on
+   * still end up with exactly the Soll — so it was cut up, not changed. Teilen
+   * a 3 h Thema into 2 h + 1 h flags both halves as "Dauer weicht ab" on the
+   * card, correctly, and produces two rows here that say nothing: the Gruppe
+   * got its 3 h either way.
+   */
+  splitOnly: boolean;
+}
+
+export interface DeviationBlock {
+  subject: Subject;
+  entries: DeviationEntry[];
+}
+
+export interface DeviationReport {
+  blocks: DeviationBlock[];
+  /** Rows the split filter takes out — named, so hiding them is not silent. */
+  splitOnlyCount: number;
+  /** Rows left once they are gone. */
+  changedCount: number;
+}
+
+/** Placed minutes of one Thema per lane, across the whole week. */
+function minutesPerLane(state: AppState, subjectId: ID): Map<ID, number> {
+  const out = new Map<ID, number>();
+  for (const ev of state.events) {
+    if (ev.subjectId !== subjectId) continue;
+    const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
+    for (const laneId of eventGroupIds(state, ev)) {
+      out.set(laneId, (out.get(laneId) ?? 0) + minutes);
+    }
+  }
+  return out;
+}
+
+function teacherNames(state: AppState, ids: ID[]): string {
+  const names = ids
+    .map(id => state.teachers.find(t => t.id === id)?.name)
+    .filter((n): n is string => Boolean(n));
+  return names.length > 0 ? names.join(', ') : '—';
+}
+
+function roomName(state: AppState, id: ID | null): string {
+  if (id === null) return '—';
+  return state.rooms.find(r => r.id === id)?.name ?? '—';
+}
+
+/**
+ * Every Lektion that no longer matches its Themenvorgabe — the sheet you read
+ * to check that Sanität really did go to Anna and that the Funk lesson really
+ * was moved into the Turnhalle.
+ *
+ * The rule for *being* in here is deliberately the same one that puts the
+ * pencil on a card (`eventOverrides`): if the two disagreed, the report would
+ * quietly be about something other than what the calendar marks.
+ *
+ * Themen only. A Pause and a Programmpunkt have no rotation to deviate from —
+ * a Mittagessen that runs 45 minutes today is the plan, not a change to it.
+ */
+export function buildDeviations(state: AppState): DeviationReport {
+  const blocks: DeviationBlock[] = [];
+  let splitOnlyCount = 0;
+  let changedCount = 0;
+
+  for (const subject of sortSubjects(state.subjects.filter(s => s.kind === 'lesson'))) {
+    const laneMinutes = minutesPerLane(state, subject.id);
+    const entries: DeviationEntry[] = [];
+
+    for (const ev of state.events) {
+      if (ev.subjectId !== subject.id) continue;
+      // A Lektion whose every lane is switched off is drawn nowhere and counted
+      // nowhere; it has no business being in a report either.
+      if (!isEventActive(state, ev)) continue;
+
+      const fields = eventOverrides(ev, subject);
+      if (fields.length === 0) continue;
+
+      const changes: DeviationChange[] = fields.map(field => {
+        switch (field) {
+          case 'Ausbildner':
+            return {
+              field,
+              from: teacherNames(state, subject.defaultTeacherIds),
+              to: teacherNames(state, effectiveTeacherIds(ev, subject)),
+            };
+          case 'Raum':
+            return {
+              field,
+              from: roomName(state, subject.defaultRoomId),
+              to: roomName(state, effectiveRoomId(ev, subject)),
+            };
+          default:
+            return {
+              field: 'Dauer' as const,
+              from: formatDuration(subject.defaultDurationMinutes),
+              to: formatDuration(timeDiffMinutes(ev.startTime, ev.endTime)),
+            };
+        }
+      });
+
+      const lanes = eventGroupIds(state, ev);
+      const splitOnly =
+        changes.length === 1 &&
+        changes[0]!.field === 'Dauer' &&
+        lanes.length > 0 &&
+        lanes.every(id => (laneMinutes.get(id) ?? 0) === subject.defaultDurationMinutes);
+
+      if (splitOnly) splitOnlyCount++;
+      else changedCount++;
+
+      entries.push({
+        eventId: ev.id,
+        dayIndex: ev.dayIndex,
+        startTime: ev.startTime,
+        endTime: ev.endTime,
+        groupLabels: lanes
+          .map(id => state.groups.find(g => g.id === id)?.label)
+          .filter((l): l is string => Boolean(l)),
+        changes,
+        splitOnly,
+      });
+    }
+
+    if (entries.length > 0) {
+      entries.sort((a, b) => a.dayIndex - b.dayIndex || a.startTime.localeCompare(b.startTime));
+      blocks.push({ subject, entries });
+    }
+  }
+
+  return { blocks, splitOnlyCount, changedCount };
 }

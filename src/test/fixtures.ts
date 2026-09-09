@@ -8,10 +8,12 @@ import type { AppState, CalendarEvent, GroupSelector, Subject, TimeWindow } from
  */
 export function makeState(overrides: Partial<AppState> = {}): AppState {
   return {
-    version: 13,
+    version: 14,
     name: 'Test WK',
     lastExportedAt: null,
     wkStartDate: '2026-09-07',
+    gridStartTime: null,
+    gridEndTime: null,
     groups: [
       { id: 'k', label: 'K', enabled: true, order: 0, excludeFromCoverage: false },
       { id: 'g1', label: 'G1', enabled: true, order: 1, excludeFromCoverage: false },

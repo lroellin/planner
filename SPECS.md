@@ -48,7 +48,7 @@ afterwards, so it no longer matches that review round.
 |---|---|---|---|
 | 18 | **Konflikt** / Konflikte | Two Lektionen clashing over a Ausbildner, a Gruppe or a Raum, or one booked into an absence. Names the *kind* of thing, not the panel: the panel is **Probleme** (#20) | Summary chips ("3× Ausbildner"), card tooltips |
 | 19 | **harter / weicher Konflikt** | Hard = Ausbildner, Gruppe, absence. Weich = Raum double-booking **and** Sperrzeit, both advisory. The card's warning icon says exactly these two words — naming the double-booking there was wrong for the Sperrzeit half | Card icon tooltip, Legende, conflict panel footnote |
-| 20 | **Problem** / Probleme | Konflikte **plus** orphan Lektionen. Deliberately wider than #18, and therefore the name of the **right-hand panel** as well as the badge that opens it — the panel holds an *Ausserhalb der Phasen* section that is not a Konflikt | Toolbar badge ("7 Probleme"), right-hand panel heading, collapsed rail |
+| 20 | **Problem** / Probleme | Konflikte **plus** orphan Lektionen. Deliberately wider than #18, and therefore the name of the **second tab of the side dock** as well as the badge that opens it — the panel holds an *Ausserhalb der Phasen* section that is not a Konflikt | Toolbar badge ("7 Probleme"), dock tab, collapsed rail |
 | 21 | **Ausserhalb der Phasen** | Orphan Lektionen — on no phase's day/lane combination, so nothing shows them. *Kalender* is deliberately not used: there is one FullCalendar per Phase, which is an implementation fact the user never sees | Conflict panel card, placement warnings, phase-delete confirm |
 | 22 | **abwesend** / Abwesenheiten | `Teacher.unavailable` — when an Ausbildner is not there. The adjective labels one booking (conflict card eyebrow, list tag); the noun heads the editor. As *running* text it goes after the name — *Anna Müller abwesend*, never "Abwesend Anna Müller" (see `conflictNote`) | Config list tag, conflict card kind, "Abwesenheiten" editor title |
 | 23 | **gesperrt** / Sperrzeiten | `Room.unavailable` — when a Raum is blocked by something outside the plan. Same split as #22: adjective on a booking, noun on the editor, *Turnhalle gesperrt* in running text. Never **belegt** (#37) — that is the opposite thing | Config list tag, conflict card kind, "Sperrzeiten" editor title |
@@ -59,8 +59,12 @@ afterwards, so it no longer matches that review round.
 
 | # | Term | Names | Where it shows |
 |---|---|---|---|
-| 27 | **Auswertungen** | The reports overlay (Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne) | Toolbar button, overlay title |
+| 26a | **einklappen** / **ausklappen** | Folding a Phase away to a rail, and bringing it back. The same verb pair the two side panels already use for the same gesture — *zuklappen* and *minimieren* would be a second and third name for it | Phase strip tooltip, side panel toggles |
+| 27 | **Auswertungen** | The reports overlay (Abdeckung, Abweichungen, Gruppenpläne, Ausbildnerpläne, Raumpläne) | Toolbar button, overlay title |
+| 27a | **Abweichung** / Abweichungen | A Lektion carrying its own Ausbildner, Raum or Dauer instead of the Themenvorgabe's — and the Auswertung listing them. The card already says *Weicht von der Themenvorgabe ab* on its pencil, so the tab is that sentence's noun. Never *Änderungen*, which in this app is what Rückgängig undoes | Auswertungen tab, card pencil tooltip |
+| 27b | **reine Teilung** | A Lektion whose only Abweichung is its Dauer, on lanes that still add up to the full Soll — the halves of a *teilen* (#16). Filtered out of the Abweichungen report by default | Abweichungen filter, row note «geteilt, Soll erfüllt» |
 | 28 | **Konfiguration** | The settings dialog | Toolbar button, dialog title |
+| 28a | **Einrichtung** | The first tab of the Konfiguration: what this plan needs before anything can be planned, one row per list, and what is in each once it is. Not a mode, not a wizard and not a place data lives — every row is a link to the tab that owns it. The word was rejected once, for the Thema's sub-tabs (#40), where it read as *installing* a Thema; naming the setup of the whole plan is the sense it does carry | Konfiguration tab, empty-grid card («Einrichtung öffnen»), Konfiguration button tooltip |
 | 29 | **Plan** | The whole week's data — one plan per browser. *Planname*, *Plandatei* | Toolbar, Plan & Daten tab |
 | 29a | **Darstellung** | How the Arbeitsprogramm is rendered on paper: *Modern* (the app's own sheet) or *Klassisch* (the look of the Excel sheet it replaced). Deliberately not an *Art* — both render the same week, so the choice is a rendering and not a second document. A Handzettel has none | Drucken dialog |
 | 29b | **Arbeitsprogramm** | The printed week: one A4 sheet of the whole plan, the *Art* opposite a Handzettel. The name the Zivilschutz already uses for this document, and the one thing it is called everywhere — the Art toggle, the dialog title, the PDF metadata, the file name, the shortcut sheet and the browser-print notice. Never *Wochenplan* (a fourth name for it) and never *Kalender* (#12, which is the screen) | Drucken dialog, `TARGET_LABELS.grid`, `arbeitsprogramm-….pdf` |
@@ -68,7 +72,7 @@ afterwards, so it no longer matches that review round.
 | 31 | **Rückgängig / Wiederholen** | Undo / redo | Toolbar tooltips, toasts |
 | 32 | **Schnellbearbeitung** | The popover beside a clicked Lektion | Popover aria-label, shortcut sheet |
 | 33 | **Tastenkürzel** | The `?` shortcut sheet | Toolbar button, dialog title |
-| 34 | **Legende** | The colour key for Ausbildner, Räume, Themen | Toolbar button |
+| 34 | **Legende** | The colour key for Ausbildner, Räume, Themen | Toolbar «⋯» menu |
 | 35 | **Kürzel** | `shortName` on Ausbildner, Raum **and** Thema — what a card shows when the lane is too narrow for the full name. One word for all three; *Kurzname* was a fourth name for the same field | Ausbildner, Raum and Thema detail fields |
 | 36 | **Pensum** | A Ausbildner's booked hours for the week | Ausbildner detail panel heading |
 | 37 | **Belegung** / Belegungen | A Raum's bookings for the week — the Lektionen **in** it. Never a Sperrzeit (#23), which is the opposite: the Sperrzeiten editor sits directly under a "Belegung diese Woche" counter, and telling the user to add a window when the room is "belegt" said the reverse of what it meant | Raum detail panel heading, room plans |
@@ -164,7 +168,7 @@ The draggable blocks. Subjects are displayed **alphabetically everywhere** (`sor
 
   What takes part in conflict checks is decided by the *placement*, not by the kind: a single-lane event of any kind does, an all-lanes one does not (see **Detection**). This replaced a boolean `isBreak`: every `!isBreak` test in the app meant "lesson", and a third kind had to make the compiler visit each of them (migration v11→v12).
 - `isMultiGroup: boolean` — placing this subject schedules it across every *counted* lane of the target phase at once (used for Mittagessen, Pause)
-- `optional: boolean` — not every group owes this Thema; a specialist lesson only some of them sit. Coverage then has nothing to measure it against, so the subject is left out of the report, out of the sidebar badge (**including the green check** — a tick would claim every group has had it) and out of `missingLanesForSubject`. It is a Thema in every other way: listed under Themen, placed per group, with its own defaults. Distinct from `kind: 'oneoff'`, which is outside coverage because it happens *once for the whole course* rather than once per group. Lives under **Erweitert** in the Subjects tab, labelled **Zählt nicht zur Abdeckung** and beside "Gehört zu Phase" — the other coverage-shaping setting — and is shown only for `kind === 'lesson'`. The label names the coverage axis on purpose: as *Nicht für alle Gruppen* it sat two rows under *Platziert für: Einzelne Gruppe / Alle Gruppen* and read as a third option on that unrelated control.
+- `optional: boolean` — not every group owes this Thema; a specialist lesson only some of them sit. Coverage then has nothing to measure it against, so the subject is left out of the report, out of the sidebar badge (**including the green check** — a tick would claim every group has had it) and out of `missingLanesForSubject`. It is a Thema in every other way: listed under Themen, placed per group, with its own defaults. Distinct from `kind: 'oneoff'`, which is outside coverage because it happens *once for the whole course* rather than once per group. Lives under **Erweitert** in the Subjects tab beside "Gehört zu Phase" — the other coverage-shaping setting — and is shown only for `kind === 'lesson'`. It is a **segmented pair** headed *Wer besucht es*: **Alle Gruppen** / **Nur einzelne Gruppen**, each naming its consequence. It had been the one raw checkbox in a form whose two settings above it (*Zählt als*, *Platziert für*) are segmented pairs, and it is the same shape of question as they are — who owes this Thema, not a feature being switched on. Naming both sides also puts the consequence on screen without flipping anything, which is the whole argument behind `.choice` in `config-ui.css`.
 
 `isCounted(subject)` in `reports.ts` is the one predicate for "owed by every lane" (`kind === 'lesson' && !optional`). The report, the sidebar badge and the lane markers all ask it, because a disagreement between them is the kind of bug nobody reports — they just stop trusting the badge. It is deliberately *not* a type predicate: `!isCounted(s)` would then narrow a known `Subject` to `never`.
 - `phaseId: ID | null` — which phase this subject is rotated through. `null` = infer from where it is placed. Set it so coverage judges a Kader lesson against the Kader lane instead of the group lanes.
@@ -231,6 +235,7 @@ Deliberately separate from `store.svelte.ts`: none of it belongs in the saved sc
 | `quickEdit` | `{ eventId, anchor }` for the popover beside a card |
 | `reveal` | `{ id, token }` — "scroll to this card and flash it" |
 | `density` | `compact` / `normal` / `comfortable` → `--wk-slot-h` (17/24/32 px), persisted under `wk-planner-ui` |
+| `collapsedPhases` | Phase ids folded to a rail, persisted under `wk-planner-ui`. Purely visual — see [Folding a phase](#folding-a-phase) |
 | `toasts` | One-at-a-time transient messages, with an optional inline action |
 
 `applyDensity()` runs in `main.ts` **before** the app mounts — FullCalendar measures one slot row at first render and sizes the grid from it.
@@ -270,7 +275,7 @@ Available mutations: `addEvent`, `updateEvent`, `updateEvents`, `removeEvent`, `
 
 ### Persistence (`src/state/persistence.ts`)
 
-localStorage key: `'wk-planner-state'`. Current schema version: **8**.
+localStorage key: `'wk-planner-state'`. Current schema version: **14**.
 
 Loading runs `isValidState(parsed)` first — a shape check, not a migration. A truncated or hand-edited entry falls back to defaults instead of being cast to `AppState` and crashing on first render. State older than the current version is then stepped forward by `migrateState` (see Migrations). Only a hop with no migration — which includes state written by a *newer* build — reaches the old prompt to reset or load anyway.
 
@@ -304,6 +309,8 @@ Stored state is stepped forward one version at a time rather than reset. Each st
 
 - **v12 → v13**: `group.excludeFromCoverage` and `subject.optional`, both defaulted to `false` — the behaviour every existing plan already has.
 
+- **v13 → v14**: `gridStartTime` / `gridEndTime`, the hours the grid draws. Both seeded `null` — "derive it from the plan" — rather than the 07:00–19:00 the hardcoded grid used to draw: stamping the old constants would freeze every existing plan into exactly the empty fringe the field exists to remove.
+
 **The shape check runs in two strengths.** `isMigratableState` requires only what has existed since v1 (`version`, `wkStartDate`, and the five arrays); `isValidState` additionally requires `phases`. Old state is admitted by the first and only checked against the second *after* migrating. Requiring `phases` up front is what made every pre-v4 store fail before a single step ran, be silently replaced by a fresh default, and take the user's week with it — the v3→v4 migration existed to build those phases and was never reached.
 
 `saveState` strips `conflicts` from events and **debounces** the write by 200 ms, so a colour drag produces one localStorage write rather than one per mouse move. `flushSave()` forces a write; it is also wired to `beforeunload` and `pagehide` so nothing pending is lost.
@@ -319,20 +326,22 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 ## UI Layout
 
 ```
-┌─ Toolbar ──────────────────────────────────────────────────────────────────┐
-│ WK Planner [Filter] [Legende]│ ‹ 7.9.–11.9. › │[S M L] ↩▾ ↪ ⚠ Auswertungen Drucken▾ ⌨ Konfiguration │
+┌─ Toolbar (42px) ───────────────────────────────────────────────────────────┐
+│ WK 2026 Zug 3  ⚲ │            │ [S M L] ↩▾ ↪ ⚠ Auswertungen Drucken ⋯ Konfiguration │
 ├─ main-area ────────────────────────────────────────────────────────────────┤
-│ ◂ FÄCHER ▸   │ KVK              │ WK                   │ KONFLIKTE ▸       │
-│  chip list   │  Mo   Di         │  Mi   Do   Fr        │  grouped panel    │
-│  (Sidebar)   │  K    K          │  G1 G2 G3 …          │                   │
-└──────────────┴──────────────────┴──────────────────────┴───────────────────┘
+│ THEMEN|PROBLEME‹│ ‹ KVK        │ ‹ WK                                       │
+│  chip list  or  │  Mo   Di     │  Mi        Do        Fr                    │
+│  problem cards  │  K    K      │  G1 G2 G3  G1 G2 G3  G1 G2 G3              │
+│  (WorkDock)     │              │                                            │
+└─────────────────┴──────────────┴────────────────────────────────────────────┘
 ```
 
-- **Toolbar** (`Toolbar.svelte`): wordmark, plan name (click to open Config → Plan & data), event filter, **Legend** popover (teacher/room/subject colours — nothing else in the app maps a colour to a name), compact week control with a date popover, **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the **Probleme** panel, Reports, a **Drucken** button opening the print dialog, a **keyboard-shortcuts** button and Config.
-- **Left sidebar** (`SidePanel.svelte` wrapping `Sidebar.svelte`): collapsible. Draggable subject chips split into Subjects and Breaks; each chip previews the card it will become (same spine, same tint recipe) and carries a coverage counter. Hovering a chip **spotlights** it on the grid — everything else dims — and its tooltip names the lanes still missing it. A filter box appears once there are more than eight subjects. Chips are buttons; activating one opens `PlaceDialog`.
-- **Calendar area**: a flex row of phase segments. Each segment's `flex-grow` is proportional to `days × maxLanes`, so columns stay the same width across the week regardless of how many lanes a phase has. A `phase-label` strip shows phase names above the segments. Both segments share a single outer scroll container — `height: auto` + `stickyHeaderDates: true` on each FC instance means headers pin and bodies scroll together.
-- **Right panel** (`SidePanel.svelte` wrapping `ConflictPanel.svelte`): collapsible, and **collapsed on load** — the rail keeps the issue badge in view, and the grid is what the app is opened to look at. Conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at.
-- **Selection** (`App.svelte`): a plain click selects one card. **Ctrl/Cmd-click** toggles a card in or out of the selection, **Shift-click** adds, **dragging across empty grid** draws a marquee that selects what it covers, and **Ctrl/Cmd+A** takes everything the grid is currently drawing (so the toolbar filter narrows it too). With more than one selected, a **selection bar** appears above the toasts naming the count and offering duplicate, delete and clear — a set has no popover and no modal, so without it nothing on screen says how many are selected. Dragging one card of a selection moves the whole set by the same day/time delta; lanes are deliberately left alone, because dropping five blocks into the one lane under the pointer would stack them.
+- **Toolbar** (`Toolbar.svelte`), 42px: plan name (click to open Config → Plan & data), **event filter** — an icon while nothing is filtered, a chip naming the filter with its own × once something is, opening a grouped popover of Ausbildner / Räume / Gruppen — then, on the right, the **density** segmented control (S/M/L), icon-only undo/redo carrying the action name in their tooltips plus a caret opening the **undo history menu** (the last 12 labelled actions, newest first; picking the *n*-th undoes *n* steps), a **clickable issue badge** that opens the **Probleme** tab, Reports, a **Drucken** button opening the print dialog, an **«⋯» overflow** (Legende popover, keyboard shortcuts, and the density control below 1000px) and Config. No wordmark and no week control: see [What left the toolbar](#what-left-the-toolbar).
+- **Side dock** (`WorkDock.svelte`, 248px, collapsible to a 34px rail): **one** panel with two tabs, *Themen* and *Probleme*. Both panes stay mounted and are hidden with CSS — the Themen pane owns a FullCalendar `Draggable` and a search box, and re-mounting it on every tab switch would rebuild the one and clear the other. The tab strip is also where the dock folds away, and it sits on the phase strip's baseline so the two read as one band. Folded, the rail carries both labels and the problem count.
+  - *Themen*: draggable subject chips split into Themen / Programmpunkte / Pausen; each chip previews the card it will become (same spine, same tint recipe) and is **one row tall**, with a compact coverage flag (⚠2×, `kurz`, `lang`, `≠`) whose sentence is in the tooltip. Hovering the flag **spotlights** the subject on the grid — everything else dims. A filter box appears once there are more than eight subjects. Chips are buttons; activating one opens `PlaceDialog`.
+- **Calendar area**: a flex row of phase segments. Each segment's `flex-grow` is proportional to `days × maxLanes`, so columns stay the same width across the week regardless of how many lanes a phase has. A `phase-label` strip shows phase names above the segments, and each label is the **button that folds its phase away** (see [Folding a phase](#folding-a-phase)). Both segments share a single outer scroll container — `height: auto` + `stickyHeaderDates: true` on each FC instance means headers pin and bodies scroll together.
+  - *Probleme* (`ConflictPanel.svelte`): conflicts **grouped by resource** (one card per teacher/room/group, with a clash count) plus orphan events. Hovering a card flashes every involved card on the grid; clicking a row reveals and flashes that one instead of opening a modal over the grid you need to look at. It carries no header of its own — the tab already says *Probleme* and holds the same count.
+- **Selection** (`App.svelte`): a plain click selects one card. **Ctrl/Cmd-click** toggles a card in or out of the selection, **Shift-click** adds, **dragging across empty grid** draws a marquee that selects what it covers, and **Ctrl/Cmd+A** takes everything the grid is currently drawing (so the toolbar filter narrows it too). **Clicking a header selects what stands under it** (see [Selecting from the header](#selecting-from-the-header)). With more than one selected, a **selection bar** appears above the toasts naming the count and offering duplicate, delete and clear — a set has no popover and no modal, so without it nothing on screen says how many are selected. Dragging one card of a selection moves the whole set by the same day/time delta; lanes are deliberately left alone, because dropping five blocks into the one lane under the pointer would stack them.
 - **Quick-edit popover** (`EventPopover.svelte`): a single click on a card selects it and opens a popover beside it with the three fields that actually change day to day — teachers, room, duration — plus copy-to-lanes, duplicate, delete and "Edit…". A double click goes straight to the full modal.
 
   **It names the card's conflicts**, in a strip between the header and the body — where the full modal has always carried the same one. The grid draws a red edge and the conflict rail lists every clash in the week, but the panel you open *by clicking the card the edge is on* used to say nothing, so the one question it was opened to answer had to be taken to a different panel and matched up by eye. Each chip carries the events it collides with: hovering pulses them (`highlightEvents`), clicking scrolls to the first (`revealEvent`). Hard clashes are filled, soft ones outlined — the same two weights the cards are drawn in. An availability clash has no counterpart, so those chips are plain `<span>`s rather than buttons.
@@ -340,11 +349,65 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
   **The "zurück" reset links are decided from the event, not from `eventOverrides`.** That helper returns the *German labels* the card tooltip prints (`'Ausbildner'`, `'Raum'`, `'Dauer'`); the popover matched them against `'teachers'` / `'room'` / `'duration'`, so no reset link had ever appeared. It now tests `ev.teacherIds !== 'inherit'`, `ev.roomId !== 'inherit'` and the duration directly.
 - **Toasts** (`Toasts.svelte`): bottom-centre, one at a time, used by undo/redo.
 
+### What left the toolbar
+
+Three things were removed in design pass 3 (`DESIGN-PASS-3.md`), together about
+370px of the left-hand group:
+
+- **The wordmark.** "WK PLANER" sat beside a plan called "WK 2026 Tuggen/
+  Reichenburg" and named the app to the one person who already knew which app
+  they had opened. The browser tab carries it.
+- **The week nav** (‹ 14.9.–18.9. ›). The WK week is set once per WK, and the
+  grid's own column headers print `Mo. 14.9.` across the top, so the bar was
+  spending ~185px restating something permanently visible ten pixels below it.
+  It now lives in **Konfiguration › Plan & Daten**, next to the plan name, with
+  the same ‹ › week step and a date field.
+- **The Legende button.** ~100px for a colour key that is consulted on the first
+  day and then about once a week, and whose three dictionaries are all also
+  readable in Konfiguration. It moved into the «⋯» overflow at every width; the
+  fourth column — *Markierungen*, the marks the grid draws and never spells out
+  — is the part that exists nowhere else, and it went with it.
+
+The `dense`/`tight` collapse thresholds dropped with the freed width: labels
+come off Auswertungen and Drucken below 1130px (was 1500), and the density
+control joins the «⋯» below 1000px (was 1360).
+
 ### Phase Layout Detail
 
 Each phase is a `<div class="phase-seg">` containing one FullCalendar instance. The first phase reserves `--wk-axis-w` (56px) for the time gutter; every later phase gets `.phase-seg--noaxis`, which collapses its axis cell to zero width and drops its `flex-basis` to 0. The cell itself must stay — removing it from FC's column table collapses a lane to 0px and shortens the header, and the two grids stop lining up.
 
 The `.phase-label` strip above the segments uses the same `flex-grow` values and `flex-basis: var(--wk-axis-w)` so labels align exactly with their calendars.
+
+### Folding a phase
+
+Clicking a phase label folds that phase to a **34px rail** (`--wk-phase-rail-w`)
+carrying its name, the number of Lektionen it is hiding and — in red — how many
+of them are in a Konflikt. Clicking the rail brings it back. The KVK is two days
+that are done with by Wednesday and it was taking a third of the screen from the
+rotation still being planned; folding it hands that width to the WK.
+
+It is **only a view state**, which is why `collapsedPhases` lives in
+`ui.svelte.ts` (persisted under `wk-planner-ui`) and not in `AppState`: the
+store, the conflict detector, every Auswertung and every printed sheet cannot
+tell that a phase is folded, and nothing is excluded from them. Three things
+follow from it, and only these three:
+
+- The folded phase's FullCalendar is **unmounted**, so nothing in it can be
+  clicked, dragged onto or revealed while it is folded.
+- **Which grid owns the time gutter** is recomputed: it is the leftmost *open*
+  phase, not `i > 0`. With the KVK folded, the old rule hid the axis on the only
+  grid still drawn and left the week without hour labels. The segments are keyed
+  on that phase's id as well as the density, because FullCalendar measures the
+  axis at render and handing it to another phase means building it again.
+- A **reveal or a flash aimed at a card inside it unfolds it first**
+  (`expandPhaseOf` in `App.svelte`). "Im Kalender zeigen" on a Konflikt in the
+  folded phase is the case: the card does not exist while the phase is a rail,
+  so the phase is opened and the calendar that mounts for it picks the pending
+  request up through its own effects.
+
+Everything can be folded at once — recoverable, since the rails stay — and the
+segment carries `min-height: 100%` for exactly that state, where there is no
+grid left for the flex line to take its height from.
 
 ---
 
@@ -358,7 +421,7 @@ Key settings:
 - `duration: { days: phaseDayCount(phase) }` — how many day columns (clamped to ≥1)
 - `resources`: `groupsToResources(groups, phase.groupIds)` — only the enabled groups in this phase, sorted by `order`
 - `datesAboveResources: true` — date headers above group (resource) headers
-- `slotMinTime: '07:00'`, `slotMaxTime: '19:00'`, `slotDuration: '00:15:00'`, `snapDuration: '00:15:00'` — the grid starts **on the hour** so `slotLabelInterval` produces 08:00, 09:00 … instead of the old 07:30, 08:30 …; the outer scroller opens at 08:00 on load
+- `slotMinTime` / `slotMaxTime` come from **`gridWindow(state)`** (`timeUtils`), not from constants — see [The hours the grid draws](#the-hours-the-grid-draws). `slotDuration: '00:15:00'`, `snapDuration: '00:15:00'`. The window's start is always **on the hour** so `slotLabelInterval` produces 08:00, 09:00 … instead of 07:45, 08:45 …; the outer scroller opens at 08:00 on load, at an offset measured from the window rather than a hardcoded four slots
 - `businessHours: { startTime: '08:00', endTime: '17:00' }`
 - `locale: deLocale` — German date formatting
 - `editable: true`, `droppable: true` (accepts chips from sidebar)
@@ -376,6 +439,36 @@ The rules come from `previewClash(state, candidate)` in the **detector**, not fr
 
 **Row height.** `.fc-timegrid-slot { height: var(--wk-slot-h) !important }` — plus `.fc-timegrid-slots table { line-height: 0 }`, because even an empty table cell inherits a line-height strut and that strut put a ~25px floor under every row, silently swallowing the compact density. The calendars are keyed on the density in App.svelte so a change re-mounts them: FullCalendar caches the slot height it measured at render and `updateSize()` will not go back under it.
 
+### The hours the grid draws
+
+One window for the **whole WK**, in `AppState.gridStartTime` / `gridEndTime`, and
+one function that resolves it: `gridWindow(state)` in `timeUtils`. Not one window
+per Phase — the same hour has to sit at the same height in every segment drawn
+beside it, or two halves of the same week stop lining up.
+
+`null` on either end means *derive that end from the plan*:
+
+- the window always contains the training day (08:00–17:00) **and** every
+  Lektion, Pause and Programmpunkt in the plan;
+- plus **one hour above** and **half an hour below** that, as room to drag into
+  and to click in. Without the margin the day is walled in at both ends: a block
+  cannot be dragged past the last slot and an empty cell before the first one
+  cannot be clicked, so an 07:30 Antreten could never be created at all;
+- the start is snapped **down to the hour** (`slotLabelInterval` counts from
+  `slotMinTime`); the end has no such constraint and keeps its half hour.
+
+The grid used to draw a hardcoded 07:00–19:00 — 48 slots, ~1207px at normal
+density in a viewport of ~834px — for a week that runs 08:00–17:00. Twelve of
+those slots were empty on every lane of every day and made up most of the
+distance the user had to scroll. The sample week now draws 07:00–17:30: 42
+slots. Trimming the last six is what the **Tagesraster** setting in Konfiguration
+› Plan & Daten is for — a plan whose hours are known does not need the margin the
+derivation has to leave.
+
+Changes reach FullCalendar through `setOption`, not a re-mount: the window moves
+on ordinary edits, and rebuilding both calendars mid-edit would be far more
+disruptive than the row-height case that keys them on density.
+
 ### Drag from sidebar
 `Sidebar.svelte` initialises a FullCalendar `Draggable` on the chip container. When a chip is dropped onto any phase calendar, `handleEventReceive` fires.
 
@@ -388,6 +481,27 @@ The rules come from `previewClash(state, candidate)` in the **detector**, not fr
 
 ### Click on empty cell
 `handleDateClick` opens a subject-picker popup (`.place-popup`) so users can schedule without dragging. It lists Themen (drawn even when empty, with a link into Konfiguration — on a fresh plan this picker was otherwise a dead end offering only the two Pausen), then Programmpunkte and Pausen where those exist, and ends with **«+ Neuer Programmpunkt …»** — the one thing the picker *creates* rather than places. See **Programmpunkte** below.
+
+### Selecting from the header
+
+A click on a **day header** selects every Lektion of that day, on a **lane
+header** every Lektion of that Gruppe on that day, and on an **hour in the time
+gutter** everything running at that time. Modifiers match the cards: a plain
+click replaces the selection, Ctrl/Cmd or Shift adds to it. All three respect the
+toolbar's view filter, exactly as Ctrl+A does — what is selected is what is
+drawn — and none of them filters by kind: a Pause and a Programmpunkt in the
+column are in the column.
+
+The handler is **delegated on `calendarEl`** (`handleHeaderClick`), because FC
+rebuilds its header on every refetch and per-cell listeners would have to be
+re-attached each time. Day and lane are read off the cell's own `data-date` /
+`data-resource-id`; the hour off the slot's `data-time`.
+
+The gutter is the one of the three that is **not** scoped to its own phase: it
+is drawn once for the whole week — only the leftmost open calendar shows it (see
+[Folding a phase](#folding-a-phase)) — so scoping it to that phase would mean a
+WK hour could never be selected at all. It therefore selects across every phase
+on screen, and folding a phase away takes it out of the selection too.
 
 ### Event click
 `handleEventClick` sets `selectedEventId` → opens `EventModal`.
@@ -411,6 +525,38 @@ Applied from the DOM rather than rebuilt through the store: `wk-selected` (selec
 **The ring and the hover lift are separate shadow layers** (`--wk-ring` and `--wk-lift`, composed in one `box-shadow`). Written as plain `box-shadow` declarations, `:hover` outranks `.wk-selected` on specificity, so pointing at a selected card replaced its ring with the plain hover shadow — the card you were about to act on was the one that looked unselected. `:hover:not(.wk-selected)` keeps the z-index bump off selected cards for the same reason.
 
 Card content by band: title (clamped 1–3 lines, `hyphens: auto` with `lang="de-CH"` on the document — German compounds hyphenate or they clamp, they never break mid-word), the time range, teacher initials on their colour, the room pill. Flags: multi-group, overridden-from-default, conflict. `eventDidMount` also writes a full `title` tooltip, since a clamped title still has to be readable somewhere.
+
+### The name on a narrow lane
+
+Below ~92px of lane the card drops the full name for `Subject.shortName`, and an
+empty `shortName` is **derived** — `subjectShort()` in `utils/format.ts`.
+
+It used to cut at the first separator and stop, on the argument that anything
+shorter was a judgement call and so the user's. But «Kartenlesen, Signaturen»
+and «Karteneröffnung/-führung» both survive that cut at fifteen characters, and
+the band exists because ~68px of lane holds about six — so both were ellipsised
+and both read «Karten…». Three such pairs collide in a twenty-Thema plan
+(Kartenlesen/Karteneröffnung, Schulung Kader/Schulung Anlage, Lagebericht/
+Lagezentrum), and the judgement was never offered to the user either: no screen
+showed the label a Thema would actually get.
+
+So it derives like `roomShort` — keep something from **every** token, because the
+tail is what tells two Themen apart:
+
+    one token      → first ten characters      Leitungsbau → "Leitungsba"
+    two tokens     → 4 + 3, capitalised        Schulung Kader → "SchuKad"
+    three or more  → 3 + initials              Funk Grundlagen Praxis → "FunGP"
+
+Two Themen can still start alike, and nothing can derive them apart —
+`collidingSubjectShorts()` finds those pairs (comparing the first six characters,
+which is what the narrowest lane shows) and **Konfiguration › Themen flags both
+sides** with a *Kürzel* tag and a warning in the detail pane. It is a fact the
+app can see and the user cannot.
+
+The Kürzel field previews the result in the card's own type («Auf schmalen
+Karten: KartFüh»), and every sidebar chip tooltip ends with `· Karte: KartFüh`
+where the two differ. The chip itself does not print it: pass 3 (`S3`) spent a
+finding recovering that row for the name.
 
 ### What the card drops first
 
@@ -445,9 +591,33 @@ clipping it.
 
 ---
 
+## One editor, and the one case it cannot serve
+
+There used to be two editors for a card: the quick-edit popover on a single
+click and a full-screen modal on a double click. They held the same three
+fields, both autosaved, and which one you got was decided by how many times you
+clicked. The modal's only additions were the placement (Tag, Gruppe, Start) and
+two actions the popover's footer already had.
+
+**The popover is the editor.** It carries the placement now, both click counts
+open it, and Enter on a focused card opens it too — the same card and the same
+intent no longer answered differently by mouse and keyboard.
+
+**The modal is what opens when there is no card to anchor a popover to**, which
+is the one job a card-anchored panel cannot do:
+
+- an **orphan** — a Lektion on a day/lane combination no Phase draws, so nothing
+  renders it. It is opened from the Probleme panel's *Ausserhalb der Phasen*
+  section, which is the only place it appears at all;
+- a Lektion reached by **Enter** while its card is not rendered: inside a folded
+  Phase that has not been expanded yet, or filtered off the grid by the toolbar.
+
+That is also why the modal's placement fields can move a Lektion in *time* as
+well as day and lane: an orphan is on no calendar to be dragged.
+
 ## Event Modal (`EventModal.svelte`)
 
-Opens as a `<dialog>` when `selectedEventId` is set.
+Opens as a `<dialog>` when `selectedEventId` is set — see above for when that is.
 
 Editable fields:
 - **Day** (select, Mon–Fri)
@@ -543,12 +713,14 @@ Phasen* section that is no conflict at all, its own subline counts Probleme,
 and the badge that opens it says Probleme. The file keeps its name; the
 *Konflikt* cards inside it keep theirs.
 
-**It floats over the grid rather than taking width from it.** `SidePanel` gets an
-`overlay` prop; App wraps it in a 40px `.right-dock` that keeps the collapsed
-rail in the flex row while the open panel is absolutely positioned out of it.
-Docking it in flow cost the calendar ~268px at exactly the moment the cards had
-to be readable — "Persönliche Ausrüstung" became "Persönl iche…" the instant the
-panel opened.
+**It is the second tab of the one side dock, not a second panel.** It used to
+float over the grid from a 40px right-hand rail, because docking it in flow cost
+the calendar another ~268px at exactly the moment the cards had to be readable.
+Floating traded that for something worse: the panel that names a conflict was
+drawn *on top of* the lanes the conflict is in, so "show me" pointed underneath
+it. Themen and Probleme are both read against the grid, never against each
+other, and only one of them is ever the job at hand — so they share `WorkDock`'s
+248px and the grid is never covered.
 
 **The header names both units.** `getIssueCount()` counts clash *relations*: one
 badly placed Lektion overlapping two others on both a Ausbildner and a Raum
@@ -575,7 +747,7 @@ Shows:
 
 ## Reports (`ReportPanel.svelte`, `src/reports/reports.ts`)
 
-A full-screen overlay (not a `<dialog>`) at a **fixed 86vh**, with four tabs: Abdeckung, Gruppenpläne, Ausbildnerpläne, Raumpläne. Three of them are the documents a WK hands out; Abdeckung is read here and acted on here. Its **Drucken** button hands the current tab to the PDF dialog and is hidden on the Abdeckung tab — see [Printing](#printing). The panel owns its tab after mount, so it reports the live one back through `ontab`; Ctrl+P has to print what is on screen.
+A full-screen overlay (not a `<dialog>`) at a **fixed 86vh**, with five tabs: Abdeckung, Abweichungen, Gruppenpläne, Ausbildnerpläne, Raumpläne. Three of them are the documents a WK hands out; Abdeckung and Abweichungen are read here and acted on here. Its **Drucken** button hands the current tab to the PDF dialog and is shown only for the tabs in `PRINTABLE_REPORT_TABS` — see [Printing](#printing). The panel owns its tab after mount, so it reports the live one back through `ontab`; Ctrl+P has to print what is on screen.
 
 ### Coverage tab
 `buildCoverage(state)` → one section per phase. Each section lists the **Themen** that belong to that phase (`isCounted`), and for each *counted* lane (`countedGroups` — a group with `excludeFromCoverage` has no column here) shows how many times that subject has been placed. Missing combinations are highlighted. Pausen, Programmpunkte and `optional` Themen are excluded: none carries a per-group Soll — a Pause is placed ad hoc rather than attended, and a Programmpunkt happens once for the whole course. They still appear in the group, teacher and room plans, and a Programmpunkt still counts towards a group's `lessonMinutes` (a Begrüssung is time the group is occupied; only breaks are left out of that total).
@@ -610,6 +782,35 @@ Splitting is free: 2×45 and 1×90 both deliver a 90-minute subject and both rea
 
 `subjectPhases(state, subjectId)` decides where a subject is judged: an explicit `subject.phaseId` wins; otherwise the phases it is actually placed in; otherwise (nothing placed yet) the widest phase. The `phaseId` control exists because the fallback guesses — a Kader-only lesson would show as 0/3 against the group lanes until first placed.
 
+### Deviations tab (Abweichungen)
+
+`buildDeviations(state)` → one block per Thema, listing every Lektion that no
+longer matches its Themenvorgabe, with **Vorgabe → Ist** for each changed field.
+The sheet answers a question the other four cannot: *did Sanität really go to
+Anna, and did the Funk lesson really move into the Turnhalle.*
+
+What counts as changed is **`eventOverrides` — the same predicate that puts the
+pencil on a card**. If the two disagreed, the report would quietly be about
+something other than what the calendar marks. That also fixes the three fields:
+Ausbildner, Raum, Dauer.
+
+**Themen only.** A Pause or a Programmpunkt has no rotation to deviate from — a
+Mittagessen that runs 45 minutes today *is* the plan, not a change to it. A
+Lektion whose every lane is switched off is skipped as everywhere else
+(`isEventActive`).
+
+**Reine Teilungen are hidden by default.** Cutting a 3 h Thema into 2 h + 1 h
+marks both halves as "Dauer weicht ab", correctly, and produces two rows that say
+nothing: the Gruppe got its 3 h either way. `splitOnly` is set when Dauer is the
+*only* changed field **and** every lane the Lektion sits on still totals exactly
+the subject's duration — so a shortened block that leaves the Gruppe 30 minutes
+short stays, and so does a split half that also changed its Ausbildner. The
+filter is a toggle in the tab strip naming its own count, because "why is my
+split Lektion missing" has to be answerable.
+
+Screen-only: it has no printed counterpart, and each row carries an eye button
+that closes the overlay and reveals the Lektion on the grid.
+
 ### Teacher plans tab
 `buildTeacherPlans(state)` → one section per teacher. Shows all events that teacher is involved in (as assigned teacher or as stand-in), grouped by subject. Entries can be:
 - `'teaching'`: the teacher is on this event
@@ -643,7 +844,7 @@ Chips are made draggable via FullCalendar's `Draggable` class, attached to the c
 
 ## Config Panel (`ConfigPanel.svelte` + `components/config/`)
 
-A `<dialog>` with six tabs (Gruppen, Phasen, Ausbildner, Räume, Themen, Plan & Daten) and a **fixed height (82vh)** — a short tab used to shrink the dialog and move the tab strip out from under the pointer mid-click. Each tab opens with a one-line summary and an ⓘ that expands the full explanation, rather than re-reading a paragraph on every visit. Groups and Phases are single-column tables held in `ConfigPanel.svelte`. Teachers, Rooms and Subjects are composed from:
+A `<dialog>` with seven tabs (Einrichtung, Gruppen, Phasen, Ausbildner, Räume, Themen, Plan & Daten) and a **fixed height (82vh)** — a short tab used to shrink the dialog and move the tab strip out from under the pointer mid-click. Each tab opens with a one-line summary and an ⓘ that expands the full explanation, rather than re-reading a paragraph on every visit. Groups and Phases are single-column tables held in `ConfigPanel.svelte`. Teachers, Rooms and Subjects are composed from:
 
 - `config/MasterDetail.svelte` — the generic list + add-row + detail-pane scaffold, parameterised by a `row` snippet and a `detail` snippet.
 - `config/ColorPicker.svelte` — a visible swatch that opens a curated 18-colour ramp plus a custom well. Colour used to be hidden behind clicking an avatar, with no affordance at all, and the raw OS picker let people choose colours no card could survive.
@@ -653,6 +854,29 @@ A `<dialog>` with six tabs (Gruppen, Phasen, Ausbildner, Räume, Themen, Plan & 
 - `config/AvailabilityEditor.svelte`, `config/GoalsEditor.svelte` — see Availability and Subjects.
 - The **detail footer is sticky** (`position: sticky; bottom: 0` inside the scrolling `.detail-form`), so Create/Delete stays reachable without scrolling past the optional half of the form.
 - `src/styles/config-ui.css` — the shared visual language (`.list-panel`, `.detail-form`, `.section`, `.option-row`, `.picker-chip`, …), imported from `app.css` because these classes are used across several components.
+
+### Einrichtung tab
+The landing tab, and the answer to *what do I do first*. Five rows, one per step
+of `setupSteps()` (`src/state/setup.ts`), in the order the steps are done:
+Gruppen, Phasen, Ausbildner, Räume, Themen. A row is the whole link — its mark,
+its label, its count and its way in are one target, and it switches `activeTab`
+locally rather than posting a `requestConfig` the already-mounted panel would
+ignore. An **open** row says why the thing matters ("Ohne sie prüft nichts auf
+Konflikte"); a **done** row says what is in the list (the first three names, the
+phase day ranges, the Themen/Programmpunkte/Pausen breakdown), which is what
+keeps the tab worth opening once the setup is over: it is then the one screen
+that answers *what is in this plan*. The Phasen row shows `phaseWarning` instead
+of either when the week is not covered.
+
+Below the steps, two things that are deliberately **not** steps: the **WK-Woche**
+(`createDefaultState` picks the coming Monday, which is often already right, and
+nothing records whether anyone looked at it — so it is stated and changeable,
+never ticked) and, while `isPristineState`, **Beispielwoche laden**.
+
+`setupSteps()` is pure and derived — no flag in `AppState`, so no migration and
+nothing to go stale after an import. It is also read by the tab strip's counts
+and by the toolbar's dot; a disagreement between the three is the kind of bug
+nobody reports.
 
 ### Groups tab
 Table with a drag handle (rows *are* the columns of the timetable, so dragging them is the matching gesture — `moveGroupToIndex`, one undo entry), **Aktiv** toggle, label input, ▲/▼ for the keyboard, **Abdeckung** toggle, delete.
@@ -670,7 +894,7 @@ Quick-add row at the foot of the list. List on left (coloured swatch, `blocked` 
 
 ### Subjects tab
 List on left (colour dot + a `Pause` / `Programmpunkt` row tag), alphabetical, Themen → Programmpunkte → Pausen. The detail pane has two sub-tabs, because how a subject is *scheduled* and what it is *about* are consulted at different moments and stacking them pushed the create button below the fold:
-- **Planung** — Bezeichnung (name + colour swatch), Vorgaben (Ausbildner picker grid, Raum select, Dauer presets + numeric input — the Dauer hint says it is also the per-group target), Art (Lektion/Programmpunkt/Pause, Einzelne Gruppe/Alle Gruppen), Erweitert (Belongs-to-phase select — shown for Lektion only, since it is a coverage setting), and a Platzierung panel. The Art control is also the escape hatch both ways: a Thema made by mistake can become a Programmpunkt, and a Programmpunkt that turns out to be part of the rotation can become a Thema.
+- **Planung** — Bezeichnung (name + colour swatch), Vorgaben (Ausbildner picker grid, Raum select, Dauer presets + numeric input — the Dauer hint says it is also the per-group target), Art (Lektion/Programmpunkt/Pause, Einzelne Gruppe/Alle Gruppen), Erweitert (Wer besucht es, and the belongs-to-phase select — both shown for Lektion only, since both are coverage settings), and a Platzierung panel. The Art control is also the escape hatch both ways: a Thema made by mistake can become a Programmpunkt, and a Programmpunkt that turns out to be part of the rotation can become a Thema.
 - **Inhalt** — Lernziele (row editor) and Notizen (textarea). The tab carries a count badge.
 
 Autosaved.
@@ -719,28 +943,53 @@ empty, and the empty-cell picker offered only Mittagessen and Pause, while the
 grid's empty state told the user to drag "ein Thema" out of a panel that showed
 none.
 
-Three surfaces now carry the same way forward, all of them routing through
-`requestConfig('subjects', { createSubject: true })`:
+Three surfaces carry the way forward. The first two route through
+`requestConfig('subjects', { createSubject: true })`; the third points at the
+whole setup rather than at one step of it:
 
 - the sidebar's THEMEN section, which is always rendered, with "Noch keine Themen · **Erstes Thema anlegen**";
 - the empty-cell placement picker, which always lists a Themen group;
-- the grid's empty state, which swaps its copy for a titled call to action while no non-break subject exists.
+- the grid's empty state, which while no non-break subject exists reads «Dieser Plan ist noch leer» and points at **Einrichtung öffnen** rather than at Themen alone.
 
 `ConfigPanel` takes `initialTab` and `createSubject` so it opens on Themen with a
 blank draft. The grid hint is anchored beside the sidebar (and outside
 `.phase-scroll`, or it scrolls under the sticky day headers) rather than centred
 three phases away behind a lone ← .
 
-**Or load the sample plan.** The same empty-grid hint, and the Plan & Daten tab,
-also offer "Beispieldaten laden" (`loadSampleData()` in the store, backed by
+**The order, not just the destination.** Naming Themen was one step of three
+presented as the whole job: a Thema picks its Vorgaben from Ausbildner and Räume
+that do not exist yet, and nothing said so. Four surfaces now carry that:
+
+- the **Einrichtung** tab (#28a), which lists all five steps and their state;
+- the panel's **landing tab** — Einrichtung while `setupComplete()` is false,
+  Gruppen once it is true. It used to always open on Gruppen, the one tab a
+  fresh plan has already filled in;
+- **counts on the tab strip** (`Ausbildner 8`, `Räume 0`), a zero in the warning
+  colour;
+- a **dot on the toolbar's Konfiguration button** while any step is open, with
+  the open steps named in its tooltip and an `aria-live` line beside it. It
+  resolves itself, so unlike the export-staleness chip next to it, it has no ×.
+
+**No empty list is a dead end.** `SubjectDetail` used to *hide* its Ausbildner
+and Raum fields while those lists were empty, and the two event editors printed
+"Keine Ausbildner erfasst." with no verb. Each now carries a link to the tab
+that fills the list — all of them: `onnavigate` inside the Konfiguration (a callback, because
+the panel is mounted once and reads `initialTab` under `untrack`), and
+`requestConfig` from the popover and the modal, which close themselves on the
+way.
+
+**Or load the sample plan.** The empty-grid hint, the Einrichtung tab and the
+Plan & Daten tab all offer "Beispieldaten laden" (`loadSampleData()` in the store, backed by
 `createSampleState()` in `src/state/sampleData.ts`) — a full demonstration week
 (Kader days, a group rotation, breaks, a Programmpunkt, an override, a
 Stellvertretung and one deliberate conflict) so a new visitor can see the app
-doing something before entering any data of their own. Both buttons are gated
+doing something before entering any data of their own. All three are gated
 by `isPristineState()` (`src/state/persistence.ts`: no teachers, no rooms, no
 events, no subject beyond the two default Pausen) — loading the sample
 `replacePlan`s the whole state and clears undo, so it only offers itself while
-there is nothing of the user's to overwrite.
+there is nothing of the user's to overwrite. `isPristineState` and
+`setupComplete` are close but not the same question: the first asks *is there
+anything of yours to lose*, the second *can this be planned yet*.
 
 ## Losing the plan
 
@@ -983,6 +1232,38 @@ schema-mismatch prompt in `persistence.ts` also stays — it runs before the app
 exists, so there is no undo stack to fall back on.
 
 ## Keyboard Shortcuts
+
+**The grid is one tab stop.** FullCalendar gives every event `tabindex="0"`, so a
+56-Lektion week put 56 stops between the phase labels and everything after them.
+A **roving tabindex** (`paintStates` in `Calendar.svelte`) leaves exactly one card
+tabbable: the selected one, or the first card in the document when nothing is
+selected — decided from the store rather than from painted classes, so it does
+not depend on which Phase repaints first, and so the two calendars cannot each
+claim a stop. Focusing a card **selects** it, which is what makes the shortcuts
+below apply to whatever Tab just landed on.
+
+Arrow keys are deliberately **not** rebound to step between cards. In this app
+they move the selected block by a slot or a day, which is the fastest thing on
+the keyboard; the alternatives are worse than the gap (Alt+Arrow is Back/Forward
+in the browser, and re-binding the arrows would break the interaction the app is
+fastest at). Reaching a *different* card is done from the Themen chips, the
+Probleme rows or a coverage cell, all of which select and reveal.
+
+**Screen readers.** Each card carries `role="button"` and an `aria-label` naming
+the Thema, the day and time, the lane, the Ausbildner, the Raum and the Konflikt
+— the same sentence its `title` tooltip has always carried, which used to be
+built and thrown away. Without it a card was announced as bare text and a card in
+a hard conflict produced the same node as a clean one. The three tab strips
+(`WorkDock`, `ReportPanel`, `ConfigPanel`) are real tab widgets: `aria-controls` /
+`role="tabpanel"` pairs, one tab stop each, ← → / Home / End between tabs, and
+the dock's fold button moved *out* of its tablist. The toolbar's issue badge has
+a visually hidden `aria-live="polite"` line, so the number everyone watches is
+announced when it drops.
+
+**Focus is visible everywhere.** One `:focus-visible` rule in `app.css` covers
+every button, link and custom control; it used to be styled in six places and
+everything else fell back to whatever daisyUI's reset left behind, which on a
+`<button>` with a custom class is nothing.
 
 **Dialog focus.** Every dialog focuses its own panel (`tabindex="-1"`), not the
 first focusable descendant — which was always the ✕, so a keyboard user opened

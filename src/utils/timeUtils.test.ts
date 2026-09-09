@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   eventGroupIds, eventInPhase, orphanEvents, phaseForDay, buildFCEvents, durationBand,
   snapToSlot, addMinutesToTime, timeDiffMinutes, eventOverrides, fullDateLabel,
-  clampGroupDelta,
+  clampGroupDelta, describeConflicts,
+  gridWindow,
 } from './timeUtils';
 import { getContrastColor } from './colorUtils';
 import { escapeHtml } from './format';
@@ -256,5 +257,99 @@ describe('eventGroupIds for an all-lanes placement', () => {
     const state = makeState({ subjects: [...makeState().subjects, makeSubject({ id: 'l', kind: 'lesson', isMultiGroup: true })] });
     expect(eventGroupIds(state, makeEvent({ subjectId: 'l', groupId: ALL, dayIndex: 2 })))
       .toEqual(['g1', 'g2', 'g3']);
+  });
+});
+
+describe('gridWindow', () => {
+  it('contains the training day even when the plan is empty', () => {
+    // A fresh plan has nothing to derive from, and a grid narrower than the day
+    // would leave the first Lektion nowhere to land.
+    const w = gridWindow(makeState({ events: [] }));
+    expect(w.start).toBe('07:00');
+    expect(w.end).toBe('17:30');
+  });
+
+  it('opens earlier for a Lektion before the training day, snapped to the hour', () => {
+    // The start must stay on the hour: slotLabelInterval counts from it, so a
+    // window opening at 06:45 would label 06:45, 07:45, 08:45.
+    const w = gridWindow(makeState({
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, startTime: '06:45', endTime: '07:30' })],
+    }));
+    expect(w.start).toBe('05:00');
+  });
+
+  it('runs later for an evening Lektion, with room to drag past it', () => {
+    const w = gridWindow(makeState({
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, startTime: '18:00', endTime: '19:30' })],
+    }));
+    expect(w.end).toBe('20:00');
+  });
+
+  it('never shrinks below the training day for a short plan', () => {
+    const w = gridWindow(makeState({
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, startTime: '09:00', endTime: '10:00' })],
+    }));
+    expect(w.start).toBe('07:00');
+    expect(w.end).toBe('17:30');
+  });
+
+  it('lets an explicit setting override either end on its own', () => {
+    const both = gridWindow(makeState({ gridStartTime: '08:00', gridEndTime: '17:00' }));
+    expect(both).toEqual({ start: '08:00', end: '17:00' });
+
+    // The other end still follows the plan.
+    const startOnly = gridWindow(makeState({ gridStartTime: '08:00' }));
+    expect(startOnly.start).toBe('08:00');
+    expect(startOnly.end).toBe('17:30');
+  });
+
+  it('refuses to collapse when the two ends are set the wrong way round', () => {
+    // Typing the pair one field at a time passes through exactly this state.
+    const w = gridWindow(makeState({ gridStartTime: '14:00', gridEndTime: '09:00' }));
+    expect(w.start).toBe('14:00');
+    expect(w.end).toBe('15:00');
+  });
+});
+
+/**
+ * The chip strip both event editors draw. It lived twice — once in the popover,
+ * once in the modal — as the same ladder over three entity lists.
+ */
+describe('describeConflicts', () => {
+  const state = makeState({
+    events: [makeEvent({
+      id: 'e1', groupId: 'g1',
+      conflicts: [
+        { kind: 'teacher', resourceId: 't1', collidingEventIds: ['e2'] },
+        { kind: 'room', resourceId: 'r1', collidingEventIds: ['e2'] },
+        { kind: 'group', resourceId: 'g1', collidingEventIds: ['e3'] },
+        { kind: 'teacher-absent', resourceId: 't2', collidingEventIds: [] },
+        { kind: 'room-blocked', resourceId: 'outside', collidingEventIds: [] },
+      ],
+    })],
+  });
+  const ev = state.events[0]!;
+
+  it('names each kind against the right list', () => {
+    expect(describeConflicts(state, ev).map(c => c.name)).toEqual([
+      'Anna Müller', 'Seminarraum 1', 'G1', 'Beat Zwahlen', 'Outside',
+    ]);
+  });
+
+  it('marks hardness from HARD_CONFLICT_KINDS, not from "is it a window"', () => {
+    // teacher-absent is hard and room-blocked is soft: the two availability
+    // kinds do not travel together.
+    expect(describeConflicts(state, ev).map(c => c.hard))
+      .toEqual([true, false, true, true, false]);
+  });
+
+  it('keeps the counterparts, and leaves them empty where there are none', () => {
+    const others = describeConflicts(state, ev).map(c => c.others);
+    expect(others).toEqual([['e2'], ['e2'], ['e3'], [], []]);
+  });
+
+  it('is empty for an unannotated or missing Lektion', () => {
+    expect(describeConflicts(state, makeEvent({ groupId: 'g1' }))).toEqual([]);
+    expect(describeConflicts(state, null)).toEqual([]);
   });
 });

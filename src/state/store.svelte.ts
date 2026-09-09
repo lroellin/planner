@@ -14,8 +14,9 @@ import { detectConflicts, attachConflicts } from '../conflicts/detector';
 import { toast, flashEvents } from './ui.svelte';
 import {
   timeDiffMinutes, addMinutesToTime, formatDate, orphanEvents, snapToSlot, phaseForDay,
-  phaseGroups,
+  phaseGroups, eventInPhase, eventGroupIds,
 } from '../utils/timeUtils';
+import { teacherLoad, roomLoad } from '../reports/reports';
 
 // ─── Core reactive state ──────────────────────────────────────────────────────
 
@@ -320,22 +321,27 @@ export function copyEventToLanes(id: ID, groupIds: ID[]): void {
   flashEvents(copies.map(c => c.id));
 }
 
-/** The lanes of an event's phase that do not already hold it at that time. */
+/**
+ * The lanes of an event's phase that do not already hold it at that time.
+ *
+ * "Already holds it" is asked through `eventGroupIds`, not by comparing
+ * `groupId` literally: an «alle Gruppen» placement of the same Thema at the same
+ * hour reaches this lane too, and the literal test could not see it — so the
+ * copy dialog offered a lane that was going to end up with the block twice.
+ */
 export function lanesWithoutEvent(id: ID): Group[] {
   const ev = _state.events.find(e => e.id === id);
   if (!ev || ev.groupId === ALL_GROUPS) return [];
   const phase = phaseForDay(_state, ev.dayIndex);
   if (!phase) return [];
-  return phaseGroups(_state, phase).filter(g =>
-    g.id !== ev.groupId &&
-    !_state.events.some(other =>
-      other.id !== ev.id &&
-      other.subjectId === ev.subjectId &&
-      other.groupId === g.id &&
-      other.dayIndex === ev.dayIndex &&
-      other.startTime === ev.startTime,
-    ),
-  );
+  const taken = new Set<ID>();
+  for (const other of _state.events) {
+    if (other.id === ev.id) continue;
+    if (other.subjectId !== ev.subjectId) continue;
+    if (other.dayIndex !== ev.dayIndex || other.startTime !== ev.startTime) continue;
+    for (const gid of eventGroupIds(_state, other)) taken.add(gid);
+  }
+  return phaseGroups(_state, phase).filter(g => g.id !== ev.groupId && !taken.has(g.id));
 }
 
 /**
@@ -472,13 +478,17 @@ export function updateTeacher(id: ID, patch: Partial<Omit<Teacher, 'id'>>, opts:
   }, { label: `${_state.teachers.find(t => t.id === id)?.name ?? 'Ausbildner'} bearbeiten`, ...opts });
 }
 
-/** Lektionen this Ausbildner is named on — what a deletion takes them off. */
+/**
+ * Lektionen this Ausbildner is named on — what a deletion takes them off.
+ *
+ * Through `teacherLoad`, which is the same sum the Konfiguration pane prints
+ * two rows above the delete button. This carried its own inline copy of the
+ * `'inherit'` resolution and no `isEventActive` filter, so the pane said
+ * "2 Lektionen" and the toast that followed the click said "von 3 Lektionen
+ * entfernt" — about the same Ausbildner, in the same second.
+ */
 export function eventCountForTeacher(id: ID): number {
-  return _state.events.filter(ev =>
-    ev.teacherIds === 'inherit'
-      ? (_state.subjects.find(s => s.id === ev.subjectId)?.defaultTeacherIds ?? []).includes(id)
-      : ev.teacherIds.includes(id),
-  ).length;
+  return teacherLoad(_state, id).count;
 }
 
 export function removeTeacher(id: ID): void {
@@ -517,13 +527,9 @@ export function updateRoom(id: ID, patch: Partial<Omit<Room, 'id'>>, opts: Mutat
   }, { label: `${_state.rooms.find(r => r.id === id)?.name ?? 'Raum'} bearbeiten`, ...opts });
 }
 
-/** Lektionen booked into this Raum — what a deletion un-rooms. */
+/** Lektionen booked into this Raum — what a deletion un-rooms. See above. */
 export function eventCountForRoom(id: ID): number {
-  return _state.events.filter(ev =>
-    ev.roomId === 'inherit'
-      ? _state.subjects.find(s => s.id === ev.subjectId)?.defaultRoomId === id
-      : ev.roomId === id,
-  ).length;
+  return roomLoad(_state, id).count;
 }
 
 export function removeRoom(id: ID): void {
@@ -682,11 +688,16 @@ export function updatePhase(id: ID, patch: Partial<Omit<Phase, 'id'>>): void {
   }, { label: `Phase ${_state.phases.find(p => p.id === id)?.label ?? ''} bearbeiten`.replace('  ', ' ') });
 }
 
-/** Events that would stop being drawn if this phase went away. */
+/**
+ * Events that would stop being drawn if this phase went away — which is the
+ * question `eventInPhase` answers. Filtering on the day range alone also counted
+ * Lektionen on lanes the phase does not draw, so the confirm over-stated what a
+ * deletion would cost.
+ */
 export function eventCountForPhase(id: ID): number {
   const phase = _state.phases.find(p => p.id === id);
   if (!phase) return 0;
-  return _state.events.filter(ev => ev.dayIndex >= phase.startDay && ev.dayIndex <= phase.endDay).length;
+  return _state.events.filter(ev => eventInPhase(_state, ev, phase)).length;
 }
 
 export function removePhase(id: ID): void {
@@ -763,6 +774,19 @@ export function setWkStartDate(date: string): void {
   const monday = snapToMonday(date);
   if (!monday || monday === _state.wkStartDate) return;
   setState({ ..._state, wkStartDate: monday }, { label: 'Woche ändern' });
+}
+
+/**
+ * The hours the grid draws, for the whole WK. `null` on either end means
+ * "derive that end from the plan" — see `gridWindow`.
+ *
+ * One undo entry per pick rather than a coalesced run: the two fields are set
+ * once and deliberately, unlike a colour drag.
+ */
+export function setGridWindow(patch: { gridStartTime?: string | null; gridEndTime?: string | null }): void {
+  const next = { ..._state, ...patch };
+  if (next.gridStartTime === _state.gridStartTime && next.gridEndTime === _state.gridEndTime) return;
+  setState(next, { label: 'Tagesraster ändern' });
 }
 
 // ─── Export freshness ─────────────────────────────────────────────────────────

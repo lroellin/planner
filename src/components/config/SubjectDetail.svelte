@@ -2,7 +2,7 @@
   import { addSubject, updateSubject, removeSubject, getState } from '../../state/store.svelte';
   import { coverageForSubject, missingLanesForSubject } from '../../reports/reports';
   import { formatDuration, orderedPhases } from '../../utils/timeUtils';
-  import { subjectShort } from '../../utils/format';
+  import { collidingSubjectShorts, subjectShort } from '../../utils/format';
   import ColorPicker from './ColorPicker.svelte';
   import GoalsEditor from './GoalsEditor.svelte';
   import Icon from '../Icon.svelte';
@@ -16,9 +16,16 @@
     oncreated: (id: string) => void;
     oncancel: () => void;
     ondeleted: (index: number) => void;
+    /**
+     * Switch the Konfiguration to another tab. A callback rather than
+     * `requestConfig`: the panel around this form is mounted once and reads its
+     * `initialTab` under `untrack`, so a request would open nothing new and
+     * change nothing here.
+     */
+    onnavigate?: (tab: 'teachers' | 'rooms') => void;
   }
 
-  let { subject, draftColor, oncreated, oncancel, ondeleted }: Props = $props();
+  let { subject, draftColor, oncreated, oncancel, ondeleted, onnavigate }: Props = $props();
 
   const KIND_OPTIONS = [
     {
@@ -56,6 +63,27 @@
     },
   ];
 
+  /**
+   * `optional` used to be the one raw checkbox in this form, sitting under two
+   * settings that are segmented pairs — and it is the same shape of question as
+   * they are: who owes this Thema, not a feature being switched on. Naming both
+   * sides also puts the consequence on screen without flipping anything.
+   */
+  const COVERAGE_OPTIONS = [
+    {
+      value: false,
+      icon: 'check' as const,
+      title: 'Alle Gruppen',
+      sub: 'Jede Gruppe braucht dieses Thema — mit Zeile in der Abdeckung.',
+    },
+    {
+      value: true,
+      icon: 'ban' as const,
+      title: 'Nur einzelne Gruppen',
+      sub: 'Kein Soll pro Gruppe: keine Auswertungszeile, kein «fehlt noch» am Chip.',
+    },
+  ];
+
   const appState = $derived(getState());
   const phases = $derived(orderedPhases(appState));
 
@@ -86,6 +114,34 @@
 
   const contentCount = $derived(
     view.content.goals.length + (view.content.notes.trim() === '' ? 0 : 1),
+  );
+
+  /**
+   * What this Thema will actually say on a narrow lane, and whether another
+   * Thema says the same thing there.
+   *
+   * The derivation keeps something from every token, so most plans never see a
+   * collision — but two Themen that genuinely start alike have nothing for it
+   * to work with, and that is exactly the case where only the user can choose.
+   * The draft is folded into the list so a name typed at creation is checked
+   * against the plan before it is saved.
+   */
+  const cardLabel = $derived(subjectShort({ name: view.name, shortName: view.shortName }));
+  // The draft has no id yet, so it borrows one for the check.
+  const selfId = $derived(subject?.id ?? '__draft__');
+  const collisionIds = $derived(
+    collidingSubjectShorts([
+      ...appState.subjects.filter(s => s.id !== subject?.id),
+      { id: selfId, name: view.name, shortName: view.shortName },
+    ]),
+  );
+  const collides = $derived(view.name.trim() !== '' && collisionIds.has(selfId));
+  const collidesWith = $derived(
+    collides
+      ? appState.subjects
+          .filter(s => s.id !== selfId && collisionIds.has(s.id))
+          .map(s => `«${s.name}»`)
+      : [],
   );
 
   function set(patch: Partial<Omit<Subject, 'id'>>, coalesceKey?: string): void {
@@ -196,7 +252,14 @@
       </section>
     </div>
   {:else}
-  <div class="flex flex-col gap-5 pt-1">
+  <!-- L3: two columns once the dialog is wide enough.
+       The Thema form is the longest in the app and it ran down one ~400px
+       column inside a 720px pane, so Art, Erweitert and Platzierung sat below
+       the fold with 300px of unused width beside them. Ausbildner and Räume
+       have short forms and never showed it. Below ~900px it is one column
+       again, in the original order. -->
+  <div class="setup-cols">
+    <div class="setup-col">
 
     <section class="section">
       <h4 class="section-title">Bezeichnung</h4>
@@ -231,6 +294,20 @@
         <p class="field-hint">
           Leer lassen: dann wird es aus dem Namen abgeleitet und folgt einer Umbenennung.
         </p>
+        <!-- N2: nothing in the app used to show the label a Thema actually gets
+             on a narrow lane, so nobody could tell a Kürzel was needed. The
+             preview is the card's own type at the card's own size. -->
+        <p class="card-preview">
+          <span class="card-preview-label">Auf schmalen Karten:</span>
+          <span class="card-preview-chip" style="--pc: {view.color}">{cardLabel}</span>
+        </p>
+        {#if collides}
+          <p class="field-warn">
+            Gleiche Kartenbeschriftung wie {collidesWith.join(', ')}. Auf einer
+            schmalen Spalte sind die Karten nicht zu unterscheiden — ein eigenes
+            Kürzel trennt sie.
+          </p>
+        {/if}
       </div>
     </section>
 
@@ -239,6 +316,41 @@
          settings you actually reach for every day could not be seen at all. -->
     <section class="section">
       <h4 class="section-title">Vorgaben</h4>
+
+      <!-- Raum before Ausbildner: one line against four rows of chips. The
+           single-row field led with the taller one below it, so the Dauer
+           field underneath sat a picker-height away from the top of the
+           section for a Thema with eight Ausbildner. -->
+      {#if appState.rooms.length > 0}
+        <div class="form-field">
+          <span class="field-label">Raum</span>
+          <select
+            class="select select-bordered select-sm w-56"
+            value={view.defaultRoomId ?? ''}
+            onchange={(e) => {
+              const v = (e.currentTarget as HTMLSelectElement).value;
+              set({ defaultRoomId: v === '' ? null : v });
+            }}
+          >
+            <option value="">Keine Vorgabe</option>
+            {#each appState.rooms as r (r.id)}
+              <option value={r.id}>{r.name}</option>
+            {/each}
+          </select>
+        </div>
+      {:else}
+        <div class="form-field">
+          <span class="field-label">Raum</span>
+          <p class="field-hint">
+            Noch keine Räume erfasst.
+            {#if onnavigate}
+              <button class="link-cta" onclick={() => onnavigate?.('rooms')}>
+                Raum anlegen <Icon name="chevronRight" size={11} />
+              </button>
+            {/if}
+          </p>
+        </div>
+      {/if}
 
       {#if appState.teachers.length > 0}
         <div class="form-field">
@@ -266,24 +378,21 @@
             {/each}
           </div>
         </div>
-      {/if}
-
-      {#if appState.rooms.length > 0}
+      {:else}
+        <!-- The field used to be hidden outright while the list was empty, so
+             the one form where a first-time user would learn that a Thema has
+             a Ausbildner-Vorgabe said nothing at all — and offered no way to
+             make one. -->
         <div class="form-field">
-          <span class="field-label">Raum</span>
-          <select
-            class="select select-bordered select-sm w-56"
-            value={view.defaultRoomId ?? ''}
-            onchange={(e) => {
-              const v = (e.currentTarget as HTMLSelectElement).value;
-              set({ defaultRoomId: v === '' ? null : v });
-            }}
-          >
-            <option value="">Keine Vorgabe</option>
-            {#each appState.rooms as r (r.id)}
-              <option value={r.id}>{r.name}</option>
-            {/each}
-          </select>
+          <span class="field-label">Ausbildner</span>
+          <p class="field-hint">
+            Noch keine Ausbildner erfasst. Ohne sie prüft nichts auf Konflikte.
+            {#if onnavigate}
+              <button class="link-cta" onclick={() => onnavigate?.('teachers')}>
+                Ausbildner anlegen <Icon name="chevronRight" size={11} />
+              </button>
+            {/if}
+          </p>
         </div>
       {/if}
 
@@ -304,6 +413,10 @@
          names the state it is in: you had to flip it to learn what the other
          side was. As a pair of named options each setting reads as the choice
          it actually is. -->
+    </div>
+
+    <div class="setup-col">
+
     <section class="section">
       <h4 class="section-title">Art</h4>
 
@@ -364,21 +477,22 @@
         <!-- The other half of "not everyone owes this": a Programmpunkt is
              outside coverage because it happens *once*, this because only some
              groups sit it. The chip loses its «fehlt» badge either way. -->
-        <label class="opt-row">
-          <input
-            type="checkbox"
-            class="checkbox checkbox-sm"
-            checked={view.optional}
-            onchange={(e) => set({ optional: (e.currentTarget as HTMLInputElement).checked })}
-          />
-          <span class="opt-text">
-            <span class="opt-title">Zählt nicht zur Abdeckung</span>
-            <span class="opt-sub">
-              Nur einzelne Gruppen besuchen dieses Thema — es bekommt keine Auswertungszeile
-              und keinen «fehlt noch»-Hinweis am Chip.
-            </span>
-          </span>
-        </label>
+        <span class="field-label">Wer besucht es</span>
+        <div class="choice" role="radiogroup" aria-label="Wer besucht es">
+          {#each COVERAGE_OPTIONS as opt (opt.value)}
+            <button
+              type="button"
+              class="choice-opt"
+              class:choice-opt-on={view.optional === opt.value}
+              role="radio"
+              aria-checked={view.optional === opt.value}
+              onclick={() => set({ optional: opt.value })}
+            >
+              <span class="choice-head"><Icon name={opt.icon} size={14} /> {opt.title}</span>
+              <span class="choice-sub">{opt.sub}</span>
+            </button>
+          {/each}
+        </div>
       </div>
 
       <div class="advanced-body form-field">
@@ -403,6 +517,7 @@
       </div>
     </details>
     {/if}
+    </div>
   </div>
   {/if}
 
@@ -452,18 +567,76 @@
 </form>
 
 <style>
-  /* A checkbox with its explanation beside it, matching the `choice-opt` pair
-     above without pretending to be a two-way choice. */
-  .opt-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.6rem;
+  /* The way out of an empty list. Inline in the hint that names the gap, so the
+     sentence and its remedy are one thing to read. */
+  .link-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+    border: none;
+    background: none;
+    padding: 0;
     cursor: pointer;
+    font-size: inherit;
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+  .link-cta:hover { text-decoration: underline; }
+
+  /* L3 */
+  .setup-cols {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    padding-top: 0.25rem;
+    align-items: start;
+  }
+  .setup-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    min-width: 0;
+  }
+  /* The dialog is min(1000px, 92vw) and the detail pane about 720px of it, so
+     the second column is worth having from roughly this viewport up. A media
+     query rather than a container query: `container-type` would also make the
+     pane a containing block for the ColorPicker's absolutely-positioned popover
+     and clip it. */
+  @media (min-width: 1024px) {
+    .setup-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; }
   }
 
-  .opt-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
-  .opt-title { font-size: var(--wk-fs-sm); font-weight: 650; }
-  .opt-sub { font-size: var(--wk-fs-xs); color: var(--wk-text-faint); line-height: 1.45; }
+  /* N2: the label a Thema gets once its lane is too narrow for the full name —
+     shown in the card's own type so the preview is the thing, not a note about
+     it. */
+  .card-preview {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .card-preview-label {
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+  }
+  .card-preview-chip {
+    font-size: var(--wk-fs-xs);
+    font-weight: 700;
+    line-height: 1.2;
+    padding: 3px 7px;
+    border-radius: var(--wk-r-sm);
+    border: 1px solid color-mix(in oklab, var(--pc) 45%, var(--wk-surface));
+    border-left: 3px solid var(--pc);
+    background: color-mix(in oklab, var(--pc) var(--wk-tint), var(--wk-surface));
+    color: var(--wk-text);
+  }
+  .field-warn {
+    margin-top: 8px;
+    font-size: var(--wk-fs-xs);
+    line-height: 1.45;
+    color: var(--color-warning);
+    max-width: 46ch;
+  }
 
   .pane-switch {
     display: flex;

@@ -249,6 +249,23 @@ export function migrate_v12_to_v13(state: any): any {
   };
 }
 
+/**
+ * v13 → v14: `gridStartTime` / `gridEndTime`, the hours the grid draws.
+ *
+ * Both seeded `null` — "derive it from the plan" — rather than the 07:00–19:00
+ * the hardcoded grid used to draw. Stamping the old constants would freeze
+ * every existing plan into the very fringe this field exists to remove; null
+ * lets each one narrow to its own week on first render.
+ */
+export function migrate_v13_to_v14(state: any): any {
+  return {
+    ...state,
+    version: 14,
+    gridStartTime: null,
+    gridEndTime: null,
+  };
+}
+
 /** Keyed by the version each step migrates *from*. Chained by `migrateState`. */
 const MIGRATIONS: Record<number, Migration> = {
   1: migrate_v1_to_v2,
@@ -263,6 +280,7 @@ const MIGRATIONS: Record<number, Migration> = {
   10: migrate_v10_to_v11,
   11: migrate_v11_to_v12,
   12: migrate_v12_to_v13,
+  13: migrate_v13_to_v14,
 };
 
 /**

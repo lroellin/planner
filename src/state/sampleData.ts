@@ -334,6 +334,11 @@ export function createSampleState(): AppState {
     name: `WK ${monday.slice(0, 4)} Tuggen/Reichenburg (Beispiel)`,
     lastExportedAt: null,
     wkStartDate: monday,
+    // Left to derive on purpose: the sample week runs 08:00–17:00, and the
+    // grid narrowing to it is the behaviour worth demonstrating. See
+    // AppState.gridStartTime.
+    gridStartTime: null,
+    gridEndTime: null,
     groups: [
       { id: kaderId, label: "K", enabled: true, order: 0, excludeFromCoverage: false },
       { id: g1, label: "G1", enabled: true, order: 1, excludeFromCoverage: false },

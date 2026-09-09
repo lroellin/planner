@@ -4,6 +4,7 @@ import type {
 } from '../types';
 import {
   effectiveTeacherIds, effectiveRoomId, eventGroupIds, isEventActive, isMultiGroupEvent,
+  minutesToTime, timeToMinutes,
 } from '../utils/timeUtils';
 import { describeWindow, windowOverlaps } from '../utils/availability';
 
@@ -270,6 +271,39 @@ export interface ClashPreview {
  * matched), it had no subject to resolve defaults from when the drag came from
  * the sidebar, and it never looked at availability windows at all.
  */
+/**
+ * The earliest slot on `dayIndex` where this Thema would land clean, or null if
+ * there is none inside the drawn day.
+ *
+ * `PlaceDialog` used to seed a hardcoded '08:00' — not "the first free slot",
+ * the literal string — so the one dialog that places a Thema without dragging
+ * proposed, on a half-planned week, the slot most likely to be occupied. It is
+ * also the dialog the coverage report and the sidebar chip open, which are
+ * exactly the paths taken when the week is already full.
+ *
+ * Free means *nothing at all*: not a hard clash, not a soft one. A soft clash
+ * is advisory once made, but proposing one unasked is proposing a mistake.
+ * Callers keep their own fallback for the plan with no free slot left — the
+ * dialog still has to open somewhere, and it says what it will collide with.
+ */
+export function firstFreeSlot(
+  state: AppState,
+  candidate: Omit<ClashCandidate, 'startTime' | 'endTime'>,
+  durationMinutes: number,
+  window: { start: string; end: string },
+  slotMinutes = 15,
+): string | null {
+  const startMin = timeToMinutes(window.start);
+  const lastStart = timeToMinutes(window.end) - durationMinutes;
+  for (let t = startMin; t <= lastStart; t += slotMinutes) {
+    const startTime = minutesToTime(t);
+    const endTime = minutesToTime(t + durationMinutes);
+    const { level } = previewClashDetail(state, { ...candidate, startTime, endTime });
+    if (level === null) return startTime;
+  }
+  return null;
+}
+
 export function previewClash(state: AppState, candidate: ClashCandidate): ClashLevel {
   return previewClashDetail(state, candidate).level;
 }
@@ -324,6 +358,12 @@ export function previewClashDetail(state: AppState, candidate: ClashCandidate): 
   for (const other of state.events) {
     if (other.id === probe.id) continue;
     if (other.dayIndex !== probe.dayIndex) continue;
+    // The same guard `detectConflicts` opens with: an event whose every lane is
+    // switched off is drawn nowhere and raises nothing, so the mirror must not
+    // go red over it. Without this the probe reported a clash the panel would
+    // never list once the drop was made — and `firstFreeSlot` walked past slots
+    // that were in fact free.
+    if (!isEventActive(state, other)) continue;
     const oStart = toMs(other.dayIndex, other.startTime);
     const oEnd = toMs(other.dayIndex, other.endTime);
     if (!overlaps(startMs, endMs, oStart, oEnd)) continue;

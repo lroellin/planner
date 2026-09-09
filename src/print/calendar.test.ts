@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
 import { buildCalendarDoc, contiguousRuns, toMinutes } from './calendar';
+import { gridWindow } from '../utils/timeUtils';
 
 const ALL_PHASES = ['kader', 'gruppen'];
 
@@ -188,5 +189,61 @@ describe('contiguousRuns', () => {
   it('handles the single and empty cases', () => {
     expect(contiguousRuns([4])).toEqual([{ from: 4, span: 1 }]);
     expect(contiguousRuns([])).toEqual([]);
+  });
+});
+
+/**
+ * The sheet is a *trim* of the screen grid, never a different document. Its
+ * bounds used to be the literals 07:00 and 19:00, which stopped being the
+ * screen's bounds the day `gridWindow` started deriving them — so a block
+ * outside them printed above the grid, over the header.
+ */
+describe('the printed range stays inside the drawn hours', () => {
+  it('follows a derived window down to an early Antreten', () => {
+    const state = makeState({
+      events: [makeEvent({ id: 'early', groupId: 'g1', dayIndex: 2, startTime: '06:00', endTime: '07:00' })],
+    });
+    const doc = buildCalendarDoc(state, ['gruppen']);
+    const entry = doc.entries.find(e => e.startMinutes === toMinutes('06:00'))!;
+
+    // Trimmed, not copied: the screen leaves an hour of air below the earliest
+    // block and the sheet does not, so the range only has to sit *inside* it.
+    expect(doc.startMinutes).toBeGreaterThanOrEqual(toMinutes(gridWindow(state).start));
+    expect(doc.startMinutes).toBe(toMinutes('06:00'));
+    // The whole point: no entry may begin above the top of the grid.
+    expect(entry.startMinutes).toBeGreaterThanOrEqual(doc.startMinutes);
+  });
+
+  it('never draws an entry outside the range it declares', () => {
+    const state = makeState({
+      events: [
+        makeEvent({ id: 'early', groupId: 'g1', dayIndex: 2, startTime: '06:00', endTime: '07:00' }),
+        makeEvent({ id: 'late', groupId: 'g2', dayIndex: 2, startTime: '18:30', endTime: '20:00' }),
+      ],
+    });
+    const doc = buildCalendarDoc(state, ['gruppen']);
+    for (const e of doc.entries) {
+      expect(e.startMinutes).toBeGreaterThanOrEqual(doc.startMinutes);
+      expect(e.endMinutes).toBeLessThanOrEqual(doc.endMinutes);
+    }
+  });
+
+  it('honours an explicit Tagesraster instead of ignoring it', () => {
+    // The screen showed 06:00–20:00 and the sheet 09:00–13:00.
+    const state = makeState({
+      gridStartTime: '06:00',
+      gridEndTime: '20:00',
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, startTime: '09:00', endTime: '10:00' })],
+    });
+    const doc = buildCalendarDoc(state, ['gruppen']);
+    expect(doc.startMinutes).toBeGreaterThanOrEqual(toMinutes('06:00'));
+    expect(doc.endMinutes).toBeLessThanOrEqual(toMinutes('20:00'));
+  });
+
+  it('clamps the empty-week fallback into a narrow raster', () => {
+    const state = makeState({ gridStartTime: '09:00', gridEndTime: '12:00', events: [] });
+    const doc = buildCalendarDoc(state, ['gruppen']);
+    expect(doc.startMinutes).toBe(toMinutes('09:00'));
+    expect(doc.endMinutes).toBe(toMinutes('12:00'));
   });
 });

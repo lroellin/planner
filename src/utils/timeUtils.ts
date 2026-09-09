@@ -1,5 +1,7 @@
 import { ALL_GROUPS, isHardConflict } from '../types';
-import type { AppState, CalendarEvent, EventFilter, Group, ID, Phase, Subject } from '../types';
+import type {
+  AppState, CalendarEvent, ConflictKind, EventFilter, Group, ID, Phase, Subject,
+} from '../types';
 import type { EventInput } from '@fullcalendar/core';
 import type { ResourceInput } from '@fullcalendar/resource';
 import { roomShort, subjectShort, teacherShort } from './format';
@@ -89,6 +91,72 @@ export function snapToSlot(time: string, slotMinutes = 15): string {
   const totalMinutes = (h ?? 0) * 60 + (m ?? 0);
   const snapped = Math.round(totalMinutes / slotMinutes) * slotMinutes;
   return `${pad(Math.floor(snapped / 60))}:${pad(snapped % 60)}`;
+}
+
+/**
+ * The hours the grid draws.
+ *
+ * The grid used to be a hardcoded 07:00–19:00 — 48 slots, ~1207px at normal
+ * density in a viewport of ~834px — for a week that in practice runs 08:00 to
+ * 17:00. Twelve of those slots were empty on every lane of every day, and they
+ * made up most of the distance the user had to scroll.
+ *
+ * An explicit `gridStartTime` / `gridEndTime` wins outright. It is **one window
+ * for the whole WK**, not one per Phase: the same hour has to sit at the same
+ * height in every phase drawn beside it, or two segments of the same week stop
+ * lining up. Otherwise the window is derived from the plan:
+ *
+ *   - it always contains the training day (08:00–17:00) and every Lektion,
+ *     Pause and Programmpunkt in the plan;
+ *   - **one hour above** and **half an hour below** that, as room to drag into
+ *     and to click in. Without it the day would be walled in at both ends: a
+ *     block could not be dragged past the last slot and an empty cell before
+ *     the first one could not be clicked, so an 07:30 Antreten could never be
+ *     created at all;
+ *   - the start is snapped **down to the hour**, because `slotLabelInterval`
+ *     counts from `slotMinTime` and a window opening at 07:45 would label
+ *     07:45, 08:45, 09:45. The end has no such constraint and keeps its half
+ *     hour.
+ *
+ * That leaves 07:00–17:30 for the sample week: 42 slots against the old 48.
+ * Trimming the last six is what the explicit setting is for — a plan whose
+ * hours are known does not need the margin the derivation has to leave.
+ */
+export const GRID_BUSINESS_START = '08:00';
+export const GRID_BUSINESS_END = '17:00';
+const GRID_AIR_BEFORE = 60;
+const GRID_AIR_AFTER = 30;
+
+export function gridWindow(state: AppState): { start: string; end: string } {
+  let lo = timeToMinutes(GRID_BUSINESS_START);
+  let hi = timeToMinutes(GRID_BUSINESS_END);
+
+  for (const ev of state.events) {
+    lo = Math.min(lo, timeToMinutes(ev.startTime));
+    hi = Math.max(hi, timeToMinutes(ev.endTime));
+  }
+
+  const derivedStart = Math.floor((lo - GRID_AIR_BEFORE) / 60) * 60;
+  const derivedEnd = hi + GRID_AIR_AFTER;
+
+  const start = state.gridStartTime ?? minutesToTime(Math.max(0, derivedStart));
+  const end = state.gridEndTime ?? minutesToTime(Math.min(24 * 60, derivedEnd));
+
+  // A window the wrong way round collapses the grid to nothing, and an explicit
+  // pair typed one field at a time passes through exactly that state.
+  return timeToMinutes(end) <= timeToMinutes(start)
+    ? { start, end: minutesToTime(Math.min(24 * 60, timeToMinutes(start) + 60)) }
+    : { start, end };
+}
+
+export function timeToMinutes(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+export function minutesToTime(total: number): string {
+  const clamped = Math.max(0, Math.min(total, 24 * 60));
+  return `${pad(Math.floor(clamped / 60))}:${pad(clamped % 60)}`;
 }
 
 export function extractDayIndex(date: Date): number {
@@ -326,6 +394,34 @@ export function eventOverrides(
   return out;
 }
 
+/**
+ * The clash chips both event editors draw: which resource, named, and how bad.
+ *
+ * `EventPopover` and `EventModal` carried the same eight-line `kind === ...`
+ * ladder each, resolving a `ConflictRef` against three different entity lists.
+ * They are the same question about the same data — the popover and the modal are
+ * two anchorings of one editor — so a copy each is a copy too many.
+ */
+export function describeConflicts(
+  state: AppState,
+  ev: CalendarEvent | null | undefined,
+): { kind: ConflictKind; name: string; hard: boolean; others: ID[] }[] {
+  return (ev?.conflicts ?? []).map(c => {
+    const name =
+      c.kind === 'teacher' || c.kind === 'teacher-absent'
+        ? state.teachers.find(t => t.id === c.resourceId)?.name
+      : c.kind === 'room' || c.kind === 'room-blocked'
+        ? state.rooms.find(r => r.id === c.resourceId)?.name
+        : state.groups.find(g => g.id === c.resourceId)?.label;
+    return {
+      kind: c.kind,
+      name: name ?? c.resourceId,
+      hard: isHardConflict(c.kind),
+      others: c.collidingEventIds,
+    };
+  });
+}
+
 export function eventMatchesFilter(
   ev: CalendarEvent,
   state: AppState,
@@ -386,6 +482,16 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
     ? { name: roomEntity.name, shortName: roomShort(roomEntity), color: roomEntity.color }
     : null;
 
+  // The lanes the card stands on, as labels. Resolved here for the same reason
+  // `shortName` is: `eventDidMount` builds the card's accessible name and must
+  // not reach back into the store to do it.
+  const laneIds = ev.groupId === ALL_GROUPS
+    ? (phase ? lanesForMultiGroup(state, phase, subject).map(g => g.id) : eventGroupIds(state, ev))
+    : [ev.groupId];
+  const laneLabels = laneIds
+    .map(gid => state.groups.find(g => g.id === gid)?.label)
+    .filter((l): l is string => Boolean(l));
+
   // Multi-group events occupy every lane the rendering phase draws; single-lane
   // events name their one resource.
   const resourceProp: { resourceId: ID } | { resourceIds: ID[] } = ev.groupId === ALL_GROUPS
@@ -426,6 +532,8 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
       shortName: subjectShort(subject),
       startTime: ev.startTime,
       endTime: ev.endTime,
+      dayIndex: ev.dayIndex,
+      laneLabels,
       teachers,
       room,
       hasConflict,

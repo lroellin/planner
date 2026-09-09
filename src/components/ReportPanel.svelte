@@ -2,15 +2,16 @@
   import { onMount, untrack } from 'svelte';
   import { getState } from '../state/store.svelte';
   import {
-    buildCoverage, buildTeacherPlans, buildGroupPlans, buildRoomPlans, coverageStatus as status,
+    buildCoverage, buildTeacherPlans, buildGroupPlans, buildRoomPlans, buildDeviations,
+    coverageStatus as status, teacherLoad, roomLoad,
     type ScheduleEntry,
   } from '../reports/reports';
   import { DAY_NAMES, dayDateLabel, formatDuration } from '../utils/timeUtils';
   import { teacherShort } from '../utils/format';
   import { getContrastColor } from '../utils/colorUtils';
-  import { requestPlacement } from '../state/ui.svelte';
+  import { requestPlacement, revealEvent } from '../state/ui.svelte';
   import Icon from './Icon.svelte';
-  import type { ID, ReportTab } from '../types';
+  import { PRINTABLE_REPORT_TABS, type ID, type ReportTab } from '../types';
   import type { PlanTarget } from '../print/boxes';
 
   interface Props {
@@ -45,9 +46,32 @@
   let roomFilter: ID | 'all' = $state(
     untrack(() => (tab === 'rooms' && filterId ? filterId : 'all')),
   );
+  // Q3: Ausbildnerpläne and Raumpläne each had a filter and Gruppenpläne did
+  // not, so "what does G3 do on Freitag" meant scrolling past K, G1 and G2 —
+  // the same question, answered two ways out of three.
+  let groupFilter: ID | 'all' = $state(
+    untrack(() => (tab === 'groups' && filterId ? filterId : 'all')),
+  );
+
+  /** ← → / Home / End move between tabs; focus follows selection. */
+  function onTabKey(e: KeyboardEvent): void {
+    const keys = TABS.map(t => t.key);
+    const i = keys.indexOf(activeTab);
+    let next: ReportTab | undefined;
+    if (e.key === 'ArrowRight') next = keys[(i + 1) % keys.length];
+    else if (e.key === 'ArrowLeft') next = keys[(i - 1 + keys.length) % keys.length];
+    else if (e.key === 'Home') next = keys[0];
+    else if (e.key === 'End') next = keys[keys.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    activeTab = next;
+    const id = `report-tab-${next}`;
+    requestAnimationFrame(() => document.getElementById(id)?.focus());
+  }
 
   const TABS: { key: ReportTab; label: string }[] = [
     { key: 'coverage', label: 'Abdeckung' },
+    { key: 'deviations', label: 'Abweichungen' },
     { key: 'groups', label: 'Gruppenpläne' },
     { key: 'teachers', label: 'Ausbildnerpläne' },
     { key: 'rooms', label: 'Raumpläne' },
@@ -55,6 +79,7 @@
 
   const TITLES: Record<ReportTab, string> = {
     coverage: 'Abdeckung',
+    deviations: 'Abweichungen',
     groups: 'Gruppenpläne',
     teachers: 'Ausbildnerpläne',
     rooms: 'Raumpläne',
@@ -83,11 +108,53 @@
   const totalShort = $derived(
     coverage.reduce((n, s) => n + s.rows.filter(r => r.short).length, 0),
   );
+  /**
+   * Teilungen are hidden by default: cutting a 3 h Thema into 2 h + 1 h marks
+   * both halves as "Dauer weicht ab", and two rows saying so are noise on a
+   * sheet read to check what was actually *changed*. The switch is here rather
+   * than implied, because "why is my split lesson missing" has to be answerable.
+   */
+  let hideSplits = $state(true);
+
+  const deviations = $derived(buildDeviations(appState));
+  const deviationBlocks = $derived(
+    hideSplits
+      ? deviations.blocks
+          .map(b => ({ ...b, entries: b.entries.filter(e => !e.splitOnly) }))
+          .filter(b => b.entries.length > 0)
+      : deviations.blocks,
+  );
+
   const plans = $derived(buildTeacherPlans(appState));
   const shownPlans = $derived(
     teacherFilter === 'all' ? plans : plans.filter(p => p.teacher.id === teacherFilter),
   );
-  const groupPlans = $derived(buildGroupPlans(appState));
+  /**
+   * R5: who is carrying the week, in one look.
+   *
+   * "Is anyone overloaded, and is anyone doing nothing?" was answered by opening
+   * eight Konfiguration panes one after another — `teacherLoad` computed the
+   * answer and printed it one resource at a time, so the comparison the question
+   * is actually about was the one thing never on screen. Sorted by hours, so the
+   * two ends of the list are the two answers.
+   */
+  const teacherLoads = $derived(
+    appState.teachers
+      .map(t => ({ id: t.id, name: t.name, color: t.color, load: teacherLoad(appState, t.id) }))
+      .sort((a, b) => b.load.minutes - a.load.minutes),
+  );
+  const roomLoads = $derived(
+    appState.rooms
+      .map(r => ({ id: r.id, name: r.name, color: r.color, load: roomLoad(appState, r.id) }))
+      .sort((a, b) => b.load.minutes - a.load.minutes),
+  );
+  const busiestTeacher = $derived(Math.max(1, ...teacherLoads.map(t => t.load.minutes)));
+  const busiestRoom = $derived(Math.max(1, ...roomLoads.map(r => r.load.minutes)));
+
+  const allGroupPlans = $derived(buildGroupPlans(appState));
+  const groupPlans = $derived(
+    groupFilter === 'all' ? allGroupPlans : allGroupPlans.filter(p => p.group.id === groupFilter),
+  );
   const roomPlans = $derived(buildRoomPlans(appState));
   const shownRoomPlans = $derived(
     roomFilter === 'all' ? roomPlans : roomPlans.filter(p => p.room.id === roomFilter),
@@ -136,6 +203,40 @@
   });
 </script>
 
+<!-- R5: the load comparison, shared by Ausbildner- and Raumpläne. A row is a
+     button: the strip answers "who is busiest", and the click answers "doing
+     what", which is the next question every time. -->
+{#snippet loadStrip(
+  title: string,
+  rows: { id: ID; name: string; color: string; load: { count: number; minutes: number; days: number[] } }[],
+  busiest: number,
+  pick: (id: ID) => void,
+)}
+  <section class="loads">
+    <h4 class="loads-title wk-eyebrow">{title}</h4>
+    <ul class="loads-list">
+      {#each rows as r (r.id)}
+        <li>
+          <button class="load-row" onclick={() => pick(r.id)}>
+            <span class="load-dot" style="background:{r.color}"></span>
+            <span class="load-name truncate">{r.name}</span>
+            <span class="load-bar">
+              <span
+                class="load-bar-fill"
+                style="width:{Math.round((r.load.minutes / busiest) * 100)}%; background:{r.color}"
+              ></span>
+            </span>
+            <span class="load-mins wk-num">{formatDuration(r.load.minutes)}</span>
+            <span class="load-days wk-num">
+              {r.load.days.length > 0 ? r.load.days.map(d => DAY_NAMES[d]).join(' ') : '—'}
+            </span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/snippet}
+
 <div class="report-overlay">
   <!-- Z2: focus lands on the panel, not on its ✕, so the first Tab goes into
        the tabs and the table rather than straight back out. -->
@@ -150,13 +251,19 @@
       </div>
 
       <div class="sheet-tabs">
-        <div role="tablist" class="tabs-row">
+        <!-- K3: a real tab widget — arrow keys between tabs, one tab stop for
+             the strip, and each tab naming the panel it controls. -->
+        <div role="tablist" class="tabs-row" aria-label="Auswertungen">
           {#each TABS as t (t.key)}
             <button
               role="tab"
+              id="report-tab-{t.key}"
+              aria-controls="report-panel"
               class="tab-btn"
               class:tab-btn-on={activeTab === t.key}
               aria-selected={activeTab === t.key}
+              tabindex={activeTab === t.key ? 0 : -1}
+              onkeydown={onTabKey}
               onclick={() => (activeTab = t.key)}
             >{t.label}</button>
           {/each}
@@ -169,6 +276,14 @@
             {/each}
           </select>
         {/if}
+        {#if activeTab === 'groups'}
+          <select class="select select-bordered select-sm w-48" bind:value={groupFilter}>
+            <option value="all">Alle Gruppen</option>
+            {#each allGroupPlans as p (p.group.id)}
+              <option value={p.group.id}>Gruppe {p.group.label}</option>
+            {/each}
+          </select>
+        {/if}
         {#if activeTab === 'teachers'}
           <select class="select select-bordered select-sm w-48" bind:value={teacherFilter}>
             <option value="all">Alle Ausbildner</option>
@@ -177,7 +292,13 @@
             {/each}
           </select>
         {/if}
-        {#if activeTab !== 'coverage'}
+        {#if activeTab === 'deviations' && deviations.splitOnlyCount > 0}
+          <label class="split-toggle">
+            <span>Reine Teilungen ausblenden ({deviations.splitOnlyCount})</span>
+            <input type="checkbox" class="toggle toggle-primary toggle-xs" bind:checked={hideSplits} />
+          </label>
+        {/if}
+        {#if PRINTABLE_REPORT_TABS.includes(activeTab)}
           <button class="print-btn" onclick={() => onprint(activeTab as PlanTarget)}>
             <Icon name="printer" size={14} /> Drucken
           </button>
@@ -185,7 +306,12 @@
       </div>
     </div>
 
-    <div class="report-body">
+    <div
+      class="report-body"
+      role="tabpanel"
+      id="report-panel"
+      aria-labelledby="report-tab-{activeTab}"
+    >
       <div class="print-title">{TITLES[activeTab]} — {appState.name}</div>
 
       <!-- ══ COVERAGE ═══════════════════════════════════════════════════════ -->
@@ -206,7 +332,7 @@
               noch nicht die volle Dauer.
             {/if}
             {#if totalOver > 0}
-              {totalOver} {totalOver === 1 ? 'Thema ist' : 'Themen sind'} länger geplant als seine Dauer vorgibt.
+              {totalOver} {totalOver === 1 ? 'Thema ist' : 'Themen sind'} länger geplant als {totalOver === 1 ? 'seine' : 'ihre'} Dauer vorgibt.
             {/if}
             {#if totalUneven > 0}
               {totalUneven} {totalUneven === 1 ? 'Thema ist' : 'Themen sind'} ungleich auf die Gruppen verteilt.
@@ -278,8 +404,16 @@
                             {#if n === 0}
                               <span class="cov-add">+</span>
                             {:else}
+                              <!-- R3: a short cell is as clickable as an empty
+                                   one and used to look exactly like a finished
+                                   one — minutes over an instance count, no mark
+                                   at all. So the affordance appeared where the
+                                   gap was total and vanished where it was
+                                   partial. On a row that still owes time, what
+                                   is owed outranks how the placed time was cut
+                                   up, so it takes the second line. -->
                               <span class="cov-mins wk-num">{formatDuration(mins)}</span>
-                              <span class="cov-sub wk-num">{n}×</span>
+                              <span class="cov-owed wk-num">+{formatDuration(row.target - mins)}</span>
                             {/if}
                           </button>
                         {:else}
@@ -325,6 +459,79 @@
           aufgeteilt erbracht wird, spielt keine Rolle. Pausen zählen nicht.
         </p>
 
+      <!-- ══ DEVIATIONS ═════════════════════════════════════════════════════ -->
+      <!-- The Auswertung that answers "what did I actually change": every
+           Lektion carrying its own Ausbildner, Raum or Dauer instead of the
+           Themenvorgabe's. Same rule as the pencil on the card. -->
+      {:else if activeTab === 'deviations'}
+        {#if deviations.blocks.length === 0}
+          <div class="banner banner-ok">
+            <Icon name="check" size={15} />
+            Jede Lektion läuft genau nach ihrer Themenvorgabe.
+          </div>
+        {:else if deviationBlocks.length === 0}
+          <div class="banner banner-ok">
+            <Icon name="check" size={15} />
+            Nichts geändert — alle {deviations.splitOnlyCount} Abweichungen sind reine Teilungen.
+          </div>
+        {:else}
+          <p class="foot-note">
+            {deviations.changedCount}
+            {deviations.changedCount === 1 ? 'Lektion weicht' : 'Lektionen weichen'}
+            von der Themenvorgabe ab.
+          </p>
+        {/if}
+
+        {#each deviationBlocks as block (block.subject.id)}
+          <section class="plan">
+            <header class="plan-head">
+              <span class="plan-swatch" style="background:{block.subject.color}"></span>
+              <div class="min-w-0">
+                <div class="plan-name">{block.subject.name}</div>
+                <!-- The baseline every row below is measured against, spelled
+                     out once instead of repeated in every "von" cell. -->
+                <div class="plan-summary">
+                  Vorgabe:
+                  {block.subject.defaultTeacherIds
+                    .map(id => appState.teachers.find(t => t.id === id)?.name)
+                    .filter(Boolean).join(', ') || 'kein Ausbildner'}
+                  · {appState.rooms.find(r => r.id === block.subject.defaultRoomId)?.name ?? 'kein Raum'}
+                  · {formatDuration(block.subject.defaultDurationMinutes)}
+                </div>
+              </div>
+            </header>
+
+            <ul class="rows dev-rows">
+              {#each block.entries as e (e.eventId)}
+                <li class="row row-dev" class:row-split={e.splitOnly}>
+                  <span class="cell-time wk-num">
+                    {DAY_NAMES[e.dayIndex]} {e.startTime}–{e.endTime}
+                  </span>
+                  <span class="cell-people"><span class="lane-label">{e.groupLabels.join(' ') || '—'}</span></span>
+                  <span class="cell-changes">
+                    {#each e.changes as c (c.field)}
+                      <span class="change">
+                        <span class="change-field">{c.field}</span>
+                        <span class="change-from">{c.from}</span>
+                        <span class="change-arrow" aria-hidden="true">→</span>
+                        <span class="change-to">{c.to}</span>
+                      </span>
+                    {/each}
+                    {#if e.splitOnly}<span class="change-note">geteilt, Soll erfüllt</span>{/if}
+                  </span>
+                  <button
+                    class="dev-show"
+                    title="Im Kalender zeigen"
+                    onclick={() => { revealEvent(e.eventId); onclose(); }}
+                  >
+                    <Icon name="eye" size={13} />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </section>
+        {/each}
+
       <!-- ══ GROUP PLANS ════════════════════════════════════════════════════ -->
       {:else if activeTab === 'groups'}
         {#each groupPlans as plan (plan.group.id)}
@@ -357,7 +564,7 @@
                           {e.subject.name}
                         </span>
                         <span class="cell-people">{e.teachers.map(t => t.name).join(', ')}</span>
-                        <span class="cell-room">{e.roomName ?? '—'}</span>
+                        <span class="cell-room">{e.room?.name ?? '—'}</span>
                       </li>
                     {/each}
                   </ul>
@@ -373,6 +580,10 @@
       {:else if activeTab === 'teachers'}
         {#if shownPlans.length === 0}
           <p class="empty-note">Noch keine Ausbildner erfasst.</p>
+        {/if}
+
+        {#if teacherFilter === 'all' && teacherLoads.length > 1}
+          {@render loadStrip('Pensum im Vergleich', teacherLoads, busiestTeacher, (id) => (teacherFilter = id))}
         {/if}
 
         {#each shownPlans as plan (plan.teacher.id)}
@@ -419,7 +630,7 @@
                           {e.subject.name}
                         </span>
                         <span class="cell-people"><span class="lane-label">{e.groupLabels.join(' ') || '—'}</span></span>
-                        <span class="cell-room">{e.roomName ?? '—'}</span>
+                        <span class="cell-room">{e.room?.name ?? '—'}</span>
                         <span class="cell-note">
                           {#if e.status === 'handed-over'}
                             abgegeben an {e.counterparts.map(t => t.name).join(', ') || 'jemand anderen'}
@@ -438,6 +649,10 @@
 
       <!-- ══ ROOM PLANS ═════════════════════════════════════════════════════ -->
       {:else}
+        {#if roomFilter === 'all' && roomLoads.length > 1}
+          {@render loadStrip('Belegung im Vergleich', roomLoads, busiestRoom, (id) => (roomFilter = id))}
+        {/if}
+
         {#each shownRoomPlans as plan (plan.room.id)}
           <section class="plan">
             <header class="plan-head">
@@ -486,13 +701,55 @@
 </div>
 
 <style>
+  /* R5: who is carrying the week. */
+  .loads {
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-md);
+    padding: 0.7rem 0.9rem 0.8rem;
+    background: var(--wk-surface-alt);
+  }
+  .loads-title { margin: 0 0 0.5rem; }
+  .loads-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .load-row {
+    display: grid;
+    grid-template-columns: 10px minmax(6rem, 12rem) minmax(4rem, 1fr) 5.5rem 6rem;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    padding: 3px 6px;
+    border: 1px solid transparent;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+    font-size: var(--wk-fs-xs);
+  }
+  .load-row:hover { background: var(--wk-surface); border-color: var(--wk-line); }
+  .load-row:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+  .load-dot { width: 10px; height: 10px; border-radius: 3px; }
+  .load-name { font-weight: 600; }
+  .load-bar {
+    height: 7px;
+    border-radius: 999px;
+    background: color-mix(in oklab, var(--wk-text) 8%, transparent);
+    overflow: hidden;
+  }
+  .load-bar-fill { display: block; height: 100%; border-radius: 999px; min-width: 2px; }
+  .load-mins { text-align: right; font-weight: 600; }
+  .load-days { color: var(--wk-text-faint); }
+
   .report-overlay {
     position: fixed;
     inset: 0;
     z-index: 60;
     display: flex;
-    align-items: center;
+    /* Top-anchored at exactly where centring a 86vh sheet used to put it, so a
+       shorter tab shortens the sheet *downwards* and the tab strip never moves
+       under the pointer. Centring would have slid the whole sheet up. */
+    align-items: flex-start;
     justify-content: center;
+    padding: 7vh 0;
     /* Not a <dialog>, but the same category: it takes the page away, so it dims
        with the same scrim the three real modals use. */
     background: var(--wk-scrim);
@@ -502,9 +759,17 @@
     display: flex;
     flex-direction: column;
     width: min(1080px, 94vw);
-    /* Fixed, not content-sized: switching tabs used to resize the sheet and
-       move the tab strip out from under the cursor. */
-    height: 86vh;
+    /* Q1: as tall as it needs, up to 86vh, with a floor.
+       It used to be a flat 86vh whatever it held, so Abweichungen with two rows
+       was a 770px panel that was 90% empty. The fixed height was there for a
+       real reason — switching tabs must not resize the sheet and move the tab
+       strip out from under the pointer — but it is the *strip* that has to hold
+       still, not the box. The overlay above anchors the sheet's top instead, so
+       the head and the tabs sit at the same y on every tab and only the bottom
+       edge moves. The floor keeps a two-row tab from collapsing to a sliver. */
+    height: auto;
+    max-height: 86vh;
+    min-height: min(420px, 86vh);
     background: var(--wk-surface);
     color: var(--wk-text);
     border-radius: var(--wk-r-md);
@@ -583,7 +848,9 @@
   .print-btn:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
 
   .report-body {
-    flex: 1;
+    /* Grow to the content, but never past the sheet's max — `flex: 1` would
+       stretch a two-row tab to fill it again. */
+    flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: 1.25rem 1.75rem 2rem;
@@ -649,8 +916,13 @@
     font-size: var(--wk-fs-sm);
   }
 
-  /* The Thema column takes whatever the fixed tracks below leave over. */
-  .cov-subject-head { width: auto; }
+  /* Q2: the Thema column used to be the one that grew — `width: auto` against
+     fixed 6rem lanes — so a 24-character name held ~550px of a 1000px table and
+     Soll, the lanes and Status were crushed into the right third. The name has a
+     share now and the lanes take the remainder, which is also what keeps the
+     table usable as Gruppen are added: six lanes divide the same space instead
+     of running off the edge. */
+  .cov-subject-head { width: 36%; }
 
   .cov-table th {
     text-align: center;
@@ -664,13 +936,15 @@
   }
 
   .cov-table th.cov-subject-head { text-align: left; padding-left: 0.2rem; }
+  /* Wide enough for "1 h 30 min" on one line at the size Q2 gave it — at 4.5rem
+     the longer durations wrapped to "1 h 30 / min". */
   .cov-table th.cov-target-head,
-  .cov-target { width: 4.5rem; text-align: right; }
+  .cov-target { width: 6rem; text-align: right; white-space: nowrap; }
   .cov-table th.cov-status-head,
   .cov-status { width: 7rem; text-align: right; }
   .cov-table th:not(.cov-subject-head):not(.cov-target-head):not(.cov-status-head),
   .cov-cell,
-  .cov-pad { width: 6rem; }
+  .cov-pad { width: auto; min-width: 5rem; }
 
   /* F6: a group is a lane everywhere else in the app, and lane headers have a
      look — the uppercase tracked label from calendar.css. Reusing it means the
@@ -719,6 +993,16 @@
   }
   .cov-fill:hover .cov-add { color: var(--color-primary); }
 
+  /* R3: what the lane still owes — an amount, and an invitation. */
+  .cov-owed {
+    display: block;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--color-primary);
+  }
+  .cov-fill:hover .cov-owed { text-decoration: underline; }
+
   .cov-sub {
     display: block;
     font-size: var(--wk-fs-2xs);
@@ -727,9 +1011,13 @@
 
   .cov-short { color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text)); }
 
+  /* Q2: Soll is the number every cell in the row is compared *against*, and it
+     was set smaller and fainter than the numbers doing the comparing. Same size
+     and weight as a lane cell now; the muted colour is what still marks it as
+     the reference rather than a value. */
   .cov-target {
-    font-size: var(--wk-fs-2xs);
-    color: var(--wk-text-faint);
+    font-size: var(--wk-fs-sm);
+    color: var(--wk-text-mute);
     font-weight: 600;
   }
 
@@ -916,6 +1204,93 @@
     color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
     font-style: normal;
     font-weight: 600;
+  }
+
+  /* ── Abweichungen ───────────────────────────────────────────────────────── */
+  /* The filter sits in the tab strip with the other per-tab controls (the
+     Ausbildner and Raum selects), because it changes what the sheet *is*, not
+     what one section of it shows. */
+  .split-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .split-toggle:hover { color: var(--wk-text); }
+
+  .dev-rows { padding-left: 3.2rem; }
+
+  /* When · lanes · what changed · show me. The change column takes the slack:
+     it is the column the sheet exists for. */
+  /* Q4: the reveal button used to be pushed to the far edge of a 1080px sheet
+     by a `1fr` changes column — ~950px from the row it acts on. The changes take
+     their own width now and an empty trailing track absorbs the slack, so the
+     button sits just after the thing it reveals. */
+  .row-dev {
+    grid-template-columns:
+      minmax(7.5rem, max-content) max-content minmax(0, max-content) max-content 1fr;
+    align-items: center;
+  }
+
+  .cell-changes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem 0.9rem;
+  }
+
+  .change {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-size: var(--wk-fs-xs);
+  }
+
+  .change-field {
+    font-size: var(--wk-fs-2xs);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--wk-text-faint);
+  }
+
+  /* The old value is context; the new one is the answer, so only it is set in
+     the text colour. */
+  .change-from {
+    color: var(--wk-text-faint);
+    text-decoration: line-through;
+  }
+  .change-arrow { color: var(--wk-text-faint); }
+  .change-to { font-weight: 600; }
+
+  .change-note {
+    font-size: var(--wk-fs-2xs);
+    font-style: italic;
+    color: var(--wk-text-faint);
+  }
+
+  /* Only ever seen with the filter switched off, where it has to be obvious
+     which rows the filter would have taken. */
+  .row-split { opacity: 0.6; }
+
+  .dev-show {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid transparent;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .dev-show:hover {
+    border-color: var(--wk-line);
+    background: var(--wk-surface-alt);
+    color: var(--wk-text);
   }
 
   /* No print layout here any more: the Drucken button hands the tab to the PDF

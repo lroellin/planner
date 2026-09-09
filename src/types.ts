@@ -64,8 +64,10 @@ export interface Subject {
   /**
    * What the card falls back to once its lane is too narrow for the full name
    * (see the width bands in calendar.css). Empty means "derive it" —
-   * `subjectShort()` cuts the name at its first separator — so renaming a
-   * subject keeps the short form in step until someone enters a real one.
+   * `subjectShort()` keeps something from every token of the name — so renaming
+   * a subject keeps the short form in step until someone enters a real one.
+   * `collidingSubjectShorts()` finds the Themen the derivation still cannot tell
+   * apart, and Konfiguration asks for a Kürzel there.
    */
   shortName: string;
   color: string;
@@ -212,9 +214,14 @@ export function isHardConflict(kind: ConflictKind): boolean {
   return HARD_CONFLICT_KINDS.includes(kind);
 }
 
-// Which plan the report overlay is showing. Printing a WK means printing one of
-// these four documents, not one screenshot of the grid.
-export type ReportTab = 'coverage' | 'groups' | 'teachers' | 'rooms';
+// Which sheet the report overlay is showing. Printing a WK means printing one of
+// these documents, not one screenshot of the grid — though two of them are read
+// on screen and never printed: Abdeckung and Abweichungen are both worked *from*
+// rather than handed to anyone.
+export type ReportTab = 'coverage' | 'deviations' | 'groups' | 'teachers' | 'rooms';
+
+/** The tabs that have a printed counterpart in `src/print/`. */
+export const PRINTABLE_REPORT_TABS: ReportTab[] = ['groups', 'teachers', 'rooms'];
 
 // View-only filter: show just the events a given teacher/room/group is involved in.
 export interface EventFilter {
@@ -249,6 +256,20 @@ export interface AppState {
    */
   lastExportedAt: string | null;
   wkStartDate: string;  // "YYYY-MM-DD", always a Monday
+  /**
+   * The hours the grid draws, for the **whole WK** — one window, not one per
+   * Phase: a day that starts at 07:00 starts at 07:00 in the Kader phase and
+   * the Gruppen phase alike, and two ranges side by side would put the same
+   * hour at two different heights.
+   *
+   * `null` means *derive it from the plan* (`gridWindow` in `timeUtils`), which
+   * is what every plan wants until it doesn't: the grid used to draw a fixed
+   * 07:00–19:00 for a week that runs 08:00–17:00, so 12 of its 48 slots were
+   * empty on every lane and made up most of the scroll. Set explicitly for the
+   * WK that really does start at 06:00 — and left alone, it follows the plan.
+   */
+  gridStartTime: string | null;  // "HH:MM"
+  gridEndTime: string | null;    // "HH:MM"
   teachers: Teacher[];
   rooms: Room[];
   subjects: Subject[];

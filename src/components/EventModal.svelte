@@ -3,10 +3,11 @@
     getState, duplicateEvents, updateEvent, updateSubject, removeEvent, splitEvent,
     copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
-  import { selectEvent } from '../state/ui.svelte';
+  import { selectEvent, requestConfig } from '../state/ui.svelte';
   import {
     snapToSlot, timeDiffMinutes, addMinutesToTime, splitRange, DAY_NAMES, phaseGroups,
-    resolveTeacherIds, resolveRoomId, isMultiGroupEvent, dayDateLabel,
+    resolveTeacherIds, resolveRoomId, isMultiGroupEvent, dayDateLabel, phaseForDay, gridWindow,
+    describeConflicts,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
@@ -15,6 +16,25 @@
   import DurationField from './DurationField.svelte';
   import { ALL_GROUPS, conflictNote, isHardConflict, type ID } from '../types';
 
+  /**
+   * The editor for a Lektion with **no card on the grid**.
+   *
+   * It used to be the "full" editor opposite the popover's "quick" one, holding
+   * the same three fields, saving the same way, and reached by double-clicking
+   * the card whose popover a single click had just opened. The popover carries
+   * the placement now (see `EventPopover.svelte`), so this is left with the one
+   * job a card-anchored panel cannot do — there being no card to anchor to:
+   *
+   *   - an **orphan**: a Lektion on a day/lane combination no Phase draws, so
+   *     nothing renders it. It is opened from the Probleme panel's *Ausserhalb
+   *     der Phasen* section, which is the only place it appears at all;
+   *   - a Lektion reached by **Enter** while its card is not rendered — inside a
+   *     folded Phase that has not been expanded yet, or filtered off the grid by
+   *     the toolbar.
+   *
+   * Which is why the placement fields here can move a Lektion in *time* as well
+   * as day and lane: an orphan is on no calendar to be dragged.
+   */
   interface Props {
     eventId: ID;
     onclose: () => void;
@@ -47,9 +67,7 @@
   // The chosen day decides the phase, and the phase decides which lanes exist.
   // Offering all groups regardless of day is what let a move land the event
   // outside every phase, where no calendar draws it.
-  const targetPhase = $derived(
-    appState.phases.find(p => localDayIndex >= p.startDay && localDayIndex <= p.endDay) ?? null,
-  );
+  const targetPhase = $derived(phaseForDay(appState, localDayIndex));
   const laneOptions = $derived(targetPhase ? phaseGroups(appState, targetPhase) : []);
   // Falls back to the first lane of the new phase when the current one isn't in it.
   const targetGroupId = $derived(
@@ -57,20 +75,11 @@
   );
 
   const spareLanes = $derived(ev ? lanesWithoutEvent(ev.id) : []);
+  /** The hours the grid draws — see the note on `TimeField`'s `from`/`to`. */
+  const grid = $derived(gridWindow(appState));
 
   /** Named clashes, so the editor says what it is you came here to fix. */
-  const conflictNotes = $derived.by(() => {
-    if (!ev?.conflicts) return [];
-    return ev.conflicts.map(c => {
-      const name =
-        c.kind === 'teacher' || c.kind === 'teacher-absent'
-          ? appState.teachers.find(t => t.id === c.resourceId)?.name
-        : c.kind === 'room' || c.kind === 'room-blocked'
-          ? appState.rooms.find(r => r.id === c.resourceId)?.name
-        : appState.groups.find(g => g.id === c.resourceId)?.label;
-      return { kind: c.kind, name: name ?? c.resourceId, hard: isHardConflict(c.kind) };
-    });
-  });
+  const conflictNotes = $derived(describeConflicts(appState, ev));
 
   // Seeds the form from the event, once per event id. It used to re-seed on
   // every store change, which was harmless only while the form was a buffer;
@@ -329,7 +338,12 @@
                 </button>
               {/each}
               {#if appState.teachers.length === 0}
-                <span class="hint">Keine Ausbildner erfasst.</span>
+                <button
+                  class="link-cta"
+                  onclick={() => { onclose(); requestConfig('teachers'); }}
+                >
+                  Keine Ausbildner erfasst — anlegen <Icon name="chevronRight" size={11} />
+                </button>
               {/if}
             </div>
             {#if localTeacherIds !== 'inherit'}
@@ -346,19 +360,28 @@
         <div class="field">
           <span class="field-name">Raum</span>
           <div class="field-control">
-            <select
-              class="select select-bordered select-sm w-full"
-              value={effectiveRoomId ?? ''}
-              onchange={(e) => {
-                const v = (e.currentTarget as HTMLSelectElement).value;
-                localRoomId = v === '' ? null : v;
-              }}
-            >
-              <option value="">Kein Raum</option>
-              {#each appState.rooms as r (r.id)}
-                <option value={r.id}>{r.name}</option>
-              {/each}
-            </select>
+            {#if appState.rooms.length === 0}
+              <button
+                class="link-cta"
+                onclick={() => { onclose(); requestConfig('rooms'); }}
+              >
+                Keine Räume erfasst — anlegen <Icon name="chevronRight" size={11} />
+              </button>
+            {:else}
+              <select
+                class="select select-bordered select-sm w-full"
+                value={effectiveRoomId ?? ''}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value;
+                  localRoomId = v === '' ? null : v;
+                }}
+              >
+                <option value="">Kein Raum</option>
+                {#each appState.rooms as r (r.id)}
+                  <option value={r.id}>{r.name}</option>
+                {/each}
+              </select>
+            {/if}
             {#if localRoomId !== 'inherit'}
               <button class="reset" onclick={resetRoom} title="Zurück zur Themenvorgabe">
                 <Icon name="reset" size={11} /> zurücksetzen
@@ -374,7 +397,12 @@
           <span class="field-name">Zeit</span>
           <div class="field-control">
             <div class="row-2">
-              <TimeField bind:value={localStartTime} ariaLabel="Startzeit" />
+              <TimeField
+                bind:value={localStartTime}
+                from={grid.start}
+                to={grid.end}
+                ariaLabel="Startzeit"
+              />
               <span class="inline-note wk-num">endet {previewEnd}</span>
             </div>
             <DurationField value={localDuration} onchange={(m) => (localDuration = m)} />
@@ -642,6 +670,21 @@
     font-size: var(--wk-fs-xs);
     color: var(--wk-text-faint);
   }
+
+  /* An empty list's way into the tab where it is filled. */
+  .link-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: var(--wk-fs-xs);
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+  .link-cta:hover { text-decoration: underline; }
 
   .warn {
     font-size: var(--wk-fs-xs);

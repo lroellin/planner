@@ -1,13 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import Toolbar from './components/Toolbar.svelte';
-  import Sidebar from './components/Sidebar.svelte';
+  import WorkDock from './components/WorkDock.svelte';
   import Calendar from './components/Calendar.svelte';
-  import ConflictPanel from './components/ConflictPanel.svelte';
   import EventModal from './components/EventModal.svelte';
   import EventPopover from './components/EventPopover.svelte';
   import ConfigPanel from './components/ConfigPanel.svelte';
-  import SidePanel from './components/SidePanel.svelte';
   import ReportPanel from './components/ReportPanel.svelte';
   import ShortcutsDialog from './components/ShortcutsDialog.svelte';
   import PlaceDialog from './components/PlaceDialog.svelte';
@@ -16,21 +14,24 @@
   import Toasts from './components/Toasts.svelte';
   import Icon from './components/Icon.svelte';
   import {
-    getState, getIssueCount, updateEvents, removeEvents, duplicateEvents, loadSampleData,
+    getState, getIssueCount, getConflicts, updateEvents, removeEvents, duplicateEvents,
+    loadSampleData,
   } from './state/store.svelte';
   import { isPristineState } from './state/persistence';
   import {
-    getQuickEdit, closeQuickEdit, getSelectedEventId, getSelectedEventIds, setSelection,
+    getQuickEdit, openQuickEdit, closeQuickEdit, getSelectedEventId, getSelectedEventIds, setSelection,
     clearSelection, getDensity, slotHeight, suppressNextDateClick,
     getPlaceRequest, clearPlaceRequest, getConfigRequest, clearConfigRequest, requestConfig,
     getReportRequest, clearReportRequest,
+    isPhaseCollapsed, togglePhaseCollapsed, expandPhase, getReveal, getFlash,
     type ConfigTab,
   } from './state/ui.svelte';
   import {
-    phaseGroups, phaseDayCount, addMinutesToTime, timeDiffMinutes, clampDayIndex, orderedPhases,
+    phaseGroups, phaseDayCount, addMinutesToTime, timeDiffMinutes, clampGroupDelta, orderedPhases,
+    eventInPhase, gridWindow, timeToMinutes, GRID_BUSINESS_START, dayDateLabel, DAY_NAMES,
   } from './utils/timeUtils';
   import { isEditingTarget } from './utils/format';
-  import type { EventFilter, ID, Phase, ReportTab } from './types';
+  import { PRINTABLE_REPORT_TABS, type EventFilter, type ID, type Phase, type ReportTab } from './types';
 
   let configOpen = $state(false);
   let reportOpen = $state(false);
@@ -39,13 +40,43 @@
   let reportTab = $state<ReportTab>('coverage');
   /** Preselects the report's own teacher/room dropdown when it was asked for. */
   let reportFilterId = $state<ID | null>(null);
-  let sidebarOpen = $state(true);
-  // Collapsed by default: the rail keeps the issue badge in view, and the grid
-  // is what you open the app to look at.
-  let conflictsOpen = $state(false);
+  // One dock, two tabs. Probleme is not a second panel any more, so it neither
+  // takes a second 40px rail nor floats over the lanes it is talking about.
+  let dockOpen = $state(true);
+  let dockTab = $state<'subjects' | 'problems'>('subjects');
   let selectedEventId = $state<string | null>(null);
   let filter = $state<EventFilter | null>(null);
   let scroller: HTMLDivElement | undefined = $state();
+
+  /**
+   * H2: a density change keeps the *hour*, not the pixel.
+   *
+   * The calendars are keyed on the density and re-mount, but `.phase-scroll` is
+   * ours and survives — so its `scrollTop` was carried across unchanged while
+   * the content under it grew or shrank by a third. Scrolled to 10:00 at M and
+   * switched to L, you landed at 09:20: the one thing being looked at was the
+   * one thing not carried over. The grid's time axis is linear in its own
+   * height, so holding the *fraction* holds the hour.
+   */
+  /** L1: Mo–Fr of the WK week, for the empty-state card. */
+  const weekRangeLabel = $derived(
+    `${dayDateLabel(getState().wkStartDate, 0)} – ${dayDateLabel(getState().wkStartDate, 4)}`,
+  );
+
+  let prevSlotH = slotHeight();
+  $effect(() => {
+    const h = slotHeight();
+    const el = scroller;
+    const was = prevSlotH;
+    prevSlotH = h;
+    if (!el || h === was || was === 0) return;
+    const top = el.scrollTop;
+    if (top === 0) return;
+    // After the re-mounted calendars have laid out at the new row height.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { el.scrollTop = Math.round(top * (h / was)); });
+    });
+  });
   let calendarWrapper: HTMLDivElement | undefined = $state();
   /** Measured widths of the phase segments; the label strip copies them. */
   let labelWidths = $state<number[]>([]);
@@ -61,6 +92,60 @@
   const selectedIds = $derived(getSelectedEventIds());
 
   const phases = $derived(orderedPhases(getState()));
+
+  // ─── Collapsed phases ──────────────────────────────────────────────────────
+  // A folded phase is drawn as a rail so the rest of the week gets its width.
+  // Nothing else changes: the store, the conflict detector, the reports and
+  // every printed sheet never learn that a phase is folded.
+
+  /**
+   * Only one calendar shows the time gutter, and it has to be the leftmost
+   * *open* one — with the KVK folded away, `i > 0` would have hidden the axis on
+   * the only grid still drawn and left the week without hour labels.
+   */
+  const axisPhaseId = $derived(phases.find(p => !isPhaseCollapsed(p.id))?.id ?? null);
+
+  /** What a rail says about what it is hiding. */
+  function railStats(phase: Phase): { events: number; problems: number } {
+    const state = getState();
+    const inPhase = state.events.filter(ev => eventInPhase(state, ev, phase));
+    const flagged = new Set(getConflicts().flatMap(c => c.involvedEventIds));
+    return {
+      events: inPhase.length,
+      problems: inPhase.filter(ev => flagged.has(ev.id)).length,
+    };
+  }
+
+  /**
+   * "Show me this one" and "it landed here" both point at a card, and a folded
+   * phase draws none — so the phase is unfolded first and the calendar that
+   * mounts for it picks the request up itself (both effects there re-run when
+   * their component mounts).
+   */
+  function expandPhaseOf(ids: ID[]): void {
+    const state = getState();
+    for (const id of ids) {
+      const ev = state.events.find(e => e.id === id);
+      if (!ev) continue;
+      for (const phase of state.phases) {
+        if (eventInPhase(state, ev, phase)) expandPhase(phase.id);
+      }
+    }
+  }
+
+  $effect(() => {
+    const request = getReveal();
+    if (!request) return;
+    request.token;
+    untrack(() => expandPhaseOf([request.id]));
+  });
+
+  $effect(() => {
+    const request = getFlash();
+    if (!request) return;
+    request.token;
+    untrack(() => expandPhaseOf(request.ids));
+  });
 
   // Column count drives each phase's share of the width, so lanes stay the same
   // width across the whole week regardless of how many a phase has.
@@ -99,9 +184,13 @@
     return () => observer.disconnect();
   });
 
-  /** Ctrl+P over an open report prints that report; Abdeckung has no sheet. */
+  /**
+   * Ctrl+P over an open report prints that report. Abdeckung and Abweichungen
+   * have no sheet of their own — they are read here and acted on here — so they
+   * fall back to the week itself.
+   */
   function planTargetFor(tab: ReportTab): PrintTarget {
-    return tab === 'coverage' ? 'grid' : tab;
+    return PRINTABLE_REPORT_TABS.includes(tab) ? (tab as PrintTarget) : 'grid';
   }
 
   function openReport(tab: ReportTab): void {
@@ -219,18 +308,38 @@
       case 'ArrowDown': {
         e.preventDefault();
         const delta = e.key === 'ArrowUp' ? -15 : 15;
+        const grid = gridWindow(state);
         if (shift) {
-          // Resize: never below one slot. Each block keeps its own length.
+          // Resize: never below one slot, never past the last drawn one. Each
+          // block keeps its own length, so this one really is per-block — a
+          // resize is not a rigid move of a set.
           updateEvents(ids, ev => {
-            const minutes = Math.max(15, timeDiffMinutes(ev.startTime, ev.endTime) + delta);
+            const longest = timeToMinutes(grid.end) - timeToMinutes(ev.startTime);
+            const minutes = Math.min(
+              Math.max(15, timeDiffMinutes(ev.startTime, ev.endTime) + delta),
+              Math.max(15, longest),
+            );
             return { endTime: addMinutesToTime(ev.startTime, minutes) };
           }, 'Dauer ändern');
         } else {
-          updateEvents(ids, ev => {
-            const minutes = timeDiffMinutes(ev.startTime, ev.endTime);
-            const start = addMinutesToTime(ev.startTime, delta);
-            return { startTime: start, endTime: addMinutesToTime(start, minutes) };
-          }, 'verschieben');
+          // The same rule the drag path follows (`clampGroupDelta` in
+          // Calendar.svelte): the selection moves as one or not at all. Clamping
+          // each block on its own let the ones at the edge stop while the rest
+          // kept going, silently reshaping the selection under a single undo
+          // entry — and, with an explicit Tagesraster, pushed a block outside
+          // the drawn hours, where no calendar renders it and the Probleme panel
+          // does not list it either.
+          const minuteDelta = clampGroupDelta(
+            events.flatMap(ev => [timeToMinutes(ev.startTime), timeToMinutes(ev.endTime)]),
+            delta,
+            timeToMinutes(grid.start),
+            timeToMinutes(grid.end),
+          );
+          if (minuteDelta === 0) break;
+          updateEvents(ids, ev => ({
+            startTime: addMinutesToTime(ev.startTime, minuteDelta),
+            endTime: addMinutesToTime(ev.endTime, minuteDelta),
+          }), 'verschieben');
         }
         break;
       }
@@ -238,10 +347,14 @@
       case 'ArrowRight': {
         e.preventDefault();
         const step = e.key === 'ArrowLeft' ? -1 : 1;
-        // At the edge of the week nothing can move, and an undo entry for a
-        // keypress that changed nothing is worse than no feedback.
-        if (events.every(ev => clampDayIndex(ev.dayIndex + step) === ev.dayIndex)) break;
-        updateEvents(ids, ev => ({ dayIndex: clampDayIndex(ev.dayIndex + step) }), 'verschieben');
+        // As above: all of them or none. At the edge of the week nothing can
+        // move, and an undo entry for a keypress that changed nothing is worse
+        // than no feedback.
+        const dayDelta = clampGroupDelta(
+          events.map(ev => ev.dayIndex), step, 0, DAY_NAMES.length - 1,
+        );
+        if (dayDelta === 0) break;
+        updateEvents(ids, ev => ({ dayIndex: ev.dayIndex + dayDelta }), 'verschieben');
         break;
       }
       case 'Delete':
@@ -251,11 +364,23 @@
         clearSelection();
         closeQuickEdit();
         break;
-      case 'Enter':
+      case 'Enter': {
+        // E3: Enter opens what a click opens. It used to reach for the full
+        // modal while a click opened the popover — the same card and the same
+        // intent, answered differently depending on the input device.
         e.preventDefault();
-        closeQuickEdit();
-        selectedEventId = getSelectedEventId();
+        const primary = getSelectedEventId();
+        if (!primary) break;
+        const card = document.querySelector<HTMLElement>(`[data-wk-event-id="${primary}"]`);
+        if (!card) {
+          // No card on the grid to anchor a popover to — the modal's one job.
+          selectedEventId = primary;
+          break;
+        }
+        const rect = card.getBoundingClientRect();
+        openQuickEdit(primary, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
         break;
+      }
       case 'd':
       case 'D':
         if (e.metaKey || e.ctrlKey) {
@@ -358,11 +483,18 @@
     apply(mq.matches);
     mq.addEventListener('change', e => apply(e.matches));
 
-    // The grid runs 07:00–19:00 so the fringes are reachable, but the day starts
-    // at 08:00 — open there rather than on an hour of empty rows.
+    // The drawn hours leave room above the training day so the fringe stays
+    // reachable — open on 08:00 rather than on that empty margin. The offset is
+    // measured from the window rather than assumed: it used to be a hardcoded
+    // four slots, which was only right while the grid always began at 07:00.
     requestAnimationFrame(() => {
       setTimeout(() => {
-        if (scroller) scroller.scrollTop = 4 * slotHeight();
+        if (!scroller) return;
+        const slots = Math.max(
+          0,
+          (timeToMinutes(GRID_BUSINESS_START) - timeToMinutes(gridWindow(getState()).start)) / 15,
+        );
+        scroller.scrollTop = slots * slotHeight();
       }, 60);
     });
 
@@ -378,26 +510,42 @@
       bind:filter
       onreport={openReport}
       onprint={() => (printTarget = 'grid')}
-      onshowissues={() => (conflictsOpen = true)}
+      onshowissues={() => { dockTab = 'problems'; dockOpen = true; }}
       onshowshortcuts={() => (shortcutsOpen = true)}
     />
   </div>
 
   <div class="main-area">
-    <SidePanel side="left" bind:open={sidebarOpen} label="Themen" width="240px">
-      <Sidebar />
-    </SidePanel>
+    <WorkDock
+      bind:open={dockOpen}
+      bind:tab={dockTab}
+      bind:selectedEventId
+      issueCount={conflictCount}
+    />
 
     <div class="calendar-wrapper" bind:this={calendarWrapper}>
       <div class="phase-labels">
         {#each phases as phase, i (phase.id)}
-          <div
+          {@const collapsed = isPhaseCollapsed(phase.id)}
+          <!-- The strip is where a phase is folded and unfolded: it is the one
+               element that already names the phase and spans exactly what would
+               disappear. -->
+          <button
             class="phase-label wk-eyebrow"
-            class:phase-label--noaxis={i > 0}
+            class:phase-label--noaxis={phase.id !== axisPhaseId && !collapsed}
+            class:phase-label--collapsed={collapsed}
             style={labelWidths[i] !== undefined
               ? `flex: 0 0 ${labelWidths[i]}px`
-              : `flex-grow: ${phaseWeight(phase)}`}
-          >{phase.label}</div>
+              : collapsed ? 'flex: 0 0 var(--wk-phase-rail-w)' : `flex-grow: ${phaseWeight(phase)}`}
+            aria-expanded={!collapsed}
+            title="Phase {phase.label} {collapsed ? 'ausklappen' : 'einklappen'}"
+            onclick={() => togglePhaseCollapsed(phase.id)}
+          >
+            <!-- Points the way the phase is about to move, the same way the
+                 side panels' toggles do: ‹ folds it away, › brings it back. -->
+            <Icon name={collapsed ? 'chevronRight' : 'chevronLeft'} size={12} class="phase-chevron" />
+            {#if !collapsed}<span class="phase-label-text">{phase.label}</span>{/if}
+          </button>
         {/each}
       </div>
 
@@ -406,14 +554,38 @@
         <!-- Keyed on the density: FullCalendar measures one slot row at render
              and sizes the grid from it, then stretches the rows back out to that
              height, so a shrink only takes effect on a fresh instance. -->
-        {#key getDensity()}
-          {#each phases as phase, i (phase.id)}
+        <!-- Keyed on the axis owner too: which grid draws the time gutter is a
+             render-time measurement in FullCalendar, so handing it to another
+             phase means building that calendar again. -->
+        {#key `${getDensity()}|${axisPhaseId}`}
+          {#each phases as phase (phase.id)}
+            {@const collapsed = isPhaseCollapsed(phase.id)}
             <div
               class="phase-seg"
-              class:phase-seg--noaxis={i > 0}
-              style="flex-grow: {phaseWeight(phase)}"
+              class:phase-seg--noaxis={phase.id !== axisPhaseId && !collapsed}
+              class:phase-seg--collapsed={collapsed}
+              style={collapsed ? '' : `flex-grow: ${phaseWeight(phase)}`}
             >
-              <Calendar bind:selectedEventId {phase} {filter} />
+              {#if collapsed}
+                {@const stats = railStats(phase)}
+                <button
+                  class="phase-rail"
+                  title="Phase {phase.label} ausklappen — {stats.events} {stats.events === 1 ? 'Lektion' : 'Lektionen'} geplant"
+                  onclick={() => togglePhaseCollapsed(phase.id)}
+                >
+                  <!-- The rail is the whole reassurance that nothing was
+                       deleted: the plan is untouched underneath, so it says how
+                       much of it is folded away — and keeps the problem count
+                       visible, because a conflict in here still counts. -->
+                  {#if stats.problems > 0}
+                    <span class="rail-badge">{stats.problems}</span>
+                  {/if}
+                  <span class="rail-name">{phase.label}</span>
+                  <span class="rail-count wk-num">{stats.events}</span>
+                </button>
+              {:else}
+                <Calendar bind:selectedEventId {phase} {filter} />
+              {/if}
             </div>
           {/each}
         {/key}
@@ -428,10 +600,14 @@
             <Icon name="arrowLeft" size={18} />
             <div>Ein Thema aus der Seitenleiste auf den Kalender ziehen, oder ein leeres Feld anklicken.</div>
           {:else}
-            <div class="empty-title">Noch keine Themen</div>
-            <div>Themen sind das, was auf den Kalender gezogen wird. Für diesen WK ist noch keines erfasst.</div>
-            <button class="empty-cta" onclick={() => requestConfig('subjects', { createSubject: true })}>
-              <Icon name="plus" size={14} /> Erstes Thema anlegen
+            <div class="empty-title">Dieser Plan ist noch leer</div>
+            <!-- «Erstes Thema anlegen» was one step of three presented as the
+                 whole job: a Thema picks its Vorgaben from the Ausbildner and
+                 Räume that do not exist yet, and nothing said so. Einrichtung
+                 is the screen that names all three and their order. -->
+            <div>Ausbildner, Räume und Themen werden einmal erfasst — danach wird geplant.</div>
+            <button class="empty-cta" onclick={() => requestConfig('setup')}>
+              <Icon name="settings" size={14} /> Einrichtung öffnen
             </button>
             {#if isPristineState(getState())}
               <button class="empty-cta empty-cta--secondary" onclick={loadSampleData}>
@@ -439,25 +615,21 @@
               </button>
             {/if}
           {/if}
+
+          <!-- L1: which week is this?
+               Pass 3 moved the week control into Konfiguration › Plan & Daten,
+               rightly: it is set once per WK and read never, because the column
+               headers print it. But *set once* means set at the start, and this
+               card is the one screen that knows it is the start — so the plan
+               sat on whatever Monday `createDefaultState` picked until someone
+               found the sixth tab. -->
+          <button class="empty-week" onclick={() => requestConfig('plan')}>
+            WK-Woche: <span class="wk-num">{weekRangeLabel}</span> · ändern
+          </button>
         </div>
       {/if}
     </div>
 
-    <!-- The dock keeps the collapsed rail's 40px in the flex row; the panel
-         itself floats out of it over the calendar when open, so the grid never
-         reflows for it. -->
-    <div class="right-dock">
-      <SidePanel
-        side="right"
-        bind:open={conflictsOpen}
-        label="Probleme"
-        width="268px"
-        badge={conflictCount}
-        overlay
-      >
-        <ConflictPanel bind:selectedEventId />
-      </SidePanel>
-    </div>
   </div>
 </div>
 
@@ -503,12 +675,13 @@
 {/if}
 
 {#if quickEdit && selectedEventId === null && selectedIds.length <= 1}
-  <EventPopover
-    quick={quickEdit}
-    onedit={(id) => { closeQuickEdit(); selectedEventId = id; }}
-  />
+  <EventPopover quick={quickEdit} />
 {/if}
 
+<!-- E1: the modal is no longer the "full" editor beside a "quick" one — the
+     popover holds every field. It is what opens for a Lektion with no card on
+     the grid to anchor a popover to: an orphan outside every Phase, opened from
+     the Probleme panel. -->
 {#if selectedEventId}
   <EventModal eventId={selectedEventId} onclose={() => (selectedEventId = null)} />
 {/if}
@@ -564,6 +737,22 @@
 <Toasts />
 
 <style>
+  /* L1 */
+  .empty-week {
+    margin-top: 0.35rem;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: 2px 0;
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: var(--wk-line-strong);
+    text-underline-offset: 3px;
+  }
+  .empty-week:hover { color: var(--wk-text); }
+
   :global(body) {
     margin: 0;
     overflow: hidden;
@@ -596,18 +785,6 @@
     min-height: 0;
   }
 
-  .right-dock {
-    position: relative;
-    width: 40px;
-    flex-shrink: 0;
-  }
-
-  /* The dock is the positioning context, so the panel inside it no longer
-     stretches as a flex child of .main-area and has to be told to fill it. */
-  .right-dock > :global(.side-panel) {
-    height: 100%;
-  }
-
   .calendar-wrapper {
     position: relative;
     flex: 1;
@@ -630,11 +807,57 @@
        pins each label to its segment. */
     flex-basis: var(--wk-axis-w);
     min-width: 0;
-    padding: 0.35rem 0.7rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    /* A band, not a row. It carries one word per phase and used to spend 36px
+       of the app's scarcest dimension on it — a slot and a half of grid.
+
+       `font: inherit` used to sit here, *after* the other font declarations, and
+       it is a shorthand: it reset the `.wk-eyebrow` on this very element back to
+       inherited 16px/1.5 body text. The strip was 36px tall because it was
+       rendering at a size nobody had chosen. The button now takes the eyebrow it
+       asks for, one step up for presence — these are the only labels the phases
+       get on the main screen. */
+    padding: 0.2rem 0.6rem;
+    border: 0;
     border-left: 2px solid var(--wk-line-strong);
+    background: transparent;
+    font-family: inherit;
+    font-size: var(--wk-fs-xs);
+    font-weight: 700;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
+  }
+
+  .phase-label:hover {
+    background: var(--wk-surface);
+    color: var(--wk-text);
+  }
+
+  .phase-label-text {
+    min-width: 0;
+    overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* The icon is a 12px box on the text's own centre line, which the glyphs it
+     replaced were not: ⌄ sat below the cap height of an uppercase label. */
+  .phase-label :global(.phase-chevron) {
+    flex-shrink: 0;
+    color: var(--wk-text-faint);
+  }
+
+  .phase-label:hover :global(.phase-chevron) {
+    color: var(--wk-text);
+  }
+
+  .phase-label--collapsed {
+    justify-content: center;
+    padding: 0.2rem 0;
   }
 
   /* Only the first phase carries the time gutter, so the others have no axis
@@ -673,6 +896,67 @@
 
   .phase-seg:first-child {
     border-left: 0;
+  }
+
+  /* ── Folded phase ───────────────────────────────────────────────────────── */
+  /* `align-self: stretch` rather than a height: the scroller lays its segments
+     out along one flex line, so the rail takes the height of the tallest of
+     them — the grid next to it — and runs the full length of the week. */
+  .phase-seg--collapsed {
+    flex: 0 0 var(--wk-phase-rail-w);
+    align-self: stretch;
+    /* Fills the viewport even when *every* phase is folded, where there is no
+       grid left for the flex line to take its height from. */
+    min-height: 100%;
+    background: var(--wk-surface-alt);
+  }
+
+  .phase-rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    width: 100%;
+    height: 100%;
+    padding: 0.7rem 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--wk-text-mute);
+  }
+
+  .phase-rail:hover {
+    background: var(--wk-surface);
+    color: var(--wk-text);
+  }
+
+  .rail-name {
+    writing-mode: vertical-rl;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .rail-count {
+    writing-mode: vertical-rl;
+    font-size: 0.62rem;
+    color: var(--wk-text-faint);
+  }
+
+  .rail-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 999px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    background: var(--color-error);
+    color: white;
+    flex-shrink: 0;
   }
 
   /* ── Marquee & selection bar ────────────────────────────────────────────── */

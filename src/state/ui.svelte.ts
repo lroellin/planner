@@ -8,7 +8,7 @@
  * merely looking at something.
  */
 
-import type { ID } from '../types';
+import type { ID, ReportTab } from '../types';
 
 const PREFS_KEY = 'wk-planner-ui';
 
@@ -23,17 +23,38 @@ const SLOT_HEIGHT: Record<Density, number> = {
 
 interface Prefs {
   density: Density;
+  /** Phase ids drawn as a rail instead of a grid — see the collapse section. */
+  collapsedPhases: ID[];
 }
+
+const DEFAULT_PREFS: Prefs = { density: 'normal', collapsedPhases: [] };
 
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { density: 'normal' };
+    if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     const density = parsed.density;
-    return { density: density && density in SLOT_HEIGHT ? density : 'normal' };
+    const collapsed = parsed.collapsedPhases;
+    return {
+      density: density && density in SLOT_HEIGHT ? density : 'normal',
+      collapsedPhases: Array.isArray(collapsed)
+        ? collapsed.filter((id): id is ID => typeof id === 'string')
+        : [],
+    };
   } catch {
-    return { density: 'normal' };
+    return DEFAULT_PREFS;
+  }
+}
+
+function savePrefs(): void {
+  try {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ density: _density, collapsedPhases: _collapsedPhases } satisfies Prefs),
+    );
+  } catch {
+    // Storage unavailable — the choice simply won't survive a reload.
   }
 }
 
@@ -218,8 +239,10 @@ export function clearPlaceRequest(): void { _placeRequest = null; }
  * "Open Konfiguration on this tab." The empty state has to be able to send a new
  * user to the one screen where a Thema can be created; nothing else in the app
  * links there, which is how a fresh plan came to have no way forward at all.
+ * `'setup'` is the Einrichtung tab — what the plan still needs, and the way in
+ * for anyone who does not yet know which of the other six tabs to ask.
  */
-export type ConfigTab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'plan';
+export type ConfigTab = 'setup' | 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'plan';
 
 let _configRequest: { tab: ConfigTab; createSubject?: boolean; token: number } | null = $state(null);
 let configToken = 0;
@@ -241,7 +264,7 @@ export function clearConfigRequest(): void { _configRequest = null; }
  * zeigen" all along. `filter` preselects the report's own dropdown.
  */
 export interface ReportRequest {
-  tab: 'coverage' | 'groups' | 'teachers' | 'rooms';
+  tab: ReportTab;
   filterId?: ID;
   token: number;
 }
@@ -251,7 +274,7 @@ let reportToken = 0;
 
 export function getReportRequest(): ReportRequest | null { return _reportRequest; }
 
-export function requestReport(tab: ReportRequest['tab'], filterId?: ID): void {
+export function requestReport(tab: ReportTab, filterId?: ID): void {
   _reportRequest = { tab, ...(filterId !== undefined ? { filterId } : {}), token: ++reportToken };
 }
 
@@ -259,7 +282,9 @@ export function clearReportRequest(): void { _reportRequest = null; }
 
 // ─── Density ──────────────────────────────────────────────────────────────────
 
-let _density: Density = $state(loadPrefs().density);
+const prefs = loadPrefs();
+
+let _density: Density = $state(prefs.density);
 
 export function getDensity(): Density { return _density; }
 export function slotHeight(): number { return SLOT_HEIGHT[_density]; }
@@ -267,16 +292,46 @@ export function slotHeight(): number { return SLOT_HEIGHT[_density]; }
 export function setDensity(density: Density): void {
   _density = density;
   applyDensity();
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ density } satisfies Prefs));
-  } catch {
-    // Storage unavailable — the choice simply won't survive a reload.
-  }
+  savePrefs();
 }
 
 /** Publishes the slot height as a CSS variable the grid rules read. */
 export function applyDensity(): void {
   document.documentElement.style.setProperty('--wk-slot-h', `${SLOT_HEIGHT[_density]}px`);
+}
+
+// ─── Collapsed phases ─────────────────────────────────────────────────────────
+
+/**
+ * Phases the user has folded away. A collapsed phase is drawn as a narrow rail
+ * instead of a grid so the rest of the week gets the width — KVK is two days
+ * that are done with by Wednesday, and it was taking a third of the screen from
+ * the rotation still being planned.
+ *
+ * It is *only* a view state, which is why it lives here and not in `AppState`:
+ * conflicts, coverage, the reports and every printed sheet read the store and
+ * cannot tell that a phase is folded. The one thing that has to notice is
+ * "show me this Lektion" — the card is not rendered while its phase is a rail,
+ * so App.svelte expands the phase first (see `expandPhase`).
+ */
+let _collapsedPhases: ID[] = $state(prefs.collapsedPhases);
+
+export function isPhaseCollapsed(id: ID): boolean {
+  return _collapsedPhases.includes(id);
+}
+
+export function togglePhaseCollapsed(id: ID): void {
+  _collapsedPhases = _collapsedPhases.includes(id)
+    ? _collapsedPhases.filter(x => x !== id)
+    : [..._collapsedPhases, id];
+  savePrefs();
+}
+
+/** Unfold a phase that has to be looked at. No-op when it already is open. */
+export function expandPhase(id: ID): void {
+  if (!_collapsedPhases.includes(id)) return;
+  _collapsedPhases = _collapsedPhases.filter(x => x !== id);
+  savePrefs();
 }
 
 // ─── Toasts ───────────────────────────────────────────────────────────────────

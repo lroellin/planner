@@ -1,4 +1,4 @@
-import type { AppState, ID } from '../types';
+import type { AppState, ID, Room } from '../types';
 import { buildGroupPlans, buildRoomPlans, buildTeacherPlans } from './../reports/reports';
 import { DAY_NAMES, dayDateLabel, formatDuration } from '../utils/timeUtils';
 import { teacherShort } from '../utils/format';
@@ -96,10 +96,9 @@ function cell(full: string, short = ''): PrintCell {
   return { full, short: trimmed && trimmed !== full ? trimmed : full };
 }
 
-/** The code a room was given in Konfiguration, if any. */
-function roomCode(state: AppState, name: string | null): string {
-  if (name === null) return '';
-  return state.rooms.find(r => r.name === name)?.shortName ?? '';
+/** A Raum cell: its name, falling back to the code given in Konfiguration. */
+function roomCell(room: Room | null): PrintCell {
+  return cell(room?.name ?? DASH, room?.shortName ?? '');
 }
 
 function dayLabel(state: AppState, dayIndex: number): string {
@@ -151,7 +150,7 @@ function groupBoxes(state: AppState): PrintBox[] {
         full: e.teachers.map(t => t.name).join(', '),
         short: e.teachers.map(t => teacherShort(t)).join(' '),
       },
-      where: cell(e.roomName ?? DASH, roomCode(state, e.roomName)),
+      where: roomCell(e.room),
       note: '',
       muted: e.subject.kind === 'break',
     })),
@@ -184,7 +183,7 @@ function teacherBoxes(state: AppState): PrintBox[] {
         color: e.subject.color,
         subject: cell(e.subject.name, e.subject.shortName),
         who: cell(e.groupLabels.join(' ') || DASH),
-        where: cell(e.roomName ?? DASH, roomCode(state, e.roomName)),
+        where: roomCell(e.room),
         note:
           e.status === 'handed-over'
             ? `abgegeben an ${e.counterparts.map(t => t.name).join(', ') || 'jemand anderen'}`

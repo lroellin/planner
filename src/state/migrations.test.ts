@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   migrate_v5_to_v6, migrate_v6_to_v7, migrate_v7_to_v8, migrate_v8_to_v9, migrate_v9_to_v10,
   migrate_v10_to_v11, migrate_v11_to_v12, migrateState,
+  migrate_v13_to_v14,
 } from './migrations';
 import { CURRENT_VERSION } from './persistence';
 
@@ -151,6 +152,22 @@ describe('migrate_v11_to_v12', () => {
     state.subjects.push({ ...state.subjects[0], id: 's2', isBreak: true });
     const kinds = migrate_v11_to_v12(state).subjects.map((s: { kind: string }) => s.kind);
     expect(kinds).toEqual(['lesson', 'break']);
+  });
+});
+
+describe('migrate_v13_to_v14', () => {
+  it('seeds the grid window as "derive it", not as the old constants', () => {
+    // Stamping 07:00–19:00 here would freeze every existing plan into exactly
+    // the empty fringe the field exists to remove.
+    const out = migrate_v13_to_v14({ version: 13, events: [], subjects: [] });
+    expect(out.version).toBe(14);
+    expect(out.gridStartTime).toBeNull();
+    expect(out.gridEndTime).toBeNull();
+  });
+
+  it('leaves the schedule alone', () => {
+    const events = [{ id: 'e1', startTime: '08:00', endTime: '09:00' }];
+    expect(migrate_v13_to_v14({ version: 13, events }).events).toEqual(events);
   });
 });
 

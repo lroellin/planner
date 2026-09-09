@@ -41,10 +41,20 @@
       items: [
         { keys: ['Klick'], what: 'Lektion auswählen und Schnellbearbeitung öffnen' },
         { keys: ['Doppelklick'], what: 'Vollständigen Editor öffnen' },
+        { keys: ['Rechtsklick'], what: 'Auf eine Lektion: Schnellbearbeitung; auf leere Fläche: Lektion einsetzen' },
         { keys: [MOD, 'Klick'], what: 'Lektion zur Auswahl hinzufügen oder entfernen' },
         { keys: ['⇧', 'Klick'], what: 'Lektion zur Auswahl hinzufügen' },
         { keys: ['Ziehen'], what: 'Rahmen über leere Fläche wählt alles darin aus' },
         { keys: [MOD, 'A'], what: 'Alle sichtbaren Lektionen auswählen' },
+        { keys: ['Klick'], what: 'Auf den Tag im Kalenderkopf: ganzen Tag auswählen' },
+        { keys: ['Klick'], what: 'Auf die Gruppe im Kalenderkopf: diese Gruppe an diesem Tag' },
+        { keys: ['Klick'], what: 'Auf die Uhrzeit links: alles, was zu dieser Zeit läuft' },
+      ],
+    },
+    {
+      title: 'Kalender',
+      items: [
+        { keys: ['Klick'], what: 'Auf den Phasennamen über dem Kalender: Phase ein- oder ausklappen' },
       ],
     },
     {

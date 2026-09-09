@@ -7,6 +7,7 @@
     coverageForSubject, missingLanesForSubject, missingLaneIdsForSubject, subjectPhases, isCounted,
   } from '../reports/reports';
   import { sortSubjects } from '../utils/timeUtils';
+  import { subjectShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import type { ID, Subject } from '../types';
 
@@ -74,26 +75,43 @@
    */
   type ChipState =
     | { kind: 'complete' }
-    | { kind: 'missing'; label: string }
-    | { kind: 'short'; label: string }
-    | { kind: 'over'; label: string }
-    | { kind: 'uneven'; label: string };
+    | { kind: 'missing'; count: number }
+    | { kind: 'short'; short: string }
+    | { kind: 'over'; short: string }
+    | { kind: 'uneven'; short: string };
 
   function chipState(subject: Subject): ChipState {
     const cov = coverageForSubject(appState, subject.id);
     const gaps = cov.total - cov.placed;
-    if (gaps > 0) return { kind: 'missing', label: `fehlt ${gaps}×` };
-    if (cov.short) return { kind: 'short', label: 'zu kurz' };
+    if (gaps > 0) return { kind: 'missing', count: gaps };
+    if (cov.short) return { kind: 'short', short: 'kurz' };
     // Over-planning: the report's own verdict, so the two cannot disagree.
-    if (cov.over) return { kind: 'over', label: 'zu lang' };
-    if (cov.uneven) return { kind: 'uneven', label: 'ungleich' };
+    if (cov.over) return { kind: 'over', short: 'lang' };
+    if (cov.uneven) return { kind: 'uneven', short: '≠' };
     return { kind: 'complete' };
   }
 
   // Says *where* it is still missing — the question the counter only raises.
   // "Uneven" has no missing lane to name, so it gets its own sentence rather
   // than an empty list.
+  /**
+   * N2: the label the card falls back to on a narrow lane, appended to every
+   * chip tooltip. Pass 3 (S3) spent a finding recovering this row for the
+   * *name*, so the Kürzel does not take width back off it — but the chip is
+   * still where you are looking when you wonder what the card will say, and a
+   * tooltip costs nothing. The editable version, with a live preview, is in
+   * Konfiguration › Themen.
+   */
+  function chipCardNote(subject: Subject): string {
+    const label = subjectShort(subject);
+    return label === subject.name ? '' : ` · Karte: ${label}`;
+  }
+
   function chipTitle(subject: Subject): string {
+    return `${chipTitleBase(subject)}${chipCardNote(subject)}`;
+  }
+
+  function chipTitleBase(subject: Subject): string {
     if (!isCounted(subject)) {
       return subject.optional && subject.kind === 'lesson'
         ? `${subject.name} — nur für einzelne Gruppen, zählt nicht zur Abdeckung`
@@ -173,19 +191,17 @@
                 onclick={(e) => onChipClick(subject.id, e)}
               >
                 <span class="chip-spine"></span>
-                <span class="chip-line">
-                  <Icon name="grip" size={13} class="chip-grip" />
-                  <span class="chip-name">{subject.name}</span>
-                  {#if subject.isMultiGroup}
-                    <Icon name="layers" size={12} class="chip-multi" />
-                  {/if}
-                  <!-- A green "3/3" while the coverage report calls the same row
-                       uneven is the badge people look at all day being the one
-                       that is wrong, so the chip carries the report's verdict. -->
-                  {#if section.coverage && isCounted(subject) && chipState(subject).kind === 'complete'}
-                    <Icon name="check" size={12} class="chip-done" />
-                  {/if}
-                </span>
+                <Icon name="grip" size={13} class="chip-grip" />
+                <span class="chip-name">{subject.name}</span>
+                {#if subject.isMultiGroup}
+                  <Icon name="layers" size={12} class="chip-multi" />
+                {/if}
+                <!-- A green "3/3" while the coverage report calls the same row
+                     uneven is the badge people look at all day being the one
+                     that is wrong, so the chip carries the report's verdict. -->
+                {#if section.coverage && isCounted(subject) && chipState(subject).kind === 'complete'}
+                  <Icon name="check" size={12} class="chip-done" />
+                {/if}
                 <!-- An optional Thema is not owed by every lane, so it has
                      neither a gap to report nor a completion to tick: it gets
                      the same silence a Pause does, not a green check that would
@@ -193,27 +209,34 @@
                 {#if section.coverage && isCounted(subject)}
                   {@const st = chipState(subject)}
                   {#if st.kind !== 'complete'}
-                    <!-- Its own line: at 208px the badge and the name were
-                         competing for the same run of pixels and the name lost —
-                         "Persönliche Ausr…", "Schutzanlage Be…" — when the name
-                         is the whole affordance. -->
-                    <!-- The spotlight hangs off *this* badge, not off the whole
-                         chip. Dimming the week and marking the owing lanes is an
-                         answer to "where is it still missing?", and asking it by
-                         sweeping the pointer down the list — or merely by
-                         clicking a chip, which leaves the grid dark under a
-                         focused button — put the calendar behind a scrim exactly
-                         when the user was trying to read it. -->
+                    <!-- Back on the name's own line, and short.
+                         The badge was moved to a second row because "fehlt 2×"
+                         and a long Thema fought over 208px and the name lost.
+                         The fight was over the *words*, not the row: a flag that
+                         says «2» beside a warning triangle, or a single letter
+                         for the three duration verdicts, takes ~26px instead of
+                         ~62 and leaves the name more room than the two-line chip
+                         ever gave it — at 30px per chip instead of 50, which is
+                         the whole Themen list on screen at once rather than two
+                         thirds of it. The sentence each flag stood for is in the
+                         chip's tooltip, where it always was and where it can be
+                         a sentence.
+                         The spotlight hangs off *this* flag, not off the whole
+                         chip: sweeping the pointer down the list, or merely
+                         clicking a chip, would otherwise put the calendar behind
+                         a scrim exactly when it is being read. -->
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <span class="chip-foot">
-                      <span
-                        class="chip-flag chip-flag-{st.kind}"
-                        onmouseenter={() => spotlightSubject(subject.id)}
-                        onmouseleave={() => spotlightSubject(null)}
-                      >
-                        {#if st.kind === 'missing'}<Icon name="alert" size={10} />{/if}
-                        {st.label}
-                      </span>
+                    <span
+                      class="chip-flag chip-flag-{st.kind}"
+                      title={chipTitle(subject)}
+                      onmouseenter={() => spotlightSubject(subject.id)}
+                      onmouseleave={() => spotlightSubject(null)}
+                    >
+                      {#if st.kind === 'missing'}
+                        <Icon name="alert" size={10} />{st.count}×
+                      {:else}
+                        {st.short}
+                      {/if}
                     </span>
                   {/if}
                 {/if}
@@ -307,12 +330,12 @@
   .subject-chip {
     position: relative;
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.12rem;
+    align-items: center;
+    gap: 0.35rem;
     width: 100%;
+    min-width: 0;
     text-align: left;
-    padding: 0.34rem 0.45rem 0.34rem 0.6rem;
+    padding: 0.3rem 0.45rem 0.3rem 0.6rem;
     border-radius: var(--wk-r-sm);
     font-size: var(--wk-fs-sm);
     font-weight: 500;
@@ -323,18 +346,6 @@
     border: 1px solid color-mix(in oklab, var(--sc) var(--wk-edge), var(--wk-surface));
     overflow: hidden;
     transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
-  }
-
-  .chip-line {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    min-width: 0;
-  }
-
-  .chip-foot {
-    display: flex;
-    padding-left: 1.1rem;
   }
 
   /* The chip previews the card it will become: same spine, same tint recipe. */
@@ -403,10 +414,12 @@
     display: inline-flex;
     cursor: help;
     align-items: center;
-    gap: 0.2rem;
+    gap: 0.12rem;
+    flex-shrink: 0;
     font-size: var(--wk-fs-2xs);
     font-weight: 700;
     line-height: 1.3;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Not yet placed on every lane: the loudest of the three, and the only one

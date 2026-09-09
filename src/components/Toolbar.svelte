@@ -1,10 +1,11 @@
 <script lang="ts">
   import {
-    getState, undo, redo, undoSteps, canUndo, canRedo, setWkStartDate, getIssueCount,
+    getState, undo, redo, undoSteps, canUndo, canRedo, getIssueCount,
     getAffectedEventCount, undoLabel, redoLabel, undoHistory, exportStaleness,
   } from "../state/store.svelte";
   import { getDensity, setDensity, requestConfig, type Density } from "../state/ui.svelte";
-  import { formatDate, dayDateLabel, sortSubjects } from "../utils/timeUtils";
+  import { setupSteps } from "../state/setup";
+  import { sortSubjects } from "../utils/timeUtils";
   import { teacherShort, isEditingTarget } from "../utils/format";
   import { getContrastColor } from "../utils/colorUtils";
   import Icon from "./Icon.svelte";
@@ -28,6 +29,16 @@
   }: Props = $props();
 
   const appState = $derived(getState());
+
+  // Nothing can be placed until Ausbildner, Räume and Themen exist, and this
+  // button is the only way to any of them.
+  const SETUP_LABELS: Record<string, string> = {
+    groups: 'Gruppen', phases: 'Phasen', teachers: 'Ausbildner',
+    rooms: 'Räume', subjects: 'Themen',
+  };
+  const openSetup = $derived(setupSteps(appState).filter(step => !step.done));
+  const setupDone = $derived(openSetup.length === 0);
+  const openSetupLabels = $derived(openSetup.map(step => SETUP_LABELS[step.key]).join(', '));
   // Conflicts *and* orphans — the same number the conflict panel shows, so the
   // two badges cannot disagree.
   const conflictCount = $derived(getIssueCount());
@@ -58,8 +69,31 @@
   let exportHintDismissed = $state(false);
   const showExportHint = $derived(staleness.stale && !exportHintDismissed);
 
-  // "teacher:abc" ⇄ { kind, id }; "" means no filter
-  const filterValue = $derived(filter ? `${filter.kind}:${filter.id}` : "");
+  /**
+   * What the filter is set to, said in words.
+   *
+   * It used to be a permanent 158px `<select>` reading "Alle Lektionen" — a
+   * fifth of the left-hand bar spent, at all times, saying that no filter is
+   * on. Off, it is now an icon; on, it is a chip naming the one thing you are
+   * looking at, with the × that turns it off. The state that matters is the
+   * loud one.
+   */
+  const filterLabel = $derived.by(() => {
+    if (!filter) return null;
+    const { kind, id } = filter;
+    if (kind === 'teacher') return appState.teachers.find(t => t.id === id)?.name ?? null;
+    if (kind === 'room') return appState.rooms.find(r => r.id === id)?.name ?? null;
+    return appState.groups.find(g => g.id === id)?.label ?? null;
+  });
+
+  const FILTER_KIND_LABEL: Record<EventFilter['kind'], string> = {
+    teacher: 'Ausbildner', room: 'Raum', group: 'Gruppe',
+  };
+
+  function setFilter(kind: EventFilter['kind'], id: string): void {
+    filter = { kind, id };
+    menu = null;
+  }
 
   // Programmpunkte, then breaks — each block alphabetical, the sidebar's order.
   const legendSubjects = $derived([
@@ -68,32 +102,20 @@
     ...sortSubjects(appState.subjects.filter(s => s.kind === 'break')),
   ]);
 
-  const weekLabel = $derived(
-    `${dayDateLabel(appState.wkStartDate, 0)}–${dayDateLabel(appState.wkStartDate, 4)}`,
-  );
-
-  let menu: 'legend' | 'week' | 'history' | 'more' | null = $state(null);
+  let menu: 'legend' | 'filter' | 'history' | 'more' | null = $state(null);
 
   /**
-   * The bar carries more than fits, and it used to deal with that by not
-   * dealing with it: `.bar-left`/`.bar-right` are `flex: 1; min-width: 0` but
-   * every child is nowrap text, so nothing could shrink and `justify-content:
-   * flex-end` pushed the right group's overflow *out of its own left edge* —
-   * straight across the week nav. At 1280px that was seven overlapping pairs.
+   * The bar carries more than fits at some widths, so the collapse is explicit
+   * and ordered, cheapest loss first: labels off the two wide actions, then the
+   * density control into the "⋯".
    *
-   * So the collapse is explicit and ordered, cheapest loss first: labels off
-   * the two wide actions, then the three things that are consulted rarely
-   * (legend, shortcuts, density) into one "⋯". Both thresholds are measured
-   * against what the bar actually needs, not round numbers.
+   * The left group lost ~370px in this pass — the wordmark, the week nav and
+   * the Legende button all left it — so both thresholds drop by about that
+   * much: what used to need 1500px to stay labelled now needs 1130.
    */
   let barWidth = $state(typeof window === 'undefined' ? 1600 : window.innerWidth);
-  const dense = $derived(barWidth < 1500);
-  const tight = $derived(barWidth < 1360);
-
-  // No width-guard on `menu` any more: the overflow is a permanent button (B5)
-  // and the legend renders from whichever anchor is on screen — bar-left while
-  // there is room for its own button, the overflow once there is not. Both
-  // states are legal at every width, so nothing here has to close them.
+  const dense = $derived(barWidth < 1130);
+  const tight = $derived(barWidth < 1000);
 
   const history = $derived(undoHistory());
 
@@ -108,23 +130,6 @@
     { key: 'normal', label: 'Normal', short: 'M' },
     { key: 'comfortable', label: 'Weit', short: 'L' },
   ];
-
-  function applyFilter(raw: string): void {
-    if (!raw) {
-      filter = null;
-      return;
-    }
-    const [kind, ...rest] = raw.split(':');
-    filter = { kind: kind as EventFilter['kind'], id: rest.join(':') };
-  }
-
-  function shiftWeek(delta: number): void {
-    // Parse as local date to avoid UTC-offset shifting the day
-    const [y, m, day] = appState.wkStartDate.split('-').map(Number);
-    const d = new Date(y!, m! - 1, day!);
-    d.setDate(d.getDate() + delta * 7);
-    setWkStartDate(formatDate(d));
-  }
 
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') menu = null;
@@ -154,8 +159,8 @@
      the only thing telling you there was more was an overlay scrollbar that is
      invisible until you scroll. Three columns fit the lot with room to spare,
      and the scroll cap stays as a backstop for a very long Themen list. -->
-{#snippet legendPanel(align: 'left' | 'right')}
-  <div class="pop pop-legend {align === 'left' ? 'pop-left' : 'pop-right'}">
+{#snippet legendPanel()}
+  <div class="pop pop-legend pop-right">
     <section class="legend-col">
       <div class="pop-title wk-eyebrow">Ausbildner</div>
       {#each appState.teachers as t (t.id)}
@@ -243,97 +248,88 @@
 <div class="bar">
   <!-- ── Identity + filter ────────────────────────────────────────────────── -->
   <div class="bar-left">
-    <!-- The wordmark names the app once, at the start of a session; the plan
-         name is what tells you which week you are in, and it is the only
-         editable thing here. It gets the weight. -->
-    <span class="wordmark">WK<span class="wordmark-thin">Planer</span></span>
-
+    <!-- The wordmark is gone. It said "WK PLANER" beside a plan called "WK 2026
+         Tuggen/Reichenburg", 90px of the bar spent naming the app to the one
+         person who already knows which app they opened — and the browser tab
+         says it anyway. The plan name is the identity now; it is also the only
+         editable thing here, so it gets the weight and the width. -->
     <button
       class="plan-name"
-      onclick={() => (configOpen = true)}
-      title="Umbenennen unter Konfiguration › Plan &amp; Daten"
+      onclick={() => requestConfig('plan')}
+      title="{appState.name} — umbenennen unter Konfiguration › Plan &amp; Daten"
     >{appState.name}</button>
 
-    <label class="filter" title="Nur Lektionen eines Ausbildners, eines Raums oder einer Gruppe zeigen">
-      <Icon name="filter" size={13} />
-      <select
-        class="filter-select"
-        value={filterValue}
-        onchange={(e) => applyFilter((e.currentTarget as HTMLSelectElement).value)}
+    <!-- Off: one icon. On: a chip naming the filter, with its own ×. -->
+    <div class="legend-wrap">
+      <button
+        class="filter-btn"
+        class:filter-btn-on={filter !== null}
+        class:tb-btn-on={menu === 'filter' && filter === null}
+        onclick={() => (menu = menu === 'filter' ? null : 'filter')}
+        title={filter
+          ? `Gefiltert auf ${FILTER_KIND_LABEL[filter.kind]} ${filterLabel ?? ''} — nur diese Lektionen werden gezeigt`
+          : 'Nur Lektionen eines Ausbildners, eines Raums oder einer Gruppe zeigen'}
         aria-label="Lektionen filtern"
       >
-        <option value="">Alle Lektionen</option>
-        <optgroup label="Ausbildner">
-          {#each appState.teachers as t (t.id)}
-            <option value="teacher:{t.id}">{t.name}</option>
-          {/each}
-        </optgroup>
-        <optgroup label="Räume">
-          {#each appState.rooms as r (r.id)}
-            <option value="room:{r.id}">{r.name}</option>
-          {/each}
-        </optgroup>
-        <optgroup label="Gruppen">
+        <Icon name="filter" size={13} />
+        {#if filter}<span class="filter-name">{filterLabel ?? '?'}</span>{/if}
+      </button>
+      {#if filter}
+        <button
+          class="filter-clear"
+          onclick={() => (filter = null)}
+          title="Filter aufheben — wieder alle Lektionen zeigen"
+          aria-label="Filter aufheben"
+        ><Icon name="x" size={11} /></button>
+      {/if}
+      {#if menu === 'filter'}
+        <div class="pop pop-left pop-filter">
+          <button
+            class="pop-item pop-item-row"
+            class:pop-item-on={filter === null}
+            onclick={() => { filter = null; menu = null; }}
+          >
+            <span class="pop-item-label">Alle Lektionen</span>
+          </button>
+          {#if appState.teachers.length > 0}
+            <div class="pop-title wk-eyebrow">Ausbildner</div>
+            {#each appState.teachers as t (t.id)}
+              <button
+                class="pop-item pop-item-row"
+                class:pop-item-on={filter?.kind === 'teacher' && filter.id === t.id}
+                onclick={() => setFilter('teacher', t.id)}
+              >
+                <span class="legend-dot" style="background:{t.color}"></span>
+                <span class="pop-item-label">{t.name}</span>
+              </button>
+            {/each}
+          {/if}
+          {#if appState.rooms.length > 0}
+            <div class="pop-title wk-eyebrow">Räume</div>
+            {#each appState.rooms as r (r.id)}
+              <button
+                class="pop-item pop-item-row"
+                class:pop-item-on={filter?.kind === 'room' && filter.id === r.id}
+                onclick={() => setFilter('room', r.id)}
+              >
+                <span class="legend-dot" style="background:{r.color}"></span>
+                <span class="pop-item-label">{r.name}</span>
+              </button>
+            {/each}
+          {/if}
+          <div class="pop-title wk-eyebrow">Gruppen</div>
           {#each appState.groups.filter(g => g.enabled) as g (g.id)}
-            <option value="group:{g.id}">{g.label}</option>
+            <button
+              class="pop-item pop-item-row"
+              class:pop-item-on={filter?.kind === 'group' && filter.id === g.id}
+              onclick={() => setFilter('group', g.id)}
+            >
+              <span class="pop-item-label">{g.label}</span>
+            </button>
           {/each}
-        </optgroup>
-      </select>
-    </label>
-
-    <!-- B4: with the week nav centred on the viewport there was a ~300px hole
-         between it and the filter it belongs with — "which week am I editing"
-         and "what am I looking at" are the same question, asked twice. It sits
-         with the rest of the view controls now, and the bar is two groups
-         rather than three. -->
-    <div class="week-nav">
-      <button class="tb-icon" onclick={() => shiftWeek(-1)} title="Vorherige Woche" aria-label="Vorherige Woche">
-        <Icon name="chevronLeft" size={16} />
-      </button>
-      <div class="week-wrap">
-        <button
-          class="week-btn"
-          class:tb-btn-on={menu === 'week'}
-          onclick={() => (menu = menu === 'week' ? null : 'week')}
-          title="WK-Woche wählen"
-        >
-          <Icon name="calendar" size={14} />
-          <span class="wk-num">{weekLabel}</span>
-        </button>
-        {#if menu === 'week'}
-          <div class="pop pop-left">
-            <div class="pop-title wk-eyebrow">WK-Woche (Montag)</div>
-            <input
-              type="date"
-              class="input input-bordered input-sm w-full"
-              value={appState.wkStartDate}
-              onchange={(e) => {
-                setWkStartDate((e.currentTarget as HTMLInputElement).value);
-                menu = null;
-              }}
-            />
-            <p class="pop-empty">Jedes Datum rastet auf seinen Montag ein.</p>
-          </div>
-        {/if}
-      </div>
-      <button class="tb-icon" onclick={() => shiftWeek(1)} title="Nächste Woche" aria-label="Nächste Woche">
-        <Icon name="chevronRight" size={16} />
-      </button>
+        </div>
+      {/if}
     </div>
-
-    {#if !tight}
-      <div class="legend-wrap">
-        <button
-          class="tb-btn"
-          class:tb-btn-on={menu === 'legend'}
-          onclick={() => (menu = menu === 'legend' ? null : 'legend')}
-          title="Was die Farben bedeuten"
-        >
-          <Icon name="palette" size={15} /> Legende
-        </button>
-        {#if menu === 'legend'}{@render legendPanel('left')}{/if}
-      </div>
-    {/if}
   </div>
 
   <!-- ── Actions ──────────────────────────────────────────────────────────── -->
@@ -409,6 +405,17 @@
     </button>
     {/key}
 
+    <!-- K4: the number everyone watches changed silently. The badge ticks and
+         re-colours, both of which say nothing to a screen reader — while toasts
+         have aria-live and the selection bar has role="status", so the pattern
+         was established and this was left out. Outside the {#key} block, or the
+         re-mount would re-announce it unchanged. -->
+    <span class="sr-only" aria-live="polite">
+      {conflictCount > 0
+        ? `${conflictCount} ${conflictCount === 1 ? 'Problem' : 'Probleme'}`
+        : 'Keine Probleme'}
+    </span>
+
     <!-- The plan exists in this browser and nowhere else. Quiet, dismissible,
          and shown only once there is a week worth losing — but shown, because
          the alternative is finding out from an empty grid. -->
@@ -471,20 +478,19 @@
       ><Icon name="more" size={16} /></button>
       {#if menu === 'more'}
         <div class="pop pop-right">
+          <div class="pop-title wk-eyebrow">Ansicht</div>
           {#if tight}
-            <div class="pop-title wk-eyebrow">Zeilenhöhe</div>
             <div class="pop-density">{@render densityControl()}</div>
           {/if}
-          <!-- "Ansicht" belongs to the Legende, which only lands in this menu
-               on a narrow bar. Above that width the group collapsed to a single
-               Tastenkürzel item under a heading that did not describe it. -->
-          {#if tight}
-            <div class="pop-title wk-eyebrow">Ansicht</div>
-            <button class="pop-item pop-item-row" onclick={() => (menu = 'legend')}>
-              <Icon name="palette" size={14} />
-              <span class="pop-item-label">Legende</span>
-            </button>
-          {/if}
+          <!-- The Legende lives here at every width now. As a labelled button on
+               the bar it cost ~100px permanently to answer a question — "what
+               does this colour mean" — that is asked on the first day and then
+               about once a week; the three keys it holds are all also readable
+               in Konfiguration. -->
+          <button class="pop-item pop-item-row" onclick={() => (menu = 'legend')}>
+            <Icon name="palette" size={14} />
+            <span class="pop-item-label">Legende</span>
+          </button>
           <div class="pop-title wk-eyebrow">Hilfe</div>
           <button
             class="pop-item pop-item-row"
@@ -496,14 +502,28 @@
           </button>
         </div>
       {/if}
-      {#if menu === 'legend' && tight}{@render legendPanel('right')}{/if}
+      {#if menu === 'legend'}{@render legendPanel()}{/if}
     </div>
 
     <!-- Ghost, not primary: it is opened once at the start of a WK, and being
-         the loudest thing on the bar said otherwise. -->
-    <button class="tb-btn tb-btn-framed" onclick={() => (configOpen = true)}>
+         the loudest thing on the bar said otherwise. The dot is the exception —
+         while Ausbildner, Räume or Themen are still empty, nothing can be
+         planned at all, and this is the only button that leads there. It
+         resolves itself, so unlike the export hint beside it, it needs no × -->
+    <button
+      class="tb-btn tb-btn-framed"
+      class:tb-btn-todo={!setupDone}
+      onclick={() => (configOpen = true)}
+      title={setupDone
+        ? 'Gruppen, Phasen, Ausbildner, Räume und Themen'
+        : `Einrichtung offen: ${openSetupLabels}`}
+    >
       <Icon name="settings" size={15} /> Konfiguration
+      {#if !setupDone}<span class="tb-dot" aria-hidden="true"></span>{/if}
     </button>
+    <span class="sr-only" aria-live="polite">
+      {setupDone ? '' : `Einrichtung offen: ${openSetupLabels}`}
+    </span>
   </div>
 </div>
 
@@ -516,8 +536,11 @@
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    height: 46px;
-    padding: 0 0.65rem;
+    /* 42, not 46. Four pixels is not much on its own; it is the same four the
+       phase strip and the column headers each gave back in this pass, and
+       together they are a whole 15-minute slot of grid. */
+    height: 42px;
+    padding: 0 0.55rem;
     background: var(--wk-surface);
   }
 
@@ -534,40 +557,17 @@
     justify-content: flex-end;
   }
 
-  /* The week nav travels with the filter it belongs to. `overflow: hidden` per
-     group — the belt-and-braces the review asked for — is deliberately *not*
-     used here, because every group contains an absolutely-positioned popover
-     and clipping the bar would clip those; a menu that cannot be read is a
-     worse failure than the one it guards against. The two collapse steps above
-     are what keep the groups from meeting. */
-  .week-nav {
-    display: flex;
-    align-items: center;
-    gap: 0.15rem;
-    flex-shrink: 0;
-    margin-left: 0.15rem;
-  }
+  /* `overflow: hidden` per group is deliberately *not* used here, because both
+     groups contain absolutely-positioned popovers and clipping the bar would
+     clip those; the two collapse steps above are what keep them from meeting. */
 
-  /* A mark, not a headline. At 14px/750 it was within a hair of the plan name's
-     13px/600 and the two read as one competing pair; the app's own name is the
-     one thing on this bar nobody needs to read twice. */
-  .wordmark {
-    font-size: var(--wk-fs-2xs);
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--wk-text-faint);
-    margin-right: 0.55rem;
-    white-space: nowrap;
-  }
-
-  .wordmark-thin {
-    font-weight: 500;
-    margin-left: 0.3em;
-  }
-
+  /* The bar's identity, and the only editable thing on it. The cap is a
+     fraction of the viewport rather than a fixed 14rem: a plan name is a place
+     and a year, it is read once per session, and on a 1280px screen 224px of it
+     was a seventh of the bar. It truncates; the tooltip and Konfiguration hold
+     the full string. */
   .plan-name {
-    max-width: 14rem;
+    max-width: min(15vw, 13rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -586,39 +586,82 @@
     background: var(--wk-surface-alt);
   }
 
-  /* ── Controls ───────────────────────────────────────────────────────────── */
-  .filter {
+  /* ── Filter ─────────────────────────────────────────────────────────────── */
+  /* Unset it is a 28px icon; set it is a chip that names what you are looking
+     at. The old control was a 158px select whose resting state read "Alle
+     Lektionen" — permanent width spent saying that nothing is filtered, which
+     is also the state you can see by looking at the grid. */
+  .filter-btn {
     display: flex;
     align-items: center;
     gap: 0.35rem;
+    height: 28px;
+    max-width: 13rem;
     padding: 0 0.5rem;
-    height: 30px;
-    border: 1px solid var(--wk-line);
+    border: 1px solid transparent;
     border-radius: var(--wk-r-sm);
-    color: var(--wk-text-mute);
-    background: var(--wk-surface);
+    background: transparent;
+    color: var(--wk-text-faint);
+    font-size: var(--wk-fs-sm);
+    font-weight: 550;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
   }
-  .filter:focus-within {
-    border-color: var(--color-primary);
+  .filter-btn:hover {
+    background: var(--wk-surface-alt);
+    color: var(--wk-text);
   }
 
-  .filter-select {
+  /* Filtering hides Lektionen. That is a state you must never be in by accident
+     without knowing it, so when it is on the control stops being quiet. */
+  .filter-btn-on {
+    border-color: color-mix(in oklab, var(--color-primary) 45%, transparent);
+    background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+    color: var(--color-primary);
+  }
+  .filter-btn-on:hover {
+    background: color-mix(in oklab, var(--color-primary) 18%, transparent);
+    color: var(--color-primary);
+  }
+
+  .filter-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .filter-clear {
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    margin-left: -0.15rem;
     border: none;
+    border-radius: 999px;
     background: none;
-    outline: none;
-    font-size: var(--wk-fs-sm);
-    color: var(--wk-text);
-    max-width: 150px;
+    color: var(--color-primary);
     cursor: pointer;
   }
+  .filter-clear:hover {
+    background: color-mix(in oklab, var(--color-primary) 18%, transparent);
+  }
 
+  /* The list can run to every Ausbildner, Raum and Gruppe in the plan. */
+  .pop-filter {
+    min-width: 190px;
+  }
+
+  .pop-item-on {
+    background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  }
+  .pop-item-on .pop-item-label { color: var(--color-primary); }
+
+  /* ── Controls ───────────────────────────────────────────────────────────── */
   .tb-btn,
-  .tb-icon,
-  .week-btn {
+  .tb-icon {
     display: flex;
     align-items: center;
     gap: 0.35rem;
-    height: 30px;
+    height: 28px;
     padding: 0 0.55rem;
     border: 1px solid transparent;
     border-radius: var(--wk-r-sm);
@@ -631,7 +674,7 @@
   }
 
   .tb-icon {
-    width: 30px;
+    width: 28px;
     padding: 0;
     justify-content: center;
   }
@@ -641,6 +684,19 @@
   .tb-btn-icon {
     padding: 0 0.4rem;
     gap: 0.15rem;
+  }
+
+  .tb-btn-todo { position: relative; }
+
+  /* The same warning hue the Einrichtung rows and the zero-counts use. */
+  .tb-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-warning);
   }
 
   /* Konfiguration: framed rather than filled — present, not shouting. */
@@ -654,8 +710,7 @@
   }
 
   .tb-btn:hover,
-  .tb-icon:hover:not(:disabled),
-  .week-btn:hover {
+  .tb-icon:hover:not(:disabled) {
     background: var(--wk-surface-alt);
     color: var(--wk-text);
   }
@@ -676,12 +731,6 @@
     height: 20px;
     background: var(--wk-line);
     margin: 0 0.25rem;
-  }
-
-  .week-btn {
-    border-color: var(--wk-line);
-    font-weight: 600;
-    color: var(--wk-text);
   }
 
   /* ── Density ────────────────────────────────────────────────────────────── */
@@ -825,9 +874,14 @@
   }
 
   /* ── Popovers ───────────────────────────────────────────────────────────── */
-  .legend-wrap,
-  .week-wrap {
+  /* Anchors a popover, and lays out whatever sits in front of it. Flex, not the
+     default block: the filter's chip and its × are two siblings here, and as
+     inline-blocks they wrapped onto a second line that hung out of a 42px bar
+     the moment a filter was set. */
+  .legend-wrap {
     position: relative;
+    display: flex;
+    align-items: center;
   }
 
   .pop {

@@ -8,14 +8,17 @@
   import { getState, updateEvent, updateEvents, placeSubject } from '../state/store.svelte';
   import {
     getSelectedEventId, getSelectedEventIds, selectEvent, toggleEventSelection, addToSelection,
-    getHighlightedEventIds, getSpotlightSubjectId, getFlash, requestConfig,
+    getHighlightedEventIds, getSpotlightSubjectId, getFlash, requestConfig, setSelection,
     openQuickEdit, closeQuickEdit, getReveal, slotHeight, consumeDateClickGuard,
+    isPhaseCollapsed,
   } from '../state/ui.svelte';
   import { previewClashDetail } from '../conflicts/detector';
   import {
     groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
     formatTime, isMultiGroupEvent, addMinutesToTime, clampGroupDelta, DAY_NAMES,
-    sortSubjects, timeDiffMinutes, type FCEventTeacher, type FCEventRoom,
+    gridWindow, timeToMinutes, GRID_BUSINESS_START, GRID_BUSINESS_END,
+    sortSubjects, eventInPhase, eventGroupIds, eventMatchesFilter,
+    type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { missingLaneIdsForSubject } from '../reports/reports';
   import { getContrastColor } from '../utils/colorUtils';
@@ -24,7 +27,8 @@
   import Icon from './Icon.svelte';
   import ProgrammpunktDialog from './ProgrammpunktDialog.svelte';
   import {
-    ALL_GROUPS, CONFLICT_KIND_LABELS, type ConflictKind, type EventFilter, type ID, type Phase,
+    ALL_GROUPS, CONFLICT_KIND_LABELS,
+    type CalendarEvent, type ConflictKind, type EventFilter, type ID, type Phase,
   } from '../types';
 
   interface Props {
@@ -38,12 +42,18 @@
   let calendarEl: HTMLDivElement;
   let calendar: Calendar;
 
-  // The grid runs 07:00–19:00 so the fringes stay reachable, but the training
-  // day is 08:00–17:00 — the band a click is pulled back into.
-  const GRID_MIN_MIN = 7 * 60;   // keep in step with slotMinTime/slotMaxTime below
-  const GRID_MAX_MIN = 19 * 60;
-  const DAY_START_MIN = 8 * 60;
-  const DAY_END_MIN = 17 * 60;
+  // The hours the grid draws follow the plan (or the explicit setting) — see
+  // `gridWindow`. The training day inside them is 08:00–17:00: the band a click
+  // is pulled back into, and the one FC shades as business hours.
+  const gridHours = $derived(gridWindow(getState()));
+  const GRID_MIN_MIN = $derived(timeToMinutes(gridHours.start));
+  const GRID_MAX_MIN = $derived(timeToMinutes(gridHours.end));
+  // The training day, from the one place that defines it — `gridWindow` derives
+  // its own bounds from these, FullCalendar shades them below, and a click is
+  // pulled back into them. Three literal copies of 08:00/17:00 in this file was
+  // three chances for the shading, the clamp and the derivation to disagree.
+  const DAY_START_MIN = timeToMinutes(GRID_BUSINESS_START);
+  const DAY_END_MIN = timeToMinutes(GRID_BUSINESS_END);
 
   // Subject-picker popup state (for dateClick on empty cells)
   interface PlacePending { date: Date; groupId: ID; x: number; y: number; }
@@ -76,6 +86,192 @@
     }
   }
 
+  /**
+   * The header tells you what a column or a row *is*, so it is also where you
+   * grab everything in it. Three questions get asked of a timetable over and
+   * over — "what is on Mittwoch", "what does G2 have that day", "what runs at
+   * 10:00" — and each was a marquee drag down a column the user had to keep
+   * inside. Modifiers match the cards: a plain click replaces the selection,
+   * Ctrl/Cmd or Shift adds to it.
+   */
+  function selectIds(ids: ID[], additive: boolean): void {
+    closeQuickEdit();
+    if (additive) addToSelection(ids);
+    else setSelection(ids);
+  }
+
+  /** FC writes the column's own date on the cell; the week gives its index. */
+  function dayIndexOf(el: HTMLElement): number | null {
+    const [y, m, d] = (el.getAttribute('data-date') ?? '').split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return extractDayIndex(new Date(y, m - 1, d));
+  }
+
+  function handleHeaderClick(e: MouseEvent): void {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const state = getState();
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    // What this grid is actually drawing — a view filter narrows a header
+    // selection exactly as it narrows Ctrl+A.
+    const here = (ev: CalendarEvent): boolean =>
+      eventInPhase(state, ev, phase) && eventMatchesFilter(ev, state, filter);
+
+    const lane = target.closest<HTMLElement>('.fc-col-header-cell.fc-resource');
+    if (lane) {
+      const dayIndex = dayIndexOf(lane);
+      const groupId = lane.getAttribute('data-resource-id');
+      if (dayIndex === null || groupId === null) return;
+      e.preventDefault();
+      // An «alle Gruppen» Mittagessen is in this lane on this day like anything
+      // else drawn in it — the column is what was clicked, not the placement.
+      selectIds(
+        state.events
+          .filter(ev => here(ev) && ev.dayIndex === dayIndex && eventGroupIds(state, ev).includes(groupId))
+          .map(ev => ev.id),
+        additive,
+      );
+      return;
+    }
+
+    const day = target.closest<HTMLElement>('.fc-col-header-cell');
+    if (day) {
+      const dayIndex = dayIndexOf(day);
+      if (dayIndex === null) return;
+      e.preventDefault();
+      selectIds(
+        state.events.filter(ev => here(ev) && ev.dayIndex === dayIndex).map(ev => ev.id),
+        additive,
+      );
+      return;
+    }
+
+    const slot = target.closest<HTMLElement>('.fc-timegrid-slot-label');
+    if (slot) {
+      const time = (slot.getAttribute('data-time') ?? '').slice(0, 5);
+      if (time === '') return;
+      e.preventDefault();
+      // The time gutter is drawn once for the *week*, not once per phase — only
+      // the leftmost open calendar shows it — so an hour selects across every
+      // phase on screen. Folding a phase away therefore also takes it out of
+      // this selection, which is the same rule the marquee and Ctrl+A follow:
+      // what is selected is what is drawn.
+      selectIds(
+        state.events.filter(ev => drawnSomewhere(state, ev) && ev.startTime <= time && time < ev.endTime)
+          .map(ev => ev.id),
+        additive,
+      );
+    }
+  }
+
+  /**
+   * Right-click is the grid's own menu, not the browser's.
+   *
+   * A card carries four actions and three editable fields, and the panel that
+   * holds them is one left click away — but the gesture everyone tries first on
+   * a timetable block got Chrome's "Bild speichern unter …" instead, and the
+   * grid is the one surface in this app where a stray right-click is likely.
+   * So every part of it answers:
+   *
+   *   - a card       → select it and open the quick edit, the same panel a left
+   *                    click opens. It *is* the context menu: Raum, Ausbildner,
+   *                    Dauer, Platzierung, plus Teilen / Gruppen / Kopie /
+   *                    Löschen in its footer.
+   *   - empty space  → the placement picker, i.e. "hier etwas einsetzen", on the
+   *                    slot under the pointer.
+   *   - a header     → the same column / lane / hour selection a left click on
+   *                    it makes, modifiers included.
+   *
+   * The one deliberate exception is a card inside a multi-card selection. A set
+   * has no popover — its actions live in the selection bar at the bottom — so
+   * right-clicking one of its members would have to collapse the selection to
+   * open anything, which is the opposite of what the gesture means everywhere
+   * else. It keeps the set and lets the bar be the menu.
+   */
+  function handleContextMenu(e: MouseEvent): void {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+
+    const card = target.closest<HTMLElement>('.fc-event');
+    if (card) {
+      const id = card.dataset['wkEventId'];
+      if (id === undefined) return;
+      e.preventDefault();
+      const selection = getSelectedEventIds();
+      if (selection.length > 1 && selection.includes(id)) return;
+      selectEvent(id);
+      const rect = card.getBoundingClientRect();
+      openQuickEdit(id, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      return;
+    }
+
+    if (target.closest('.fc-col-header-cell') || target.closest('.fc-timegrid-slot-label')) {
+      e.preventDefault();
+      handleHeaderClick(e);
+      return;
+    }
+
+    // Not `closest`: the slat rows are drawn as a layer *over* the columns, so
+    // what is under the pointer on empty grid is a slot cell whose ancestors
+    // include no column at all. The lane has to be picked out of the whole
+    // stack under the point instead.
+    const cell = document
+      .elementsFromPoint(e.clientX, e.clientY)
+      .find((el): el is HTMLElement =>
+        el instanceof HTMLElement && el.matches('.fc-timegrid-col.fc-resource') && calendarEl.contains(el));
+    const groupId = cell?.getAttribute('data-resource-id') ?? null;
+    if (!cell || groupId === null) return;
+    const spot = cellSpot(cell, e.clientY);
+    if (!spot) return;
+    e.preventDefault();
+    closeQuickEdit();
+    selectEvent(null);
+    placePending = { date: spot, groupId, x: e.clientX, y: e.clientY };
+  }
+
+  /**
+   * The day and slot a point in a lane column falls on.
+   *
+   * FullCalendar resolves this itself for `dateClick`, but that only fires on a
+   * left button, so a right-click has to ask the DOM. The slat rows are drawn
+   * once across the whole grid and each lane cell carries its own `data-time`,
+   * so the y hit test is a walk over them; the column carries the date.
+   */
+  function cellSpot(cell: HTMLElement, clientY: number): Date | null {
+    const [y, m, d] = (cell.getAttribute('data-date') ?? '').split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const slats = calendarEl.querySelectorAll<HTMLElement>('.fc-timegrid-slots td.fc-timegrid-slot-lane[data-time]');
+    for (const slat of slats) {
+      const box = slat.getBoundingClientRect();
+      if (clientY < box.top || clientY >= box.bottom) continue;
+      const [hh, mm] = (slat.getAttribute('data-time') ?? '').split(':').map(Number);
+      if (hh === undefined || mm === undefined) return null;
+      return clampToDay(new Date(y, m - 1, d, hh, mm));
+    }
+    return null;
+  }
+
+  function drawnSomewhere(state: ReturnType<typeof getState>, ev: CalendarEvent): boolean {
+    if (!eventMatchesFilter(ev, state, filter)) return false;
+    const owner = state.phases.find(p => eventInPhase(state, ev, p));
+    return owner !== undefined && !isPhaseCollapsed(owner.id);
+  }
+
+  /** Says out loud what a header click does, on the header it does it from. */
+  function tagSelectionHints(): void {
+    if (!calendarEl) return;
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-col-header-cell')) {
+      const label = el.textContent?.trim() ?? '';
+      el.title = el.classList.contains('fc-resource')
+        ? `Alle Lektionen von ${label} an diesem Tag auswählen`
+        : `Alle Lektionen am ${label} auswählen`;
+    }
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-timegrid-slot-label')) {
+      const time = (el.getAttribute('data-time') ?? '').slice(0, 5);
+      if (time !== '') el.title = `Alle Lektionen um ${time} auswählen`;
+    }
+  }
+
   // ─── Selection / highlight / spotlight are painted onto the DOM ─────────────
   // They change far more often than the event data and never affect layout, so
   // toggling classes beats rebuilding every event through the store.
@@ -84,13 +280,47 @@
     const selected = new Set(getSelectedEventIds());
     const highlighted = new Set(getHighlightedEventIds());
     const spotlight = getSpotlightSubjectId();
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-event')) {
+    const primary = getSelectedEventId();
+
+    /**
+     * K2: the grid is **one** tab stop.
+     *
+     * FullCalendar gives every event `tabindex="0"`, so a 56-Lektion week put 56
+     * stops between the phase labels and everything after them — a keyboard user
+     * could not get past the grid without pressing Tab through all of it. A
+     * roving tabindex leaves exactly one card tabbable: the selected one, or the
+     * first card drawn when nothing is selected. Tab enters the grid once and
+     * the next Tab leaves it.
+     *
+     * Arrow keys are deliberately *not* rebound to step between cards: in this
+     * app they move the selected block by a slot or a day, which is the fastest
+     * thing on the keyboard and is documented as such. Focusing a card selects
+     * it (below), so those shortcuts apply to whatever Tab just landed on.
+     */
+    let roving: HTMLElement | null = null;
+    const cards = calendarEl.querySelectorAll<HTMLElement>('.fc-event');
+    for (const el of cards) {
       const id = el.dataset['wkEventId'];
       const subjectId = el.dataset['wkSubjectId'];
       el.classList.toggle('wk-selected', id !== undefined && selected.has(id));
       el.classList.toggle('wk-flash', id !== undefined && highlighted.has(id));
       el.classList.toggle('wk-dimmed', spotlight !== null && subjectId !== spotlight);
+      el.tabIndex = -1;
+      if (id !== undefined && id === primary) roving = el;
     }
+
+    // There is one calendar per Phase and each paints itself, so "the first card
+    // in *this* grid" would leave one tab stop per Phase. The stop belongs to
+    // whichever calendar holds the selected card — or, with nothing selected, to
+    // whichever holds the first card in the document. Decided from the store
+    // rather than from painted classes, so it does not depend on which Phase
+    // repaints first.
+    if (!roving && primary === null) {
+      const firstInDoc = document.querySelector<HTMLElement>('.fc-event');
+      if (firstInDoc && calendarEl.contains(firstInDoc)) roving = firstInDoc;
+    }
+    roving?.setAttribute('tabindex', '0');
+
     paintOwingLanes(spotlight);
   }
 
@@ -116,6 +346,14 @@
     return calendarEl?.querySelector<HTMLElement>(`.fc-event[data-wk-event-id="${CSS.escape(id)}"]`) ?? null;
   }
 
+  /** Tab landed on a card: select it, without opening the popover a click does. */
+  function handleCardFocus(e: FocusEvent): void {
+    const card = (e.target as HTMLElement | null)?.closest?.('.fc-event') as HTMLElement | null;
+    const id = card?.dataset['wkEventId'];
+    if (!id || getSelectedEventId() === id) return;
+    selectEvent(id);
+  }
+
   function handleEventClick(info: EventClickArg): void {
     const id = info.event.extendedProps['eventId'] as ID;
 
@@ -130,21 +368,14 @@
       return;
     }
 
-    // Double click goes straight to the full editor; a single click selects and
-    // offers the three fields that actually change day to day.
-    if (info.jsEvent.detail >= 2) {
-      closeQuickEdit();
-      selectedEventId = id;
-      return;
-    }
+    // E1: one editor. A double click used to open a full-screen modal holding
+    // the same fields as the popover a single click opens — the same edit, the
+    // same autosave, chosen by how many times the user clicked. The popover now
+    // carries the placement too, so both counts open it and the modal is left
+    // to the Lektionen that have no card to anchor it to.
     selectEvent(id);
     const rect = info.el.getBoundingClientRect();
     openQuickEdit(id, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
-  }
-
-  /** Minutes since midnight, for comparing against the grid's own bounds. */
-  function minutesOfDay(time: string): number {
-    return timeDiffMinutes('00:00', time);
   }
 
   function handleEventDrop(info: EventDropArg): void {
@@ -167,7 +398,7 @@
         moving.map(ev => ev.dayIndex), info.delta.days, 0, DAY_NAMES.length - 1,
       );
       const minuteDelta = clampGroupDelta(
-        moving.flatMap(ev => [minutesOfDay(ev.startTime), minutesOfDay(ev.endTime)]),
+        moving.flatMap(ev => [timeToMinutes(ev.startTime), timeToMinutes(ev.endTime)]),
         info.delta.milliseconds / 60_000,
         GRID_MIN_MIN,
         GRID_MAX_MIN,
@@ -401,11 +632,15 @@
       allDaySlot: false,
       nowIndicator: true,
       // Shades the fringes of the training day: before 08:00 and after 17:00.
-      businessHours: { daysOfWeek: [1, 2, 3, 4, 5], startTime: '08:00', endTime: '17:00' },
+      businessHours: {
+        daysOfWeek: [1, 2, 3, 4, 5],
+        startTime: GRID_BUSINESS_START,
+        endTime: GRID_BUSINESS_END,
+      },
       // Starting the grid on the hour is what makes the labels read 08:00, 09:00
       // rather than 07:30, 08:30 — slotLabelInterval counts from slotMinTime.
-      slotMinTime: '07:00:00',
-      slotMaxTime: '19:00:00',
+      slotMinTime: `${gridHours.start}:00`,
+      slotMaxTime: `${gridHours.end}:00`,
       slotDuration: '00:15:00',
       snapDuration: '00:15:00',
       slotLabelInterval: '01:00:00',
@@ -441,8 +676,8 @@
       // drop the target refuses can't leave a hole here.
       eventLeave() { calendar.refetchEvents(); },
       dateClick: handleDateClick,
-      datesSet: tagDayBoundaries,
-      viewDidMount: tagDayBoundaries,
+      datesSet() { tagDayBoundaries(); tagSelectionHints(); },
+      viewDidMount() { tagDayBoundaries(); tagSelectionHints(); },
       eventDidMount(arg) {
         const id = arg.event.extendedProps['eventId'] as ID | undefined;
         const color = arg.event.extendedProps['color'] as string | undefined;
@@ -457,13 +692,36 @@
         const teachers = (arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined) ?? [];
         const room = arg.event.extendedProps['room'] as FCEventRoom | null | undefined;
         const kinds = (arg.event.extendedProps['conflictKinds'] as ConflictKind[] | undefined) ?? [];
+        const conflictNote = kinds.length > 0
+          ? `⚠ Konflikt: ${kinds.map(k => CONFLICT_KIND_LABELS[k]).join(' + ')}`
+          : null;
         arg.el.title = [
           arg.event.title,
           arg.timeText,
           teachers.map(t => t.name).join(', '),
           room?.name,
-          kinds.length > 0 ? `⚠ Konflikt: ${kinds.map(k => CONFLICT_KIND_LABELS[k]).join(' + ')}` : null,
+          conflictNote,
         ].filter(Boolean).join(' · ');
+
+        // K1: the same sentence, as the card's *accessible name*.
+        //
+        // FullCalendar renders an event as an `<a tabindex="0">` with no href,
+        // so it is focusable and announces nothing about being interactive, and
+        // everything the card means — the time, the lane, and above all whether
+        // it is in a Konflikt — is carried by colour and geometry alone. A card
+        // in a hard conflict produced the same node as a clean one. The string
+        // was already being built here for the tooltip and thrown away.
+        const dayIndex = arg.event.extendedProps['dayIndex'] as number | undefined;
+        const laneLabels = (arg.event.extendedProps['laneLabels'] as string[] | undefined) ?? [];
+        arg.el.setAttribute('role', 'button');
+        arg.el.setAttribute('aria-label', [
+          arg.event.title,
+          dayIndex !== undefined ? `${DAY_NAMES[dayIndex]} ${arg.timeText}` : arg.timeText,
+          laneLabels.length > 0 ? laneLabels.join(', ') : null,
+          teachers.map(t => t.name).join(', '),
+          room?.name,
+          conflictNote,
+        ].filter(Boolean).join(' · '));
       },
       eventContent(arg) {
         const teachers = arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined;
@@ -551,7 +809,38 @@
     const ro = new ResizeObserver(() => calendar.updateSize());
     ro.observe(calendarEl);
 
-    return () => { ro.disconnect(); calendar.destroy(); };
+    // Delegated, because FC rebuilds its header on every refetch: a listener on
+    // the cells themselves would have to be re-attached each time.
+    calendarEl.addEventListener('click', handleHeaderClick);
+    calendarEl.addEventListener('contextmenu', handleContextMenu);
+
+    // K2: focus and selection agree. Tabbing into the grid lands on a card and
+    // selects it, so ↑↓ / ←→ / Enter / Ctrl+D / Delete act on the thing that is
+    // visibly focused rather than on whatever was last clicked.
+    calendarEl.addEventListener('focusin', handleCardFocus);
+
+    return () => {
+      ro.disconnect();
+      calendarEl.removeEventListener('click', handleHeaderClick);
+      calendarEl.removeEventListener('contextmenu', handleContextMenu);
+      calendarEl.removeEventListener('focusin', handleCardFocus);
+      calendar.destroy();
+    };
+  });
+
+  /**
+   * The drawn hours follow the plan, so they change while the app is open — the
+   * first Lektion of the day moved to 07:45 widens the window, and clearing the
+   * explicit setting narrows it back. `setOption` rather than a re-mount: this
+   * fires on ordinary edits, and rebuilding both calendars mid-drag-drop would
+   * be far more disruptive than the row-height case that keys them on density.
+   */
+  $effect(() => {
+    const { start, end } = gridHours;
+    if (!calendar) return;
+    calendar.setOption('slotMinTime', `${start}:00`);
+    calendar.setOption('slotMaxTime', `${end}:00`);
+    requestAnimationFrame(() => calendar.updateSize());
   });
 
   // Reactively push state changes into FC
@@ -570,6 +859,7 @@
     // are re-applied after paint so enabling/disabling a group can't leave stale ones.
     requestAnimationFrame(() => {
       tagDayBoundaries();
+      tagSelectionHints();
       paintStates();
       calendar.updateSize();
     });

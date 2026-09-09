@@ -92,9 +92,12 @@
   background: var(--wk-surface);
 }
 
+/* Tighter than it was by ~6px in total across the two header rows. With the
+   week nav gone from the toolbar this is the only place the date is printed, so
+   the size stays; only the air around it goes. */
 .fc-col-header-cell.fc-day .fc-col-header-cell-cushion {
   display: block;
-  padding: 0.4rem 0.25rem 0.35rem;
+  padding: 0.28rem 0.25rem 0.24rem;
   font-size: var(--wk-fs-md);
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -104,7 +107,7 @@
 
 .fc-col-header-cell.fc-resource .fc-col-header-cell-cushion {
   display: block;
-  padding: 0.25rem 0.2rem;
+  padding: 0.16rem 0.2rem;
   font-size: var(--wk-fs-2xs);
   font-weight: 600;
   letter-spacing: 0.09em;
@@ -117,6 +120,25 @@
    time row between the two grids. */
 .fc-col-header-cell.fc-day {
   white-space: nowrap;
+}
+
+/* Headers select what stands under them (see handleHeaderClick), so they have
+   to look touchable. The tint is the same one a hovered row gets everywhere
+   else — a header is a control here, not a second kind of button. */
+.fc-col-header-cell,
+.fc-timegrid-slot-label {
+  cursor: pointer;
+}
+
+.fc-col-header-cell:hover,
+.fc-timegrid-slot-label:hover {
+  background: var(--wk-surface-alt);
+}
+
+/* The gutter of a phase that does not draw it is 0px wide and reachable by
+   nothing — no reason to promise a click there. */
+.phase-seg--noaxis .fc-timegrid-slot-label {
+  cursor: default;
 }
 
 .fc-scrollgrid-section-sticky > * {
@@ -252,10 +274,12 @@
      "Karteneröffn / ung/-führung". German compounds hyphenate or they clamp.
      The limits stop `hyphens: auto` from doing its own damage in a narrow lane —
      unbounded, it produced "Kar- / te- / ner…". Nothing under 8 characters is
-     hyphenated at all, and neither piece may be shorter than 4 / 3. */
+     hyphenated at all, and neither piece may be shorter than 6 / 3 — a 4
+     character head still broke "Lagezen- / trum" and "Übungsaus- / wertung",
+     which are the seams German compounds actually offer. */
   overflow-wrap: break-word;
   hyphens: auto;
-  hyphenate-limit-chars: 8 4 3;
+  hyphenate-limit-chars: 8 6 3;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;

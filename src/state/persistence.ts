@@ -4,7 +4,7 @@ import { formatDate } from "../utils/timeUtils";
 import { migrateState } from "./migrations";
 
 const STATE_KEY = "wk-planner-state";
-export const CURRENT_VERSION = 13;
+export const CURRENT_VERSION = 14;
 
 // A colour picker fires an input event per mouse move, so writes are coalesced
 // into one per frame-ish window instead of one per event. Anything still pending
@@ -34,6 +34,9 @@ export function createDefaultState(): AppState {
     name: `WK ${monday.slice(0, 4)}`,
     lastExportedAt: null,
     wkStartDate: monday,
+    // null = derive the drawn hours from the plan; see AppState.gridStartTime.
+    gridStartTime: null,
+    gridEndTime: null,
     groups: [
       { id: kaderId, label: "K", enabled: true, order: 0, excludeFromCoverage: false },
       { id: groupIds[0]!, label: "G1", enabled: true, order: 1, excludeFromCoverage: false },

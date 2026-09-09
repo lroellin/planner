@@ -1,9 +1,9 @@
 <script lang="ts">
   import {
-    getState, getConflicts, getOrphans, getAffectedEventCount, updateEvent,
+    getState, getConflicts, getOrphans, getAffectedEventCount, getIssueCount, updateEvent,
   } from '../state/store.svelte';
   import { highlightEvents, clearHighlight, revealEvent } from '../state/ui.svelte';
-  import { DAY_NAMES, eventGroupIds, addMinutesToTime } from '../utils/timeUtils';
+  import { DAY_NAMES, eventGroupIds, addMinutesToTime, timeDiffMinutes } from '../utils/timeUtils';
   import Icon from './Icon.svelte';
   import { CONFLICT_KIND_LABELS, isHardConflict } from '../types';
   import type { CalendarEvent, ConflictKind, ID } from '../types';
@@ -13,6 +13,9 @@
   }
 
   let { selectedEventId = $bindable() }: Props = $props();
+
+  /** L2: the how-it-works note is folded away, as in the Konfiguration tabs. */
+  let helpOpen = $state(false);
 
   const appState = $derived(getState());
   const conflicts = $derived(getConflicts());
@@ -65,14 +68,24 @@
     );
   });
 
-  const issueCount = $derived(conflicts.length + orphans.length);
+  // The same number every badge in the app shows, rather than a second sum of
+  // the same two lists.
+  const issueCount = $derived(getIssueCount());
   const affected = $derived(getAffectedEventCount());
 
+  /**
+   * Split by hardness, not by "is it an availability window". An Ausbildner
+   * booked while away is a *hard* conflict and a Raum booked while blocked is a
+   * *soft* one — `HARD_CONFLICT_KINDS` says so and the cards below have always
+   * drawn them that way. One `sum-hard` chip counting both told the reader the
+   * opposite of the card it was summarising.
+   */
   const counts = $derived({
     teacher: conflicts.filter(c => c.kind === 'teacher').length,
     group: conflicts.filter(c => c.kind === 'group').length,
     room: conflicts.filter(c => c.kind === 'room').length,
-    away: conflicts.filter(c => c.kind === 'teacher-absent' || c.kind === 'room-blocked').length,
+    absent: conflicts.filter(c => c.kind === 'teacher-absent').length,
+    blocked: conflicts.filter(c => c.kind === 'room-blocked').length,
   });
 
   function eventById(id: ID): CalendarEvent | undefined {
@@ -114,17 +127,11 @@
       // further into the other, which is the wrong direction.
       if (other.startTime > ev.startTime) continue;
       if (!(ev.startTime < other.endTime && other.startTime < ev.endTime)) continue;
-      const minutes = minutesBetween(ev.startTime, other.endTime);
+      const minutes = timeDiffMinutes(ev.startTime, other.endTime);
       if (minutes > needed) needed = minutes;
     }
     if (needed <= 0) return null;
     return Math.ceil(needed / 15) * 15;
-  }
-
-  function minutesBetween(from: string, to: string): number {
-    const [fh, fm] = from.split(':').map(Number);
-    const [th, tm] = to.split(':').map(Number);
-    return (th! * 60 + tm!) - (fh! * 60 + fm!);
   }
 
   function nudge(ev: CalendarEvent, minutes: number): void {
@@ -137,13 +144,9 @@
 </script>
 
 <div class="panel">
-  <header class="panel-head">
-    <span class="wk-eyebrow flex-1">Probleme</span>
-    {#if issueCount > 0}
-      <span class="head-count">{issueCount}</span>
-    {/if}
-  </header>
-
+  <!-- No header of its own: the dock's tab already says "Probleme" and carries
+       the same count. Two of each, stacked, was a whole row of the panel spent
+       repeating the row above it. -->
   {#if issueCount > 0}
     <!-- The headline number counts clash *relations*: one badly placed Lektion
          overlapping two others on an Ausbildner and a Raum raises four, and
@@ -161,7 +164,8 @@
       {#if counts.teacher > 0}<span class="sum sum-hard">{counts.teacher}× Ausbildner</span>{/if}
       {#if counts.group > 0}<span class="sum sum-hard">{counts.group}× Gruppe</span>{/if}
       {#if counts.room > 0}<span class="sum sum-soft">{counts.room}× Raum</span>{/if}
-      {#if counts.away > 0}<span class="sum sum-hard">{counts.away}× Abwesenheit</span>{/if}
+      {#if counts.absent > 0}<span class="sum sum-hard">{counts.absent}× Abwesenheit</span>{/if}
+      {#if counts.blocked > 0}<span class="sum sum-soft">{counts.blocked}× Sperrzeit</span>{/if}
     </div>
   {/if}
 
@@ -251,18 +255,47 @@
       </section>
     {/each}
 
+    <!-- L2: the same one-line-plus-ⓘ the Konfiguration tabs use.
+         This was five lines of instructions under the cards, re-read on every
+         visit to a panel that is opened dozens of times a session — which is
+         precisely the case the ⓘ pattern exists for. -->
     {#if conflicts.length > 0}
-      <p class="foot-note">
-        Wer mit der Maus über eine Zeile fährt, sieht die Lektion im Kalender. «+15′» verschiebt
-        die spätere Lektion so, dass sie sich nicht mehr überschneidet; ob dort etwas anderes
-        liegt, meldet die Liste danach. Raumkonflikte sind weiche Konflikte und nur ein Hinweis,
-        alle anderen sind hart.
-      </p>
+      <div class="foot-help">
+        <button class="foot-more" onclick={() => (helpOpen = !helpOpen)} aria-expanded={helpOpen}>
+          <Icon name="info" size={12} />
+          {helpOpen ? 'weniger' : 'Wie diese Liste funktioniert'}
+        </button>
+        {#if helpOpen}
+          <p class="foot-note">
+            Wer mit der Maus über eine Zeile fährt, sieht die Lektion im Kalender. «+15′» verschiebt
+            die spätere Lektion so, dass sie sich nicht mehr überschneidet; ob dort etwas anderes
+            liegt, meldet die Liste danach. Raumkonflikte und Sperrzeiten sind weiche Konflikte
+            und nur ein Hinweis, alle anderen sind hart.
+          </p>
+        {/if}
+      </div>
     {/if}
   </div>
 </div>
 
 <style>
+  /* L2 */
+  .foot-help {
+    margin-top: 0.6rem;
+  }
+  .foot-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    padding: 2px 0;
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+    cursor: pointer;
+  }
+  .foot-more:hover { color: var(--wk-text-mute); }
+
   .panel {
     display: flex;
     flex-direction: column;
@@ -270,32 +303,9 @@
     min-height: 0;
   }
 
-  .panel-head {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    border-bottom: 1px solid var(--wk-line);
-    flex-shrink: 0;
-  }
-
-  .head-count {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 19px;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: var(--color-error);
-    color: var(--color-error-content);
-    font-size: var(--wk-fs-2xs);
-    font-weight: 700;
-  }
-
   /* Sits above the per-kind chips: the scale of the job before its breakdown. */
   .scale {
-    padding: 0.45rem 0.75rem 0;
+    padding: 0.6rem 0.75rem 0;
     font-size: var(--wk-fs-2xs);
     color: var(--wk-text-faint);
     flex-shrink: 0;

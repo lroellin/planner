@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildCoverage, coverageForSubject, coverageStatus, subjectPhases, buildTeacherPlans,
-  missingLanesForSubject, buildGroupPlans,
+  missingLanesForSubject, buildGroupPlans, buildDeviations,
 } from './reports';
 import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
+import { orderedPhases } from '../utils/timeUtils';
 
 describe('subjectPhases', () => {
   it('honours an explicitly pinned phase even before anything is placed', () => {
@@ -341,5 +342,122 @@ describe('buildTeacherPlans', () => {
     });
     const [anna] = buildTeacherPlans(state);
     expect(anna!.blocks[0]!.entries[0]!.groupLabels).toEqual(['G1', 'G2', 'G3']);
+  });
+});
+
+// The Auswertung read to check "did Sanität really go to Anna, is Funk really
+// in the Turnhalle" — every Lektion that no longer matches its Themenvorgabe.
+describe('buildDeviations', () => {
+  it('says nothing about a Lektion placed exactly as the Thema prescribes', () => {
+    const state = makeState({ events: [makeEvent({ groupId: 'g1' })] });
+    expect(buildDeviations(state).blocks).toEqual([]);
+  });
+
+  it('names the Vorgabe and the actual value for each changed field', () => {
+    const state = makeState({
+      events: [makeEvent({ groupId: 'g1', teacherIds: ['t2'], roomId: 'outside' })],
+    });
+    const { blocks, changedCount } = buildDeviations(state);
+    expect(changedCount).toBe(1);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.entries[0]!.changes).toEqual([
+      { field: 'Ausbildner', from: 'Anna Müller', to: 'Beat Zwahlen' },
+      { field: 'Raum', from: 'Seminarraum 1', to: 'Outside' },
+    ]);
+    expect(blocks[0]!.entries[0]!.groupLabels).toEqual(['G1']);
+  });
+
+  it('reads an explicitly empty Raum as a change, not as "inherit"', () => {
+    const state = makeState({ events: [makeEvent({ groupId: 'g1', roomId: null })] });
+    expect(buildDeviations(state).blocks[0]!.entries[0]!.changes).toEqual([
+      { field: 'Raum', from: 'Seminarraum 1', to: '—' },
+    ]);
+  });
+
+  // 90 minutes cut into 60 + 30: both halves differ from the Vorgabe and neither
+  // is a change to the plan — the Gruppe still gets its 90 minutes.
+  it('marks the halves of a split that still adds up to the Soll', () => {
+    const state = makeState({
+      events: [
+        makeEvent({ groupId: 'g1', startTime: '08:00', endTime: '09:00' }),
+        makeEvent({ groupId: 'g1', startTime: '10:00', endTime: '10:30' }),
+      ],
+    });
+    const { blocks, splitOnlyCount, changedCount } = buildDeviations(state);
+    expect(splitOnlyCount).toBe(2);
+    expect(changedCount).toBe(0);
+    expect(blocks[0]!.entries.every(e => e.splitOnly)).toBe(true);
+  });
+
+  it('keeps a split that does not add up, and one that also changed something', () => {
+    const state = makeState({
+      events: [
+        makeEvent({ groupId: 'g1', startTime: '08:00', endTime: '09:00' }),
+        makeEvent({ groupId: 'g2', startTime: '08:00', endTime: '09:00', teacherIds: ['t2'] }),
+        makeEvent({ groupId: 'g2', startTime: '10:00', endTime: '10:30' }),
+      ],
+    });
+    const entries = buildDeviations(state).blocks[0]!.entries;
+    // G1 is 30 minutes short of its 90, so its shortened block is a real change.
+    expect(entries.filter(e => e.groupLabels[0] === 'G1').every(e => !e.splitOnly)).toBe(true);
+    // G2 adds up, but the Ausbildner change is not a consequence of splitting.
+    const g2 = entries.filter(e => e.groupLabels[0] === 'G2');
+    expect(g2.map(e => e.splitOnly)).toEqual([false, true]);
+  });
+
+  it('leaves Pausen and Programmpunkte out — they have no rotation to deviate from', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      subjects: [
+        ...base.subjects,
+        makeSubject({ id: 'antreten', name: 'Antreten', kind: 'oneoff' }),
+      ],
+      events: [
+        makeEvent({ groupId: ALL, subjectId: 'lunch', startTime: '12:00', endTime: '12:45' }),
+        makeEvent({ groupId: 'g1', subjectId: 'antreten', roomId: 'outside' }),
+      ],
+    };
+    expect(buildDeviations(state).blocks).toEqual([]);
+  });
+
+  it('ignores a Lektion whose every lane is switched off', () => {
+    const base = makeState();
+    const state = {
+      ...base,
+      groups: base.groups.map(g => (g.id === 'g1' ? { ...g, enabled: false } : g)),
+      events: [makeEvent({ groupId: 'g1', teacherIds: ['t2'] })],
+    };
+    expect(buildDeviations(state).blocks).toEqual([]);
+  });
+});
+
+describe('buildCoverage phase order', () => {
+  it('lists phases in week order, whatever order they were added in', () => {
+    // The stored array is insertion order: adding the KVK phase after the WK
+    // phase used to list the report back to front against the grid beside it,
+    // which reads left to right through `orderedPhases`.
+    const base = makeState();
+    const reversed = { ...base, phases: [...base.phases].reverse() };
+
+    expect(buildCoverage(reversed).map(s => s.phase.id))
+      .toEqual(orderedPhases(reversed).map(p => p.id));
+  });
+});
+
+describe('plan entries carry the Raum itself', () => {
+  it('so a Kürzel is never recovered by searching on the name', () => {
+    // Two rooms, one name: looking the code up by name returned whichever came
+    // first, which is a coin flip on the printed slip.
+    const state = makeState({
+      rooms: [
+        { id: 'r1', name: 'Theoriesaal', shortName: 'TS1', color: '#000', excludeFromConflictCheck: false, unavailable: [] },
+        { id: 'r2', name: 'Theoriesaal', shortName: 'TS2', color: '#000', excludeFromConflictCheck: false, unavailable: [] },
+      ],
+      events: [makeEvent({ groupId: 'g1', dayIndex: 2, roomId: 'r2' })],
+    });
+    const entry = buildGroupPlans(state).find(p => p.group.id === 'g1')!.entries[0]!;
+    expect(entry.room?.id).toBe('r2');
+    expect(entry.room?.shortName).toBe('TS2');
   });
 });

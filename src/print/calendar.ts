@@ -2,6 +2,7 @@ import { isHardConflict, type AppState, type ID } from '../types';
 import type { PrintCell } from './boxes';
 import {
   effectiveRoomId, effectiveTeacherIds, eventGroupIds, orderedPhases, phaseForDay, phaseGroups,
+  gridWindow, timeToMinutes, GRID_BUSINESS_START, GRID_BUSINESS_END,
 } from '../utils/timeUtils';
 import { roomShort, subjectShort, teacherShort } from '../utils/format';
 import { DAY_NAMES, dayDateLabel } from '../utils/timeUtils';
@@ -76,22 +77,38 @@ export interface CalendarDoc {
   endMinutes: number;
 }
 
-const GRID_START = 7 * 60;   // the screen grid's own bounds; nothing sits outside
-const GRID_END = 19 * 60;
-const FALLBACK: [number, number] = [8 * 60, 17 * 60];
+/**
+ * Never less than four hours, or a single short morning stretches its two
+ * blocks over a whole sheet.
+ */
+const MIN_SPAN = 240;
 
-export function toMinutes(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
+/** The screen's own parser — the sheet must read a time the same way the grid does. */
+export const toMinutes = timeToMinutes;
 
 /**
- * The hours worth drawing: the day's actual extent, opened out to whole hours.
- * Printing the full 07:00–19:00 when nothing starts before 08:00 spends a
- * seventh of the sheet on an empty band, and on paper that band cannot be
- * scrolled past.
+ * The hours worth drawing: the day's actual extent, opened out to whole hours,
+ * inside the hours the screen grid draws.
+ *
+ * Printing the whole window when nothing starts before 08:00 spends a seventh of
+ * the sheet on an empty band, and on paper that band cannot be scrolled past —
+ * so the range is still trimmed to what is placed on these days.
+ *
+ * The *outer* bound used to be the literals 07:00 and 19:00, on the argument
+ * that the screen grid never went outside them. That stopped being true when the
+ * grid window became derived (`gridWindow`): a 06:00 Antreten kept its real
+ * `startMinutes` and was drawn above the top of the printed grid, over the
+ * header, and an explicit Tagesraster of 06:00–20:00 was ignored outright — the
+ * screen showed 06:00–20:00 and the sheet 09:00–13:00. It is the same window
+ * now, so the sheet can only ever be a trim of the screen, never a different
+ * document.
  */
 function timeRange(state: AppState, dayIndexes: Set<number>): [number, number] {
+  const window = gridWindow(state);
+  const gridStart = toMinutes(window.start);
+  const gridEnd = toMinutes(window.end);
+  const clamp = (m: number): number => Math.max(gridStart, Math.min(gridEnd, m));
+
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (const ev of state.events) {
@@ -99,12 +116,15 @@ function timeRange(state: AppState, dayIndexes: Set<number>): [number, number] {
     min = Math.min(min, toMinutes(ev.startTime));
     max = Math.max(max, toMinutes(ev.endTime));
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) return FALLBACK;
-  const start = Math.max(GRID_START, Math.floor(min / 60) * 60);
-  const end = Math.min(GRID_END, Math.ceil(max / 60) * 60);
-  // Never less than four hours, or a single short morning stretches its two
-  // blocks over a whole sheet.
-  return end - start >= 240 ? [start, end] : [start, Math.min(GRID_END, start + 240)];
+  // Nothing placed on these days: draw the training day, as far as the raster
+  // reaches. A sheet still has to have a grid on it.
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return [clamp(toMinutes(GRID_BUSINESS_START)), clamp(toMinutes(GRID_BUSINESS_END))];
+  }
+
+  const start = clamp(Math.floor(min / 60) * 60);
+  const end = clamp(Math.ceil(max / 60) * 60);
+  return end - start >= MIN_SPAN ? [start, end] : [start, clamp(start + MIN_SPAN)];
 }
 
 /**

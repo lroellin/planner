@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   getState, createProgrammpunkt, resetToDefaults, removeEvent, undo, canUndo, addTeacher, addRoom,
+  addSubject, updateSubject, placeSubject, updateGroup, eventCountForTeacher, eventCountForRoom,
+  eventCountForPhase, lanesWithoutEvent,
 } from './store.svelte';
+import { teacherLoad, roomLoad } from '../reports/reports';
+import { eventInPhase } from '../utils/timeUtils';
 import { ALL_GROUPS } from '../types';
 
 /**
@@ -116,5 +120,81 @@ describe('createProgrammpunkt', () => {
   it('falls back to a name rather than creating a nameless card', () => {
     createProgrammpunkt({ ...DRAFT, name: '   ' }, 2, '08:00', firstGroupId());
     expect(getState().subjects.some(s => s.name === 'Programmpunkt')).toBe(true);
+  });
+});
+
+/**
+ * A Lektion whose every lane is switched off is drawn nowhere and counted
+ * nowhere. The Konfiguration pane has always said so — it reads `teacherLoad` —
+ * and the delete toast beside it used to say something else, because it carried
+ * its own inline copy of the `'inherit'` resolution with no such filter. Two
+ * numbers for one Ausbildner, one click apart.
+ */
+describe('deletion counts match the pane above them', () => {
+  function planWithHiddenLane(): { teacherId: string; roomId: string; subjectId: string } {
+    const teacherId = addTeacher('Anna Müller', 'AM', '#4299e1');
+    const roomId = addRoom('Seminarraum 1', '#48bb78', false);
+    const subjectId = addSubject({
+      name: 'Karteneröffnung', shortName: '', color: '#9f7aea',
+      defaultTeacherIds: [teacherId], defaultRoomId: roomId, defaultDurationMinutes: 60,
+      kind: 'lesson', isMultiGroup: false, optional: false, phaseId: null,
+      content: { goals: [], notes: '' },
+    });
+
+    const wk = getState().phases.find(p => p.groupIds.length > 1)!;
+    const [shownLane, hiddenLane] = wk.groupIds as [string, string];
+    placeSubject(subjectId, wk.startDay, '08:00', shownLane);
+    placeSubject(subjectId, wk.startDay, '10:00', hiddenLane);
+    updateGroup(hiddenLane, { enabled: false });
+
+    return { teacherId, roomId, subjectId };
+  }
+
+  it('counts the Ausbildner the way the Pensum does', () => {
+    const { teacherId } = planWithHiddenLane();
+    expect(eventCountForTeacher(teacherId)).toBe(teacherLoad(getState(), teacherId).count);
+    expect(eventCountForTeacher(teacherId)).toBe(1);
+  });
+
+  it('counts the Raum the way the Belegung does', () => {
+    const { roomId } = planWithHiddenLane();
+    expect(eventCountForRoom(roomId)).toBe(roomLoad(getState(), roomId).count);
+    expect(eventCountForRoom(roomId)).toBe(1);
+  });
+
+  it('counts a Phase by what it actually draws, not by its day range', () => {
+    planWithHiddenLane();
+    const state = getState();
+    const wk = state.phases.find(p => p.groupIds.length > 1)!;
+    expect(eventCountForPhase(wk.id))
+      .toBe(state.events.filter(ev => eventInPhase(state, ev, wk)).length);
+  });
+});
+
+describe('lanesWithoutEvent', () => {
+  it('does not offer a lane an «alle Gruppen» placement already covers', () => {
+    const subjectId = addSubject({
+      name: 'Übung', shortName: '', color: '#9f7aea',
+      defaultTeacherIds: [], defaultRoomId: null, defaultDurationMinutes: 60,
+      kind: 'lesson', isMultiGroup: false, optional: false, phaseId: null,
+      content: { goals: [], notes: '' },
+    });
+    const wk = getState().phases.find(p => p.groupIds.length > 1)!;
+    const [first] = wk.groupIds as [string];
+
+    placeSubject(subjectId, wk.startDay, '08:00', first);
+    const single = getState().events.find(e => e.subjectId === subjectId)!;
+    expect(lanesWithoutEvent(single.id).map(g => g.id)).toEqual(wk.groupIds.slice(1));
+
+    // Now the Thema is switched to «alle Gruppen» and placed again at the same
+    // hour — the way an Übung ends up covering the whole rotation. Comparing
+    // `groupId` literally could not see that placement, so the copy dialog went
+    // on offering lanes that were about to hold the block twice.
+    updateSubject(subjectId, { isMultiGroup: true });
+    placeSubject(subjectId, wk.startDay, '08:00', first);
+
+    const shared = getState().events.find(e => e.groupId === ALL_GROUPS)!;
+    expect(shared.subjectId).toBe(subjectId);
+    expect(lanesWithoutEvent(single.id)).toEqual([]);
   });
 });

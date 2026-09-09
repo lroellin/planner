@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { getState, placeSubject } from '../state/store.svelte';
   import {
     DAY_NAMES, phaseForDay, phaseGroups, lanesForMultiGroup, snapToSlot, addMinutesToTime, dayDateLabel,
+    gridWindow,
   } from '../utils/timeUtils';
+  import { firstFreeSlot, previewClashDetail } from '../conflicts/detector';
   import Icon from './Icon.svelte';
   import TimeField from './TimeField.svelte';
   import { ALL_GROUPS, type ID } from '../types';
@@ -44,6 +47,9 @@
     targetPhase ? lanesForMultiGroup(appState, targetPhase, subject) : [],
   );
   const canPlace = $derived(laneOptions.length > 0);
+  // The hours the grid actually draws: offering a slot outside them places a
+  // Lektion no calendar renders. Same window `firstFreeSlot` searches, below.
+  const grid = $derived(gridWindow(appState));
   const previewEnd = $derived(
     addMinutesToTime(snapToSlot(startTime), subject?.defaultDurationMinutes ?? 60),
   );
@@ -65,16 +71,84 @@
 
     if (initialDayIndex !== undefined) {
       dayIndex = initialDayIndex;
-      return;
+    } else if (initialGroupId !== undefined
+      && appState.phases.some(p => p.groupIds.includes(initialGroupId))) {
+      dayIndex = appState.phases.find(p => p.groupIds.includes(initialGroupId))!.startDay;
+    } else {
+      const pinned = subject?.phaseId
+        ? appState.phases.find(p => p.id === subject.phaseId)
+        : null;
+      if (pinned) dayIndex = pinned.startDay;
     }
-    if (initialGroupId !== undefined) {
-      const owning = appState.phases.find(p => p.groupIds.includes(initialGroupId));
-      if (owning) { dayIndex = owning.startDay; return; }
-    }
-    const pinned = subject?.phaseId
-      ? appState.phases.find(p => p.id === subject.phaseId)
-      : null;
-    if (pinned) dayIndex = pinned.startDay;
+
+    seedStartTime();
+  });
+
+  /**
+   * Changing the Tag or the Gruppe asks the question again, so the answer is
+   * offered again — but only while the user has not set a time of their own.
+   * Re-seeding over a deliberate 13:45 would be the dialog arguing with them.
+   */
+  let timeTouched = $state(false);
+  $effect(() => {
+    dayIndex; targetGroupId;
+    if (!seeded || timeTouched) return;
+    untrack(seedStartTime);
+  });
+
+  /**
+   * R2: open on a slot that is actually free.
+   *
+   * The seed used to be the literal string '08:00', which on a half-planned week
+   * is the slot most likely to be taken — and this is the dialog the coverage
+   * report and the sidebar chip open, so it is reached precisely when the week
+   * is full. If nothing is free the old seed stands and the clash line below
+   * says what it will land on: the dialog has to open somewhere, and a wrong
+   * time the user can see beats a wrong time it will not admit to.
+   */
+  function seedStartTime(): void {
+    if (!subject || !targetPhase || laneOptions.length === 0) return;
+    const free = firstFreeSlot(
+      appState,
+      {
+        eventId: null,
+        subjectId,
+        groupId: isMultiGroup ? ALL_GROUPS : targetGroupId,
+        dayIndex,
+        teacherIds: 'inherit',
+        roomId: 'inherit',
+      },
+      subject.defaultDurationMinutes,
+      grid,
+    );
+    if (free) startTime = free;
+  }
+
+  /**
+   * What this placement would run into, live.
+   *
+   * Dragging the same Thema onto the grid has always tinted the drag mirror from
+   * these very rules; the dialog that places it without a drag said nothing at
+   * all, so the two paths to one mutation carried different amounts of truth.
+   */
+  const clash = $derived.by(() => {
+    if (!subject || !targetPhase || laneOptions.length === 0) return null;
+    const detail = previewClashDetail(appState, {
+      eventId: null,
+      subjectId,
+      groupId: isMultiGroup ? ALL_GROUPS : targetGroupId,
+      dayIndex,
+      startTime: snapToSlot(startTime),
+      endTime: previewEnd,
+      teacherIds: 'inherit',
+      roomId: 'inherit',
+    });
+    if (detail.level === null) return null;
+    const names = detail.eventIds
+      .map(id => appState.events.find(e => e.id === id))
+      .filter((e): e is NonNullable<typeof e> => Boolean(e))
+      .map(e => appState.subjects.find(sub => sub.id === e.subjectId)?.name ?? 'Lektion');
+    return { level: detail.level, names: [...new Set(names)] };
   });
 
   function submit(e?: Event): void {
@@ -160,9 +234,34 @@
           <div class="field">
             <span class="field-name">Start</span>
             <div class="flex items-center gap-2 flex-1">
-              <TimeField bind:value={startTime} ariaLabel="Startzeit" />
+              <TimeField
+                bind:value={startTime}
+                from={grid.start}
+                to={grid.end}
+                ariaLabel="Startzeit"
+                onpick={() => (timeTouched = true)}
+              />
               <span class="hint wk-num">endet {previewEnd}</span>
             </div>
+          </div>
+
+          <!-- R2: the same rules the drag mirror is tinted from, in words.
+               Placing stays possible either way — a Konflikt is advisory — but
+               it is no longer a surprise. -->
+          <div class="field">
+            <span class="field-name"></span>
+            <p class="clash-line flex-1" class:clash-hard={clash?.level === 'hard'} class:clash-free={clash === null}>
+              {#if clash === null}
+                <Icon name="check" size={13} /> frei
+              {:else if clash.names.length > 0}
+                <Icon name="alert" size={13} />
+                {clash.level === 'hard' ? 'Harter Konflikt mit' : 'Weicher Konflikt mit'}
+                {clash.names.join(', ')}
+              {:else}
+                <Icon name="alert" size={13} />
+                {clash.level === 'hard' ? 'Ausbildner abwesend' : 'Raum gesperrt'}
+              {/if}
+            </p>
           </div>
 
           {#if targetPhase === null}
@@ -186,6 +285,18 @@
 </dialog>
 
 <style>
+  /* R2 */
+  .clash-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--wk-fs-xs);
+    color: var(--color-warning);
+    margin: 0;
+  }
+  .clash-line.clash-hard { color: var(--color-error); }
+  .clash-line.clash-free { color: var(--wk-text-mute); }
+
   dialog::backdrop {
     background: color-mix(in oklab, black 45%, transparent);
   }

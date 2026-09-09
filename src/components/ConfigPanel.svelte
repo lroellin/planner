@@ -6,14 +6,19 @@
     eventCountForGroup,
     addPhase, updatePhase, removePhase, eventCountForPhase,
     addTeacher, addRoom,
-    setPlanName, replacePlan, resetToDefaults, loadSampleData,
+    setPlanName, setWkStartDate, setGridWindow, replacePlan, resetToDefaults, loadSampleData,
   } from '../state/store.svelte';
   import { serializePlan, planFileName, parsePlan, isPristineState } from '../state/persistence';
+  import { setupSteps, setupComplete, type SetupStepKey } from '../state/setup';
   import { generateDistinctColor, generateInitials, getContrastColor } from '../utils/colorUtils';
-  import { teacherShort } from '../utils/format';
-  import { DAY_NAMES, fullDateLabel, orderedPhases, sortSubjects } from '../utils/timeUtils';
+  import { collidingSubjectShorts, teacherShort } from '../utils/format';
+  import {
+    DAY_NAMES, dayDateLabel, formatDate, fullDateLabel, gridWindow, orderedPhases, phaseForDay,
+    sortSubjects,
+  } from '../utils/timeUtils';
   import { describeWindow } from '../utils/availability';
   import AddRow from './config/AddRow.svelte';
+  import TimeField from './TimeField.svelte';
   import MasterDetail from './config/MasterDetail.svelte';
   import TeacherDetail from './config/TeacherDetail.svelte';
   import RoomDetail from './config/RoomDetail.svelte';
@@ -31,8 +36,9 @@
   }
   let { onclose, initialTab = null, createSubject = false }: Props = $props();
 
-  type Tab = 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'data';
+  type Tab = 'setup' | 'groups' | 'phases' | 'teachers' | 'rooms' | 'subjects' | 'data';
   const TABS: { key: Tab; label: string }[] = [
+    { key: 'setup', label: 'Einrichtung' },
     { key: 'groups', label: 'Gruppen' },
     { key: 'phases', label: 'Phasen' },
     { key: 'teachers', label: 'Ausbildner' },
@@ -42,22 +48,52 @@
   ];
   // `ConfigTab` is the cross-component name; 'plan' is this component's 'data'.
   const TAB_FOR_REQUEST: Record<ConfigTab, Tab> = {
-    groups: 'groups', phases: 'phases', teachers: 'teachers',
+    setup: 'setup', groups: 'groups', phases: 'phases', teachers: 'teachers',
     rooms: 'rooms', subjects: 'subjects', plan: 'data',
   };
   // `untrack`: these props seed the panel and are never read again — the dialog
   // is mounted fresh per open, so a later change would have nothing to update.
+  //
+  // With nothing pre-selected the panel used to open on Gruppen — the one tab a
+  // fresh plan has already filled in, so the first screen of the setup showed
+  // work that was done and said nothing about the three lists that were empty.
+  // Einrichtung while anything is still open; Gruppen once it is not.
   let activeTab: Tab = $state(
-    untrack(() => (initialTab ? TAB_FOR_REQUEST[initialTab] : 'groups')),
+    untrack(() => (
+      initialTab ? TAB_FOR_REQUEST[initialTab] : setupComplete(getState()) ? 'groups' : 'setup'
+    )),
   );
 
   const appState = $derived(getState());
   const sortedGroups = $derived([...appState.groups].sort((a, b) => a.order - b.order));
   const phases = $derived(orderedPhases(appState));
 
+  /**
+   * The WK week. It used to be a permanent three-button nav in the toolbar —
+   * ‹ 14.9.–18.9. › — about 185px, next to a grid whose own column headers
+   * already print "Mo. 14.9." across the top. It is set once per WK, so it
+   * belongs with the other once-per-WK settings, and the grid keeps saying
+   * which week you are in.
+   */
+  const weekLabel = $derived(
+    `${dayDateLabel(appState.wkStartDate, 0)} – ${dayDateLabel(appState.wkStartDate, 4)}`,
+  );
+
+  function shiftWeek(delta: number): void {
+    // Parsed as a local date: a UTC parse shifts the day west of Greenwich.
+    const [y, m, day] = appState.wkStartDate.split('-').map(Number);
+    const d = new Date(y!, m! - 1, day!);
+    d.setDate(d.getDate() + delta * 7);
+    setWkStartDate(formatDate(d));
+  }
+
   // One line, not a paragraph: the full explanation lives behind the ⓘ so it
   // isn't re-read on every visit to the tab.
   const TAB_INTRO: Record<Tab, { short: string; long: string }> = {
+    setup: {
+      short: 'Was dieser Plan braucht, bevor geplant werden kann.',
+      long: 'Gruppen und Phasen sind bei einem neuen Plan schon gesetzt und passen meistens. Ausbildner und Räume kommen vor den Themen: Ein Thema hält seine Vorgaben — Ausbildner, Raum, Dauer — und wählt sie aus diesen beiden Listen. Danach werden die Themen aus der Seitenleiste auf den Kalender gezogen. Alles hier bleibt die ganze Woche änderbar.',
+    },
     groups: {
       short: 'Gruppen sind die Spalten des Kalenders.',
       long: 'Jede Gruppe muss jedes Thema besuchen. Inaktive Gruppen behalten ihre Daten, werden aber im Kalender ausgeblendet und von der Konfliktprüfung übersprungen.',
@@ -79,12 +115,114 @@
       long: 'Ihre Vorgaben — Ausbildner, Raum, Dauer — werden auf jede platzierte Lektion kopiert, wo sie einzeln überschrieben werden können. Auch Inhalt (Lernziele, Notizen) liegt am Thema. Die Dauer ist zugleich das Soll pro Gruppe.',
     },
     data: {
-      short: 'Der Plan liegt in diesem Browser. Wer ihn sichern oder weitergeben will, exportiert ihn als Datei.',
-      long: 'Alles liegt im localStorage dieses Browsers: Wer die Website-Daten löscht, löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei, ein Import überschreibt den aktuellen. Die App verwaltet keine Plansammlung: Wer mehrere Pläne aufbewahren will, legt sie als Dateien ab.',
+      short: 'Name und Woche des WK — und die Datei, mit der man den Plan sichert.',
+      long: 'Planname und WK-Woche werden einmal pro WK gesetzt und stehen darum hier statt in der Werkzeugleiste. Alles liegt im localStorage dieses Browsers: Wer die Website-Daten löscht, löscht den Plan. Der Export schreibt den ganzen Plan in eine JSON-Datei, ein Import überschreibt den aktuellen. Die App verwaltet keine Plansammlung: Wer mehrere Pläne aufbewahren will, legt sie als Dateien ab.',
     },
   };
 
   let introOpen = $state(false);
+
+  // ─── Einrichtung ──────────────────────────────────────────────────────────
+  // The tab is one row per step of `setupSteps`, in the order the steps are
+  // done. An open row says why the thing matters; a done row says what is
+  // there, so the tab keeps earning its place once the setup is over — it is
+  // then the one screen that answers "what is in this plan".
+
+  const SETUP_COPY: Record<SetupStepKey, { label: string; why: string; cta: string; tab: Tab }> = {
+    groups: {
+      label: 'Gruppen',
+      why: 'Die Spalten des Kalenders. Jede Gruppe besucht jedes Thema.',
+      cta: 'bearbeiten',
+      tab: 'groups',
+    },
+    phases: {
+      label: 'Phasen',
+      why: 'Teilen die Woche in Abschnitte mit eigenen Gruppen.',
+      cta: 'bearbeiten',
+      tab: 'phases',
+    },
+    teachers: {
+      label: 'Ausbildner',
+      why: 'Ohne sie prüft nichts auf Konflikte — doppelt eingeteilt fällt dann niemandem auf.',
+      cta: 'anlegen',
+      tab: 'teachers',
+    },
+    rooms: {
+      label: 'Räume',
+      why: 'Geben weiche Konflikte. Geteilte Flächen wie «draussen» werden ausgenommen.',
+      cta: 'anlegen',
+      tab: 'rooms',
+    },
+    subjects: {
+      label: 'Themen',
+      why: 'Das, was auf den Kalender gezogen wird. Holt seine Vorgaben aus den beiden Listen darüber.',
+      cta: 'anlegen',
+      tab: 'subjects',
+    },
+  };
+
+  /** A handful of names, so a done row says what is in the list. */
+  function nameSummary(names: string[]): string {
+    const shown = names.slice(0, 3).join(', ');
+    return names.length > 3 ? `${shown} und ${names.length - 3} weitere` : shown;
+  }
+
+  const setupRows = $derived.by(() =>
+    setupSteps(appState).map((step) => {
+      const copy = SETUP_COPY[step.key];
+      let note = copy.why;
+      let warn = false;
+      if (step.key === 'phases' && phaseWarning) {
+        note = phaseWarning;
+        warn = true;
+      } else if (step.done) {
+        if (step.key === 'groups') {
+          note = sortedGroups.filter(g => g.enabled).map(g => g.label).join(', ');
+        } else if (step.key === 'phases') {
+          note = phases
+            .map(ph => `${ph.label} ${DAY_NAMES[ph.startDay]}–${DAY_NAMES[ph.endDay]}`)
+            .join(' · ');
+        } else if (step.key === 'teachers') {
+          note = nameSummary(appState.teachers.map(t => t.name));
+        } else if (step.key === 'rooms') {
+          note = nameSummary(appState.rooms.map(r => r.name));
+        } else {
+          const lessons = appState.subjects.filter(x => x.kind === 'lesson').length;
+          const oneoffs = appState.subjects.filter(x => x.kind === 'oneoff').length;
+          const pauses = appState.subjects.filter(x => x.kind === 'break').length;
+          note = [
+            `${lessons} ${lessons === 1 ? 'Thema' : 'Themen'}`,
+            ...(oneoffs > 0 ? [`${oneoffs} ${oneoffs === 1 ? 'Programmpunkt' : 'Programmpunkte'}`] : []),
+            ...(pauses > 0 ? [`${pauses} ${pauses === 1 ? 'Pause' : 'Pausen'}`] : []),
+          ].join(' · ');
+        }
+      }
+      // A done row is no longer an invitation to create something — it is the
+      // list as it stands, and the way in is to change it.
+      return { ...step, ...copy, note, warn, cta: step.done ? 'bearbeiten' : copy.cta };
+    }),
+  );
+
+  const setupOpenCount = $derived(setupRows.filter(r => !r.done).length);
+
+  /** Jump to the tab a row names — the dialog is already open, so no request. */
+  function goToTab(tab: Tab, opts: { createSubject?: boolean } = {}): void {
+    activeTab = tab;
+    introOpen = false;
+    if (opts.createSubject) {
+      selectedSubjectId = null;
+      addingSubject = true;
+    }
+  }
+
+  /** What each tab holds, so the strip says where the gaps are. */
+  const tabCounts = $derived<Partial<Record<Tab, number>>>({
+    groups: appState.groups.filter(g => g.enabled).length,
+    phases: appState.phases.length,
+    teachers: appState.teachers.length,
+    rooms: appState.rooms.length,
+    subjects: appState.subjects.filter(x => x.kind !== 'break').length,
+  });
 
   // ─── Master-detail selection ──────────────────────────────────────────────
   let selectedTeacherId: ID | null = $state(getState().teachers[0]?.id ?? null);
@@ -100,6 +238,29 @@
 
   // Alphabetical everywhere, the three kinds kept apart: the stored order is
   // insertion order, which stops being findable at about a dozen subjects.
+  /** K3: ← → / Home / End move between the config tabs. */
+  function onTabKey(e: KeyboardEvent): void {
+    const keys = TABS.map(t => t.key);
+    const i = keys.indexOf(activeTab);
+    let next: Tab | undefined;
+    if (e.key === 'ArrowRight') next = keys[(i + 1) % keys.length];
+    else if (e.key === 'ArrowLeft') next = keys[(i - 1 + keys.length) % keys.length];
+    else if (e.key === 'Home') next = keys[0];
+    else if (e.key === 'End') next = keys[keys.length - 1];
+    if (!next) return;
+    e.preventDefault();
+    activeTab = next;
+    introOpen = false;
+    const id = `cfg-tab-${next}`;
+    requestAnimationFrame(() => document.getElementById(id)?.focus());
+  }
+
+  /** Themen whose card label cannot be told from another's — see `format.ts`. */
+  const shortNameClashes = $derived(collidingSubjectShorts(appState.subjects));
+
+  /** What the grid actually draws right now — derived, explicit, or a mix. */
+  const derivedGrid = $derived(gridWindow(appState));
+
   const listedSubjects = $derived([
     ...sortSubjects(appState.subjects.filter(s => s.kind === 'lesson')),
     ...sortSubjects(appState.subjects.filter(s => s.kind === 'oneoff')),
@@ -210,13 +371,21 @@
     return problems.length > 0 ? `Phasen prüfen: ${problems.join('; ')}.` : null;
   });
 
-  /** Which phase owns each weekday — drives the strip above the phase table. */
+  /**
+   * Which phase owns each weekday — drives the strip above the phase table.
+   *
+   * Through `phaseForDay`, which is what every other part of the app asks. This
+   * open-coded the range test against the *sorted* list, so with two phases
+   * overlapping — the state the warning above exists for — the strip named one
+   * phase and the grid drew the other's lanes.
+   */
   const weekStrip = $derived(
     DAY_NAMES.map((name, day) => {
-      const index = phases.findIndex(p => day >= p.startDay && day <= p.endDay);
+      const phase = phaseForDay(appState, day);
+      const index = phase ? phases.findIndex(p => p.id === phase.id) : -1;
       return {
         name,
-        phase: index >= 0 ? phases[index]! : null,
+        phase,
         hue: index >= 0 ? PHASE_HUES[index % PHASE_HUES.length]! : null,
       };
     }),
@@ -312,15 +481,29 @@
     </header>
 
     <!-- Tabs -->
-    <div role="tablist" class="cfg-tabs">
+    <div role="tablist" class="cfg-tabs" aria-label="Konfiguration">
       {#each TABS as tab (tab.key)}
         <button
           role="tab"
+          id="cfg-tab-{tab.key}"
+          aria-controls="cfg-panel"
           class="cfg-tab"
           class:cfg-tab-on={activeTab === tab.key}
           aria-selected={activeTab === tab.key}
+          tabindex={activeTab === tab.key ? 0 : -1}
+          onkeydown={onTabKey}
           onclick={() => { activeTab = tab.key; introOpen = false; }}
-        >{tab.label}</button>
+        >
+          {tab.label}
+          <!-- What is in there, and — as a 0 in the warning colour — what is
+               not. The Einrichtung rows and this strip read the same numbers. -->
+          {#if tabCounts[tab.key] !== undefined}
+            <span
+              class="tab-count wk-num"
+              class:tab-count-zero={tabCounts[tab.key] === 0}
+            >{tabCounts[tab.key]}</span>
+          {/if}
+        </button>
       {/each}
     </div>
 
@@ -337,10 +520,72 @@
     {/if}
 
     <!-- Content -->
-    <div class="cfg-body">
+    <div class="cfg-body" role="tabpanel" id="cfg-panel" aria-labelledby="cfg-tab-{activeTab}">
+
+      <!-- ════ EINRICHTUNG ═══════════════════════════════════════════════════ -->
+      {#if activeTab === 'setup'}
+        <div class="pane">
+          <div class="pane-scroll">
+            <h4 class="section-title">
+              {setupOpenCount > 0
+                ? 'Was dieser Plan noch braucht'
+                : 'Dieser Plan ist eingerichtet'}
+            </h4>
+
+            <div class="setup-list">
+              {#each setupRows as row (row.key)}
+                <button
+                  class="setup-row"
+                  class:setup-row-open={!row.done}
+                  onclick={() => goToTab(row.tab, { createSubject: row.key === 'subjects' && !row.done })}
+                >
+                  <span class="setup-mark" class:setup-mark-done={row.done} aria-hidden="true">
+                    {#if row.done}<Icon name="check" size={13} />{/if}
+                  </span>
+                  <span class="setup-main">
+                    <span class="setup-label">
+                      {row.label}
+                      <span class="setup-count wk-num" class:setup-count-zero={row.count === 0}>{row.count}</span>
+                    </span>
+                    <span class="setup-note" class:setup-note-warn={row.warn}>{row.note}</span>
+                  </span>
+                  <span class="setup-cta">
+                    {row.cta} <Icon name="chevronRight" size={12} />
+                  </span>
+                </button>
+              {/each}
+            </div>
+
+            <!-- Not a step: `createDefaultState` picks the coming Monday, which
+                 is often already right, and nothing records whether anybody
+                 looked at it. So it is stated and changeable, never ticked. -->
+            <div class="setup-aside">
+              <button class="setup-side-row" onclick={() => goToTab('data')}>
+                <span class="setup-side-label">WK-Woche</span>
+                <span class="setup-side-value wk-num">{weekLabel}</span>
+                <span class="setup-cta">ändern <Icon name="chevronRight" size={12} /></span>
+              </button>
+
+              {#if isPristineState(appState)}
+                <button class="setup-side-row" onclick={loadSampleData}>
+                  <span class="setup-side-label">Beispielwoche</span>
+                  <span class="setup-side-value">Eine vollständige Woche zum Anschauen — ersetzt den leeren Plan</span>
+                  <span class="setup-cta">laden <Icon name="chevronRight" size={12} /></span>
+                </button>
+              {/if}
+            </div>
+
+            {#if setupOpenCount === 0}
+              <p class="setup-done-hint">
+                Themen aus der Seitenleiste auf den Kalender ziehen. Alles hier bleibt die ganze
+                Woche änderbar.
+              </p>
+            {/if}
+          </div>
+        </div>
 
       <!-- ════ GROUPS ════════════════════════════════════════════════════════ -->
-      {#if activeTab === 'groups'}
+      {:else if activeTab === 'groups'}
         <div class="pane">
           <div class="pane-scroll">
             {#if appState.groups.length > 0}
@@ -626,6 +871,12 @@
           {#snippet row(s)}
             <span class="w-2.5 h-2.5 rounded-sm shrink-0" style="background:{s.color}"></span>
             <span class="truncate min-w-0 flex-1">{s.name}</span>
+            <!-- N1: two Themen whose cards read the same on a narrow lane. The
+                 list is where you can see both at once, so it is where the
+                 clash is named. -->
+            {#if shortNameClashes.has(s.id)}
+              <span class="row-tag row-tag-warn" title="Gleiche Kartenbeschriftung wie ein anderes Thema — Kürzel setzen">Kürzel</span>
+            {/if}
             {#if s.kind === 'break'}
               <span class="row-tag">Pause</span>
             {:else if s.kind === 'oneoff'}
@@ -641,6 +892,7 @@
                   oncreated={(id) => { addingSubject = false; selectedSubjectId = id; }}
                   oncancel={() => { addingSubject = false; selectedSubjectId = listedSubjects[0]?.id ?? null; }}
                   ondeleted={() => (selectedSubjectId = listedSubjects.find(s => s.id !== selectedSubjectId)?.id ?? null)}
+                  onnavigate={(tab) => goToTab(tab)}
                 />
               {/key}
             {:else}
@@ -671,6 +923,88 @@
                   aria-label="Planname"
                   onchange={(e) => setPlanName((e.currentTarget as HTMLInputElement).value.trim() || 'WK-Plan')}
                 />
+              </section>
+
+              <section class="data-card">
+                <h4 class="section-title">WK-Woche</h4>
+                <p class="field-hint">
+                  Der Montag, an dem der WK beginnt. Jedes Datum rastet auf seinen Montag ein.
+                  Die Woche steht im Kalender über den Spalten und auf jedem gedruckten Plan.
+                </p>
+                <div class="week-row">
+                  <button
+                    class="btn btn-sm btn-square"
+                    onclick={() => shiftWeek(-1)}
+                    title="Eine Woche zurück"
+                    aria-label="Eine Woche zurück"
+                  ><Icon name="chevronLeft" size={15} /></button>
+                  <input
+                    class="input input-bordered input-sm"
+                    type="date"
+                    value={appState.wkStartDate}
+                    aria-label="WK-Woche (Montag)"
+                    onchange={(e) => setWkStartDate((e.currentTarget as HTMLInputElement).value)}
+                  />
+                  <button
+                    class="btn btn-sm btn-square"
+                    onclick={() => shiftWeek(1)}
+                    title="Eine Woche vor"
+                    aria-label="Eine Woche vor"
+                  ><Icon name="chevronRight" size={15} /></button>
+                  <span class="week-label wk-num">{weekLabel}</span>
+                </div>
+              </section>
+
+              <!-- H1: the hours the grid draws. One window for the whole WK —
+                   the same hour has to sit at the same height in the KVK and
+                   the WK segment or the two stop lining up. -->
+              <section class="data-card">
+                <h4 class="section-title">Tagesraster</h4>
+                <p class="field-hint">
+                  Von wann bis wann der Kalender Stunden zeichnet — für die ganze Woche.
+                  Leer lassen: dann richtet sich das Raster nach dem Plan und lässt oben
+                  und unten etwas Luft zum Ziehen. Eng gesetzt spart es Höhe, weil keine
+                  leeren Stunden mehr gezeichnet werden.
+                </p>
+                <div class="grid-row">
+                  <label class="grid-field">
+                    <span class="field-label">Von</span>
+                    <TimeField
+                      value={appState.gridStartTime ?? ''}
+                      allowEmpty
+                      emptyLabel="automatisch"
+                      from="00:00"
+                      to="23:45"
+                      ariaLabel="Raster von"
+                      onpick={(v: string) => setGridWindow({ gridStartTime: v === '' ? null : v })}
+                    />
+                  </label>
+                  <label class="grid-field">
+                    <span class="field-label">Bis</span>
+                    <TimeField
+                      value={appState.gridEndTime ?? ''}
+                      allowEmpty
+                      emptyLabel="automatisch"
+                      from="00:00"
+                      to="24:00"
+                      ariaLabel="Raster bis"
+                      onpick={(v: string) => setGridWindow({ gridEndTime: v === '' ? null : v })}
+                    />
+                  </label>
+                  <span class="grid-note wk-num">
+                    {#if appState.gridStartTime === null && appState.gridEndTime === null}
+                      zurzeit {derivedGrid.start}–{derivedGrid.end}
+                    {:else}
+                      Raster {derivedGrid.start}–{derivedGrid.end}
+                    {/if}
+                  </span>
+                  {#if appState.gridStartTime !== null || appState.gridEndTime !== null}
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      onclick={() => setGridWindow({ gridStartTime: null, gridEndTime: null })}
+                    >Zurücksetzen</button>
+                  {/if}
+                </div>
               </section>
 
               {#if isPristineState(appState)}
@@ -743,6 +1077,24 @@
 </dialog>
 
 <style>
+  /* H1: the two ends of the day, side by side with what they currently resolve to. */
+  .grid-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .grid-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .grid-note {
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    padding-bottom: 6px;
+  }
+
   dialog::backdrop {
     background: var(--wk-scrim);
   }
@@ -772,6 +1124,20 @@
     border-radius: var(--wk-r-md);
     box-shadow: var(--wk-shadow-2);
     overflow: hidden;
+  }
+
+  .week-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .week-label {
+    margin-left: 0.35rem;
+    font-size: var(--wk-fs-sm);
+    font-weight: 600;
+    color: var(--wk-text-mute);
   }
 
   .cfg-head {
@@ -819,6 +1185,16 @@
     cursor: pointer;
   }
   .cfg-tab:hover { color: var(--wk-text); }
+
+  /* The count is a fact about the tab, not a badge shouting for attention —
+     except at 0, which is the whole point of showing it. */
+  .tab-count {
+    margin-left: 0.3rem;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    color: var(--wk-text-faint);
+  }
+  .tab-count-zero { color: var(--color-warning); }
   .cfg-tab-on {
     color: var(--color-primary);
     border-bottom-color: var(--color-primary);
@@ -883,6 +1259,137 @@
     flex: 1;
     overflow-y: auto;
     padding: 1rem 1.4rem;
+  }
+
+  /* ── Einrichtung ────────────────────────────────────────────────────────
+     One row per step, the whole width, because the row *is* the link: the
+     label, what is in there and the way in are one target. */
+  .setup-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    margin: 0.85rem 0 1.1rem;
+  }
+
+  .setup-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    width: 100%;
+    text-align: left;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    background: none;
+    cursor: pointer;
+  }
+  .setup-row:hover { background: var(--wk-surface-alt); }
+  .setup-row-open { border-color: color-mix(in oklab, var(--color-warning) 40%, var(--wk-line)); }
+
+  /* Empty circle / filled check — the two states of a step, at the same size,
+     so the column reads as a list of marks rather than as things appearing. */
+  .setup-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in oklab, var(--color-warning) 55%, transparent);
+    color: var(--wk-surface);
+  }
+  .setup-mark-done {
+    border-color: transparent;
+    background: var(--color-success);
+    color: var(--wk-surface);
+  }
+
+  .setup-main {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .setup-label {
+    font-size: var(--wk-fs-sm);
+    font-weight: 600;
+    color: var(--wk-text);
+  }
+
+  .setup-count {
+    margin-left: 0.35rem;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    color: var(--wk-text-faint);
+  }
+  .setup-count-zero { color: var(--color-warning); }
+
+  .setup-note {
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .setup-note-warn { color: var(--color-warning); }
+
+  .setup-cta {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    flex-shrink: 0;
+    font-size: var(--wk-fs-xs);
+    font-weight: 600;
+    color: var(--color-primary);
+  }
+
+  /* The two things that are not steps, set apart from the ones that are. */
+  .setup-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--wk-line);
+  }
+
+  .setup-side-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    width: 100%;
+    text-align: left;
+    padding: 0.4rem 0.7rem;
+    border: none;
+    border-radius: var(--wk-r-sm);
+    background: none;
+    cursor: pointer;
+  }
+  .setup-side-row:hover { background: var(--wk-surface-alt); }
+
+  .setup-side-label {
+    font-size: var(--wk-fs-xs);
+    font-weight: 600;
+    color: var(--wk-text);
+    flex-shrink: 0;
+  }
+
+  .setup-side-value {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-mute);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .setup-done-hint {
+    margin-top: 1rem;
+    font-size: var(--wk-fs-xs);
+    color: var(--wk-text-faint);
   }
 
   .pane-empty {
@@ -1003,6 +1510,17 @@
     font-size: var(--wk-fs-2xs);
     color: var(--wk-text-faint);
     flex-shrink: 0;
+  }
+
+  /* The base tag is a bare word; this one has to read as a *flag*, so it takes
+     a border and a tint of its own rather than only a colour. */
+  .row-tag-warn {
+    color: var(--color-warning);
+    border: 1px solid color-mix(in oklab, var(--color-warning) 45%, transparent);
+    background: color-mix(in oklab, var(--color-warning) 12%, transparent);
+    border-radius: var(--wk-r-sm);
+    padding: 0 5px;
+    line-height: 1.5;
   }
 
   /* ── Phases: the week strip ─────────────────────────────────────────────── */

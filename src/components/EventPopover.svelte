@@ -3,26 +3,26 @@
     getState, updateEvent, removeEvent, duplicateEvents, splitEvent, copyEventToLanes, lanesWithoutEvent,
   } from '../state/store.svelte';
   import {
-    closeQuickEdit, selectEvent, revealEvent, highlightEvents, clearHighlight, type QuickEdit,
+    closeQuickEdit, selectEvent, revealEvent, highlightEvents, clearHighlight, requestConfig,
+    type QuickEdit,
   } from '../state/ui.svelte';
   import {
     DAY_NAMES, addMinutesToTime, timeDiffMinutes, effectiveTeacherIds, effectiveRoomId,
-    snapToSlot, splitRange,
+    snapToSlot, splitRange, phaseForDay, phaseGroups, dayDateLabel, isMultiGroupEvent,
+    gridWindow, describeConflicts,
   } from '../utils/timeUtils';
   import { getContrastColor } from '../utils/colorUtils';
   import { teacherShort } from '../utils/format';
   import Icon from './Icon.svelte';
   import DurationField from './DurationField.svelte';
   import TimeField from './TimeField.svelte';
-  import { conflictNote, isHardConflict, type ID } from '../types';
+  import { ALL_GROUPS, conflictNote, isHardConflict, type ID } from '../types';
 
   interface Props {
     quick: QuickEdit;
-    /** Hands the event over to the full modal. */
-    onedit: (id: ID) => void;
   }
 
-  let { quick, onedit }: Props = $props();
+  let { quick }: Props = $props();
 
   const appState = $derived(getState());
   const ev = $derived(appState.events.find(e => e.id === quick.eventId) ?? null);
@@ -46,6 +46,54 @@
   const spareLanes = $derived(ev ? lanesWithoutEvent(ev.id) : []);
 
   /**
+   * E1: the popover is the editor.
+   *
+   * There used to be two — this and a full-screen modal — holding the same three
+   * fields, saving the same way, and chosen by whether the user clicked once or
+   * twice. The modal's only additions were the placement (Tag, Gruppe, Start)
+   * and two actions this footer already had, so the placement moved here and the
+   * modal keeps only the job this cannot do: editing a Lektion that has **no
+   * card on the grid to anchor a popover to**. See `EventModal.svelte`.
+   *
+   * The day decides the phase and the phase decides which lanes exist — the same
+   * rule PlaceDialog uses, so an edit cannot strand a Lektion on a lane no phase
+   * draws.
+   */
+  const isMulti = $derived(ev !== null && isMultiGroupEvent(ev));
+  const targetPhase = $derived(ev ? phaseForDay(appState, ev.dayIndex) : null);
+  const laneOptions = $derived(targetPhase ? phaseGroups(appState, targetPhase) : []);
+  /** The hours the grid draws — see the note on `TimeField`'s `from`/`to`. */
+  const grid = $derived(gridWindow(appState));
+
+  function setDay(dayIndex: number): void {
+    if (!ev) return;
+    const phase = phaseForDay(appState, dayIndex);
+    const lanes = phase ? phaseGroups(appState, phase) : [];
+    // A single-lane Lektion whose lane the new phase does not draw would become
+    // an orphan; it lands on that phase's first lane instead. An all-lanes one
+    // keeps its sentinel and simply follows the new phase.
+    const groupId = isMulti || lanes.some(g => g.id === ev.groupId)
+      ? ev.groupId
+      : lanes[0]?.id ?? ev.groupId;
+    updateEvent(ev.id, { dayIndex, groupId }, `${subject?.name ?? 'Lektion'} verschieben`);
+  }
+
+  function setLane(groupId: string): void {
+    if (!ev) return;
+    updateEvent(ev.id, { groupId }, `${subject?.name ?? 'Lektion'}: Gruppe ändern`);
+  }
+
+  function setStart(startTime: string): void {
+    if (!ev) return;
+    const at = snapToSlot(startTime);
+    updateEvent(
+      ev.id,
+      { startTime: at, endTime: addMinutesToTime(at, minutes) },
+      `${subject?.name ?? 'Lektion'} verschieben`,
+    );
+  }
+
+  /**
    * What is wrong with *this* card, named.
    *
    * The grid draws a red edge and the conflict rail lists every clash in the
@@ -59,23 +107,7 @@
    * availability clash has no counterpart — being booked while away involves one
    * card — so those are inert, and say so by not being buttons.
    */
-  const clashes = $derived.by(() => {
-    if (!ev?.conflicts) return [];
-    return ev.conflicts.map(c => {
-      const name =
-        c.kind === 'teacher' || c.kind === 'teacher-absent'
-          ? appState.teachers.find(t => t.id === c.resourceId)?.name
-        : c.kind === 'room' || c.kind === 'room-blocked'
-          ? appState.rooms.find(r => r.id === c.resourceId)?.name
-        : appState.groups.find(g => g.id === c.resourceId)?.label;
-      return {
-        kind: c.kind,
-        name: name ?? c.resourceId,
-        hard: isHardConflict(c.kind),
-        others: c.collidingEventIds,
-      };
-    });
-  });
+  const clashes = $derived(describeConflicts(appState, ev));
 
   function goToClash(eventIds: ID[]): void {
     const target = eventIds[0];
@@ -130,10 +162,16 @@
     const margin = 8;
     const gap = 10;
 
-    const right = quick.anchor.x + quick.anchor.width + gap;
-    const left = right + width > window.innerWidth - margin
+    // E4: the side with more room, not "right unless it does not fit".
+    // The panel is 268px against ~68px lanes, so it always covers a few of them
+    // — including, when it carries conflict chips, the lanes those chips point
+    // at. It cannot avoid covering something, but it can cover the emptier side.
+    const spaceRight = window.innerWidth - margin - (quick.anchor.x + quick.anchor.width + gap);
+    const spaceLeft = quick.anchor.x - gap - margin;
+    const putLeft = spaceRight < width && spaceLeft > spaceRight;
+    const left = putLeft
       ? Math.max(margin, quick.anchor.x - width - gap)
-      : right;
+      : Math.min(quick.anchor.x + quick.anchor.width + gap, window.innerWidth - width - margin);
 
     // Prefer aligning with the card's top edge; slide up only as far as needed,
     // and never past the top of the window.
@@ -302,6 +340,7 @@
             bind:value={splitTime}
             from={split.from}
             to={split.to}
+            size="xs"
             class="w-full"
             ariaLabel="Teilen um"
           />
@@ -358,6 +397,98 @@
       </footer>
     {:else}
       <div class="quick-body">
+        <!-- E1: Platzierung — the half of the full modal this panel was missing.
+             Dragging stays the fast path; this is for the move that is easier to
+             say than to aim, and for the Lektion whose target lane is under
+             something else. -->
+        <div class="quick-row">
+          <div class="quick-label">
+            <span class="wk-eyebrow">Platzierung</span>
+            {#if targetPhase}<span class="quick-phase">{targetPhase.label}</span>{/if}
+          </div>
+          <!-- Two rows, not three fields abreast. Three selects sharing 244px
+               left "Do 22.09." reading "Do 22…", the lane "G…" and the start
+               "0…": a placement row where none of the three placements could
+               be read. The day carries the longest label, so it gets the full
+               width; Gruppe and Startzeit are short and fixed and fit beside
+               each other underneath. -->
+          <div class="place-row">
+            <select
+              class="select select-bordered select-xs place-day"
+              value={ev.dayIndex}
+              onchange={(e) => setDay(Number((e.currentTarget as HTMLSelectElement).value))}
+              aria-label="Tag"
+            >
+              {#each DAY_NAMES as name, i (name)}
+                <option value={i}>{name} {dayDateLabel(appState.wkStartDate, i)}</option>
+              {/each}
+            </select>
+            {#if isMulti}
+              <span class="quick-hint place-all">Alle Gruppen</span>
+            {:else}
+              <select
+                class="select select-bordered select-xs"
+                value={ev.groupId}
+                disabled={laneOptions.length === 0}
+                onchange={(e) => setLane((e.currentTarget as HTMLSelectElement).value)}
+                aria-label="Gruppe"
+              >
+                {#each laneOptions as g (g.id)}
+                  <option value={g.id}>{g.label}</option>
+                {/each}
+              </select>
+            {/if}
+            <TimeField
+              value={ev.startTime}
+              from={grid.start}
+              to={grid.end}
+              size="xs"
+              class=""
+              ariaLabel="Startzeit"
+              onpick={setStart}
+            />
+          </div>
+          {#if targetPhase === null}
+            <p class="quick-warn">Keine Phase deckt {DAY_NAMES[ev.dayIndex]} ab — die Lektion wird nirgends gezeichnet.</p>
+          {/if}
+        </div>
+
+        <!-- E2: a Pause has no Ausbildner and no Raum to set. The picker was
+             eight names and four rows — ~180px of a 430px panel — for two fields
+             a Mittagessen never uses. -->
+        {#if subject.kind !== 'break'}
+        <!-- Raum first: one select against four rows of Ausbildner chips,
+             the same order the Thema's Vorgaben use. -->
+        <div class="quick-row">
+          <div class="quick-label">
+            <span class="wk-eyebrow">Raum</span>
+            {#if overrides.room}
+              <button class="quick-reset" onclick={() => resetField('room')} title="Zurück zur Themenvorgabe">
+                <Icon name="reset" size={11} /> Vorgabe
+              </button>
+            {/if}
+          </div>
+          {#if appState.rooms.length === 0}
+            <button
+              class="quick-link"
+              onclick={() => { closeQuickEdit(); requestConfig('rooms'); }}
+            >
+              Keine Räume erfasst — anlegen <Icon name="chevronRight" size={11} />
+            </button>
+          {:else}
+            <select
+              class="select select-bordered select-xs w-full"
+              value={roomId ?? ''}
+              onchange={(e) => setRoom((e.currentTarget as HTMLSelectElement).value)}
+            >
+              <option value="">Kein Raum</option>
+              {#each appState.rooms as r (r.id)}
+                <option value={r.id}>{r.name}</option>
+              {/each}
+            </select>
+          {/if}
+        </div>
+
         <!-- Teachers -->
         <div class="quick-row">
           <div class="quick-label">
@@ -390,32 +521,20 @@
               </button>
             {/each}
             {#if appState.teachers.length === 0}
-              <span class="quick-empty">Keine Ausbildner erfasst.</span>
+              <!-- A fact with no verb, until now: without Ausbildner the
+                   conflict check — what this app is for — finds nothing, and
+                   the line said so without offering the way out. -->
+              <button
+                class="quick-link"
+                onclick={() => { closeQuickEdit(); requestConfig('teachers'); }}
+              >
+                Keine Ausbildner erfasst — anlegen <Icon name="chevronRight" size={11} />
+              </button>
             {/if}
           </div>
         </div>
 
-        <!-- Room -->
-        <div class="quick-row">
-          <div class="quick-label">
-            <span class="wk-eyebrow">Raum</span>
-            {#if overrides.room}
-              <button class="quick-reset" onclick={() => resetField('room')} title="Zurück zur Themenvorgabe">
-                <Icon name="reset" size={11} /> Vorgabe
-              </button>
-            {/if}
-          </div>
-          <select
-            class="select select-bordered select-xs w-full"
-            value={roomId ?? ''}
-            onchange={(e) => setRoom((e.currentTarget as HTMLSelectElement).value)}
-          >
-            <option value="">Kein Raum</option>
-            {#each appState.rooms as r (r.id)}
-              <option value={r.id}>{r.name}</option>
-            {/each}
-          </select>
-        </div>
+        {/if}
 
         <!-- Duration -->
         <div class="quick-row">
@@ -460,15 +579,33 @@
         <button class="act act-danger" title="Diese Lektion löschen" onclick={remove}>
           <Icon name="trash" size={13} /> Löschen
         </button>
-        <button class="act act-edit" onclick={() => onedit(ev.id)}>
-          <Icon name="pencil" size={12} /> Bearbeiten …
-        </button>
       </footer>
     {/if}
   </div>
 {/if}
 
 <style>
+  /* E1 */
+  .place-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 5px;
+  }
+  .place-row :global(select) { width: 100%; min-width: 0; }
+  .place-day { grid-column: 1 / -1; }
+  /* The sentinel lane has no picker, so the words stand where it would. */
+  .place-all { align-self: center; }
+  .quick-phase {
+    font-size: var(--wk-fs-2xs);
+    color: var(--wk-text-faint);
+  }
+  .quick-warn {
+    margin: 4px 0 0;
+    font-size: var(--wk-fs-2xs);
+    color: var(--color-warning);
+  }
+
   .quick {
     position: fixed;
     z-index: 90;
@@ -589,6 +726,24 @@
     color: var(--color-primary);
   }
   .quick-reset:hover { text-decoration: underline; }
+
+  /* The empty list's way out, in the popover's own type. */
+  /* Block, not inline-flex: the label wraps at this width, and a flex chevron
+     then hangs at the end of the *first* line instead of after the last word. */
+  .quick-link {
+    display: block;
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    font-size: var(--wk-fs-2xs);
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--color-primary);
+  }
+  .quick-link :global(svg) { display: inline; vertical-align: -1px; }
+  .quick-link:hover { text-decoration: underline; }
 
   .quick-empty,
   .quick-hint {
@@ -713,13 +868,5 @@
     color: var(--color-error);
   }
 
-  .act-edit {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--wk-line);
-    padding-top: 0.35rem;
-    color: var(--color-primary);
-    font-size: var(--wk-fs-2xs);
-  }
-  .act-edit:hover { background: color-mix(in oklab, var(--color-primary) 10%, transparent); }
 
 </style>
