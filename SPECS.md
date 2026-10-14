@@ -53,7 +53,7 @@ afterwards, so it no longer matches that review round.
 | 22 | **abwesend** / Abwesenheiten | `Teacher.unavailable` — when an Ausbildner is not there. The adjective labels one booking (conflict card eyebrow, list tag); the noun heads the editor. As *running* text it goes after the name — *Anna Müller abwesend*, never "Abwesend Anna Müller" (see `conflictNote`) | Config list tag, conflict card kind, "Abwesenheiten" editor title |
 | 23 | **gesperrt** / Sperrzeiten | `Room.unavailable` — when a Raum is blocked by something outside the plan. Same split as #22: adjective on a booking, noun on the editor, *Turnhalle gesperrt* in running text. Never **belegt** (#37) — that is the opposite thing | Config list tag, conflict card kind, "Sperrzeiten" editor title |
 | 24 | **fehlt n×** / **zu kurz** / **zu lang** / **ungleich** | The four not-done states, as one parallel set. *fehlt n×* = a Gruppe has none of it; *zu kurz* = has it, but under its Dauer; *zu lang* = over its Dauer; *ungleich* = every Gruppe has the full Dauer but not the same amount | Coverage status pill, sidebar chip badge |
-| 25 | **vollständig** | Nothing missing, short, long or uneven. Marked by *no* pill — see F2 in `DESIGN-PASS.md` | Sidebar chip check mark |
+| 25 | **vollständig** | Nothing missing, short, long or uneven. Marked by *no* pill — see F2 in `docs/DESIGN-PASS.md` | Sidebar chip check mark |
 
 ### Chrome
 
@@ -351,7 +351,7 @@ Past/future stacks capped at 50 entries. Uses JSON deep-clone (no reactive proxi
 
 ### What left the toolbar
 
-Three things were removed in design pass 3 (`DESIGN-PASS-3.md`), together about
+Three things were removed in design pass 3 (`docs/DESIGN-PASS-3.md`), together about
 370px of the left-hand group:
 
 - **The wordmark.** "WK PLANER" sat beside a plan called "WK 2026 Tuggen/

@@ -616,6 +616,8 @@
       // the opposite of what a timetable on paper is for. The print rules in
       // calendar.css unclip the real grid instead.
       plugins: [resourceTimeGridPlugin, interactionPlugin],
+      // v6 Premium is GPLv3; the app is AGPLv3, which may combine with it.
+      // On the v7 upgrade this becomes 'AGPL-My-Frontend-And-Backend-Are-Open-Source'.
       schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
       // Generic resourceTimeGrid (not …Week) so each phase can span its own
       // number of days rather than the whole Mon–Fri week.

@@ -28,7 +28,7 @@ export interface SetupStep {
  * The WK-Woche is deliberately absent. `createDefaultState` picks next Monday,
  * which is often already the right one, and nothing records whether anybody
  * looked at it — so it is a row with an action and no checkbox, never a step
- * that could claim to be undone (see `L1` in DESIGN-PASS-4.md).
+ * that could claim to be undone (see `L1` in docs/DESIGN-PASS-4.md).
  */
 export function setupSteps(state: AppState): SetupStep[] {
   const groups = state.groups.filter(g => g.enabled).length;

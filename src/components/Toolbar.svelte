@@ -11,6 +11,8 @@
   import Icon from "./Icon.svelte";
   import type { EventFilter, ReportTab } from "../types";
 
+  const SOURCE_URL = "https://github.com/lroellin/planner";
+
   interface Props {
     configOpen: boolean;
     filter: EventFilter | null;
@@ -500,6 +502,20 @@
             <span class="pop-item-label">Tastenkürzel</span>
             <span class="pop-item-hint">?</span>
           </button>
+          <!-- AGPLv3 source offer (section 13): everyone who uses the app over
+               the network must be able to get its source. FullCalendar Premium's
+               free licence depends on it — GPLv3 key on v6, AGPLv3 from v7. -->
+          <a
+            class="pop-item pop-item-row"
+            href={SOURCE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            onclick={() => (menu = null)}
+          >
+            <Icon name="code" size={14} />
+            <span class="pop-item-label">Quellcode</span>
+            <span class="pop-item-hint">AGPLv3</span>
+          </a>
         </div>
       {/if}
       {#if menu === 'legend'}{@render legendPanel()}{/if}
@@ -788,7 +804,7 @@
     cursor: default;
   }
 
-  .pop-item-row {
+  .pop-item.pop-item-row {
     flex-direction: row !important;
     align-items: center;
     gap: 0.5rem;
@@ -968,6 +984,7 @@
     cursor: pointer;
   }
   .pop-item:hover { background: var(--wk-surface-alt); }
+  a.pop-item { text-decoration: none; }
 
   .pop-item-label {
     font-size: var(--wk-fs-sm);
