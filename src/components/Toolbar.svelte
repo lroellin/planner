@@ -3,7 +3,9 @@
     getState, undo, redo, undoSteps, canUndo, canRedo, getIssueCount,
     getAffectedEventCount, undoLabel, redoLabel, undoHistory, exportStaleness,
   } from "../state/store.svelte";
-  import { getDensity, setDensity, requestConfig, type Density } from "../state/ui.svelte";
+  import {
+    getDensity, setDensity, requestConfig, getMainView, setMainView, type Density, type MainView,
+  } from "../state/ui.svelte";
   import { setupSteps } from "../state/setup";
   import { sortSubjects } from "../utils/timeUtils";
   import { teacherShort, isEditingTarget } from "../utils/format";
@@ -125,6 +127,18 @@
     menu = null;
     undoSteps(index + 1);
   }
+
+  /**
+   * The two views of the one week. Kalender is where it is planned; Belegung
+   * turns it to one row per Ausbildner and Raum, read-only, to find
+   * double-bookings and free time. A segmented pair beside the filter rather
+   * than a tab strip: it switches what the main area shows, like the density
+   * control switches how tall it is, and the filter applies to both.
+   */
+  const VIEWS: { key: MainView; label: string; icon: 'calendar' | 'timeline'; hint: string }[] = [
+    { key: 'plan', label: 'Kalender', icon: 'calendar', hint: 'Kalender — die Woche planen' },
+    { key: 'timeline', label: 'Belegung', icon: 'timeline', hint: 'Belegung — Ausbildner und Räume über die Woche, nur lesen' },
+  ];
 
   // S/M/L rather than initials: "Compact" and "Comfortable" both start with C.
   const DENSITIES: { key: Density; label: string; short: string }[] = [
@@ -331,6 +345,22 @@
           {/each}
         </div>
       {/if}
+    </div>
+
+    <div class="views" role="group" aria-label="Ansicht">
+      {#each VIEWS as v (v.key)}
+        <button
+          class="view-btn"
+          class:view-btn-on={getMainView() === v.key}
+          class:view-btn-icon={dense}
+          onclick={() => setMainView(v.key)}
+          title={v.hint}
+          aria-label={v.label}
+          aria-pressed={getMainView() === v.key}
+        >
+          <Icon name={v.icon} size={13} />{#if !dense}<span>{v.label}</span>{/if}
+        </button>
+      {/each}
     </div>
   </div>
 
@@ -758,6 +788,40 @@
     border: 1px solid var(--wk-line);
     border-radius: var(--wk-r-sm);
     color: var(--wk-text-faint);
+  }
+
+  /* Kalender | Belegung — the density control's segmented look, with labels. */
+  .views {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    padding: 2px;
+    border: 1px solid var(--wk-line);
+    border-radius: var(--wk-r-sm);
+    flex-shrink: 0;
+  }
+
+  .view-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    height: 22px;
+    padding: 0 0.5rem;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--wk-text-mute);
+    font-size: var(--wk-fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .view-btn-icon { padding: 0 0.35rem; }
+  .view-btn:hover { background: var(--wk-surface-alt); color: var(--wk-text); }
+  .view-btn-on,
+  .view-btn-on:hover {
+    background: color-mix(in oklab, var(--color-primary) 14%, transparent);
+    color: var(--color-primary);
   }
 
   .density :global(.density-icon) {

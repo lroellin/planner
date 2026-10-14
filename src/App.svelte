@@ -3,6 +3,7 @@
   import Toolbar from './components/Toolbar.svelte';
   import WorkDock from './components/WorkDock.svelte';
   import Calendar from './components/Calendar.svelte';
+  import Timeline from './components/Timeline.svelte';
   import EventModal from './components/EventModal.svelte';
   import EventPopover from './components/EventPopover.svelte';
   import ConfigPanel from './components/ConfigPanel.svelte';
@@ -24,6 +25,7 @@
     getPlaceRequest, clearPlaceRequest, getConfigRequest, clearConfigRequest, requestConfig,
     getReportRequest, clearReportRequest,
     isPhaseCollapsed, togglePhaseCollapsed, expandPhase, getReveal, getFlash,
+    getMainView, setMainView,
     type ConfigTab,
   } from './state/ui.svelte';
   import {
@@ -137,7 +139,12 @@
     const request = getReveal();
     if (!request) return;
     request.token;
-    untrack(() => expandPhaseOf([request.id]));
+    untrack(() => {
+      // "Show me this card" means the planning grid, wherever it was asked
+      // from — a Belegung bar or a Probleme row clicked while the timeline is up.
+      setMainView('plan');
+      expandPhaseOf([request.id]);
+    });
   });
 
   $effect(() => {
@@ -155,8 +162,8 @@
 
   /**
    * The label strip has to sit exactly on the phase boundaries below it, and it
-   * cannot get there by repeating the same flex sum: FullCalendar's tables carry
-   * a min-content width of their own (nowrap day headers), so a segment ends up
+   * cannot get there by repeating the same flex sum: FullCalendar's grid carries
+   * a min-content width of its own (nowrap day headers), so a segment ends up
    * a few pixels wider than its flex share and the strip drifts off. Measure the
    * segments and copy the result — the strip labels the grid, so the grid wins.
    */
@@ -285,8 +292,11 @@
       return;
     }
 
+    // The Belegung view is read-only: nudging, deleting or Ctrl+A-ing cards
+    // that are not on screen would edit the plan out of sight.
     const overlayOpen =
-      selectedEventId !== null || configOpen || reportOpen || shortcutsOpen || printTarget !== null;
+      selectedEventId !== null || configOpen || reportOpen || shortcutsOpen || printTarget !== null
+      || getMainView() === 'timeline';
 
     if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A') && !overlayOpen) {
       e.preventDefault();
@@ -523,7 +533,14 @@
       issueCount={conflictCount}
     />
 
-    <div class="calendar-wrapper" bind:this={calendarWrapper}>
+    <!-- Hidden rather than unmounted while the Belegung is up: the grid keeps
+         its scroll position, its folded phases and its two FullCalendar
+         instances, and a click on a bar comes back to it without a rebuild. -->
+    <div
+      class="calendar-wrapper"
+      class:calendar-wrapper--hidden={getMainView() === 'timeline'}
+      bind:this={calendarWrapper}
+    >
       <div class="phase-labels">
         {#each phases as phase, i (phase.id)}
           {@const collapsed = isPhaseCollapsed(phase.id)}
@@ -551,9 +568,11 @@
 
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="phase-scroll" bind:this={scroller} onpointerdown={onScrollerPointerDown}>
-        <!-- Keyed on the density: FullCalendar measures one slot row at render
-             and sizes the grid from it, then stretches the rows back out to that
-             height, so a shrink only takes effect on a fresh instance. -->
+        <!-- Keyed on the density: FullCalendar v6 measured one slot row at
+             render and stretched the rows back out to that height, so a shrink
+             only took effect on a fresh instance. v7 sizes rows from the axis
+             label and likely re-measures live; the key stays until that is
+             verified here. -->
         <!-- Keyed on the axis owner too: which grid draws the time gutter is a
              render-time measurement in FullCalendar, so handing it to another
              phase means building that calendar again. -->
@@ -630,6 +649,9 @@
       {/if}
     </div>
 
+    {#if getMainView() === 'timeline'}
+      <Timeline {filter} />
+    {/if}
   </div>
 </div>
 
@@ -792,6 +814,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  .calendar-wrapper--hidden {
+    display: none;
   }
 
   .phase-labels {

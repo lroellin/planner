@@ -45,6 +45,8 @@ export const ICON_PATHS = {
   keyboard: '<rect width="20" height="14" x="2" y="5" rx="2"/><path d="M6 9h.01"/><path d="M10 9h.01"/><path d="M14 9h.01"/><path d="M18 9h.01"/><path d="M7 13h10"/>',
   code: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
   more: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
+  // Lucide chart-gantt: the Belegung view's switch.
+  timeline: '<path d="M10 6h8"/><path d="M12 16h6"/><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M8 11h7"/>',
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;

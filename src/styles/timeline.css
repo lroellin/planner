@@ -1,0 +1,265 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   The Belegung timeline (Timeline.svelte).
+
+   Its own file so it never collides with calendar.css: the planning grid and
+   this view share FullCalendar's classic theme but nothing else. As there,
+   v7's class names are hashed, so every rule selects on the `wk-tl-*` names
+   the `*Class` hooks put on each part — never on `.fc-*`. Rules are written
+   with two classes where the theme's single-class utilities would tie.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The classic theme reads everything from --fc-classic-*; pointed at the app's
+   own tokens, declared below `data-theme` so each resolves per theme. */
+.wk-tl-cal {
+  --fc-classic-background: var(--wk-surface);
+  --fc-classic-faint: var(--wk-grid-fringe);
+  --fc-classic-muted: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --fc-classic-strong: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+  --fc-classic-foreground: var(--wk-text);
+  --fc-classic-muted-foreground: var(--wk-text-mute);
+  --fc-classic-faint-foreground: var(--wk-text-faint);
+  --fc-classic-border: var(--wk-line);
+  --fc-classic-strong-border: var(--wk-line-strong);
+  --fc-classic-today: transparent;
+  --fc-classic-now: var(--color-error);
+  --fc-classic-primary: var(--color-primary);
+  --fc-classic-primary-foreground: var(--color-primary-content);
+  --fc-classic-highlight: color-mix(in oklab, var(--color-primary) 14%, transparent);
+  --fc-classic-event: var(--wk-surface-alt);
+  --fc-classic-event-contrast: var(--wk-text);
+}
+
+.wk-tl {
+  height: 100%;
+  font-family: inherit;
+  font-size: var(--wk-fs-sm);
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.wk-tl-colhead.wk-tl-colhead {
+  font-size: var(--wk-fs-xs);
+  font-weight: 600;
+  color: var(--wk-text-mute);
+}
+
+.wk-tl-slothead.wk-tl-slothead-day {
+  font-size: var(--wk-fs-xs);
+  font-weight: 650;
+  color: var(--wk-text);
+}
+
+/* One or two digits per hour: "8", "13". At ~22px a slot holds nothing more. */
+.wk-tl-slothead.wk-tl-slothead-time {
+  font-size: var(--wk-fs-2xs);
+  color: var(--wk-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The theme pads a header label for a wide column; an hour here is ~21px. */
+.wk-tl-slothead-inner.wk-tl-slothead-inner {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Days are the unit the eye counts in; the hour rules inside them stay faint. */
+.wk-tl-slothead.wk-tl-daystart,
+.wk-tl-slot.wk-tl-daystart {
+  border-left: 2px solid var(--wk-line-strong);
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────────── */
+
+.wk-tl-grouphead.wk-tl-grouphead {
+  font-size: var(--wk-fs-2xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--wk-text-mute);
+  background: var(--wk-surface-alt);
+}
+
+.wk-tl-grouplane.wk-tl-grouplane {
+  background: var(--wk-surface-alt);
+}
+
+.wk-tl-cell-inner.wk-tl-cell-inner {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--wk-fs-xs);
+  color: var(--wk-text);
+}
+
+.wk-tl-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The same marks the cards carry: an initials avatar, a room-code pill. */
+.wk-tl-av {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font-size: var(--wk-fs-3xs);
+  font-weight: 700;
+}
+
+.wk-tl-room {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border-left: 3px solid var(--room);
+  background: color-mix(in oklab, var(--room) 16%, var(--wk-surface));
+  font-size: var(--wk-fs-3xs);
+  font-weight: 700;
+  color: var(--wk-text);
+}
+
+/* "geteilt" — the Legende's word for a Raum outside the conflict check. */
+.wk-tl-shared {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--wk-line-strong);
+  font-size: var(--wk-fs-3xs);
+  font-weight: 600;
+  color: var(--wk-text-mute);
+}
+
+/* Several Lektionen at once are fine in a shared Raum, so its lane is drawn
+   as open ground — a light hatch — rather than as a resource to guard. */
+.wk-tl-lane.wk-tl-lane-shared {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0 6px,
+    color-mix(in oklab, var(--color-base-content) 4%, transparent) 6px 7px
+  );
+}
+
+/* ── Bars ────────────────────────────────────────────────────────────────── */
+
+/* Same recipe as the grid's card: a tint of the Thema colour on the surface,
+   an edge mixed from it, and a solid spine. Saturation stays for state. */
+.wk-tl-ev.wk-tl-ev {
+  position: relative;
+  background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
+  border: 1px solid color-mix(in oklab, var(--ev-color, gray) var(--wk-edge), var(--wk-surface));
+  border-left: 3px solid var(--ev-color, gray);
+  border-radius: 4px;
+  color: var(--wk-text);
+  cursor: pointer;
+  overflow: hidden;
+  transition: box-shadow 0.12s;
+}
+
+[data-theme='dark'] .wk-tl-ev.wk-tl-ev {
+  border-left-color: color-mix(in oklab, var(--ev-color, gray) 85%, white);
+}
+
+.wk-tl-ev.wk-tl-ev:hover {
+  box-shadow: 0 2px 8px color-mix(in oklab, var(--color-base-content) 18%, transparent);
+  z-index: 3;
+}
+
+.wk-tl-ev-inner.wk-tl-ev-inner {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 3px;
+  min-width: 0;
+  font-size: var(--wk-fs-2xs);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* The lane comes first: two characters that always fit, where the Kürzel is
+   what gets cut on a short bar. The full sentence is in the tooltip. */
+.wk-tl-lanes {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.wk-tl-subj {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: clip;
+  color: var(--wk-text-mute);
+}
+
+.wk-tl-flag {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.wk-tl-flag-hard { color: var(--color-error); }
+.wk-tl-flag-soft { color: var(--color-warning); }
+
+/* The grid's double edge: a ring separated from the bar by a gap in the
+   surface colour — solid red for hard, dashed amber for soft — so a clash
+   reads without telling red from amber. Only in the row the clash is about. */
+.wk-tl-ev.wk-tl-ev-hard::before,
+.wk-tl-ev.wk-tl-ev-soft::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--wk-surface);
+}
+
+.wk-tl-ev.wk-tl-ev-hard::before {
+  border: 2px solid var(--color-error);
+}
+
+.wk-tl-ev.wk-tl-ev-soft::before {
+  border: 2px dashed var(--color-warning);
+}
+
+.wk-tl-ev.wk-tl-selected {
+  box-shadow: 0 0 0 2px var(--wk-surface), 0 0 0 4px var(--color-primary);
+  z-index: 4;
+}
+
+/* Hovering a Probleme card pulses its Lektionen here too. */
+.wk-tl-ev.wk-tl-flash {
+  animation: wk-tl-pulse 0.8s ease-out infinite alternate;
+}
+
+@keyframes wk-tl-pulse {
+  from { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-primary) 60%, transparent); }
+  to   { box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-primary) 0%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wk-tl-ev.wk-tl-flash {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 55%, transparent);
+  }
+}
+
+/* Abwesenheit / Sperrzeit: the row's own time is not free. Hatched, so it can
+   never be read as a booking. */
+.wk-tl-away.wk-tl-away {
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in oklab, var(--color-error) 9%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+  opacity: 1;
+}

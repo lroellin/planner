@@ -14,6 +14,9 @@ const PREFS_KEY = 'wk-planner-ui';
 
 export type Density = 'compact' | 'normal' | 'comfortable';
 
+/** The planning grid, or the read-only Belegung timeline beside it. */
+export type MainView = 'plan' | 'timeline';
+
 /** Pixel height of one 15-minute slot. */
 const SLOT_HEIGHT: Record<Density, number> = {
   compact: 17,
@@ -25,9 +28,10 @@ interface Prefs {
   density: Density;
   /** Phase ids drawn as a rail instead of a grid — see the collapse section. */
   collapsedPhases: ID[];
+  mainView: MainView;
 }
 
-const DEFAULT_PREFS: Prefs = { density: 'normal', collapsedPhases: [] };
+const DEFAULT_PREFS: Prefs = { density: 'normal', collapsedPhases: [], mainView: 'plan' };
 
 function loadPrefs(): Prefs {
   try {
@@ -41,6 +45,7 @@ function loadPrefs(): Prefs {
       collapsedPhases: Array.isArray(collapsed)
         ? collapsed.filter((id): id is ID => typeof id === 'string')
         : [],
+      mainView: parsed.mainView === 'timeline' ? 'timeline' : 'plan',
     };
   } catch {
     return DEFAULT_PREFS;
@@ -51,7 +56,9 @@ function savePrefs(): void {
   try {
     localStorage.setItem(
       PREFS_KEY,
-      JSON.stringify({ density: _density, collapsedPhases: _collapsedPhases } satisfies Prefs),
+      JSON.stringify({
+        density: _density, collapsedPhases: _collapsedPhases, mainView: _mainView,
+      } satisfies Prefs),
     );
   } catch {
     // Storage unavailable — the choice simply won't survive a reload.
@@ -331,6 +338,27 @@ export function togglePhaseCollapsed(id: ID): void {
 export function expandPhase(id: ID): void {
   if (!_collapsedPhases.includes(id)) return;
   _collapsedPhases = _collapsedPhases.filter(x => x !== id);
+  savePrefs();
+}
+
+// ─── Main view ────────────────────────────────────────────────────────────────
+
+/**
+ * Which of the two views fills the main area: the planning grid, or the
+ * Belegung timeline (one row per Ausbildner and Raum). Persisted like the
+ * density, because someone checking a week's bookings tends to come back to it.
+ */
+let _mainView: MainView = $state(prefs.mainView);
+
+export function getMainView(): MainView { return _mainView; }
+
+export function setMainView(view: MainView): void {
+  if (view === _mainView) return;
+  _mainView = view;
+  // A reveal is a one-shot "go there", but it is held as state, and the grid
+  // re-reads it whenever a calendar mounts. Leaving the grid drops it, so
+  // coming back by the toggle does not re-scroll to a card shown long ago.
+  if (view === 'timeline') _reveal = null;
   savePrefs();
 }
 
