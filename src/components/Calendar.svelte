@@ -20,7 +20,7 @@
     groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
     formatTime, isMultiGroupEvent, addMinutesToTime, clampGroupDelta, DAY_NAMES,
     gridWindow, timeToMinutes, GRID_BUSINESS_START, GRID_BUSINESS_END,
-    sortSubjects, eventInPhase, eventGroupIds, eventMatchesFilter, phaseGroups,
+    sortSubjects, eventInPhase, eventGroupIds, eventMatchesFilter,
     type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { missingLaneIdsForSubject } from '../reports/reports';
@@ -65,22 +65,49 @@
   // Every lane header (G1/G2/G3) and body lane learns where its day begins and
   // whether its day is an odd one, which drives the alternating day band. The
   // classes come straight out of FC's `resourceDayHeaderClass` / `dayLaneClass`
-  // hooks, which hand over the cell's date and resource — so they are part of
-  // the render itself and cannot go stale when FC re-creates a cell.
+  // hooks — so they are part of the render itself and cannot go stale when FC
+  // re-creates a cell. With `datesAboveResources`, FC flags the first lane of
+  // each date as `isMajor`.
   //
   // `wk-day-start` marks the first lane of every day but the first (there is no
   // rule to draw there); `wk-day-first` marks it on every day, which is what
   // lets a multi-group block print its title once per day instead of once per
   // lane.
-  function dayBoundaryClasses(base: string, date: Date | undefined, resourceId: string | undefined): string {
-    if (!date || resourceId === undefined) return base;
+  function dayBoundaryClasses(base: string, date: Date | undefined, first: boolean): string {
+    if (!date) return base;
     const dayIdx = extractDayIndex(date) - phase.startDay;
-    const first = phaseGroups(getState(), phase)[0]?.id === resourceId;
     return [
       base,
       first && 'wk-day-first',
       first && dayIdx > 0 && 'wk-day-start',
       dayIdx % 2 === 1 && 'wk-day-alt',
+    ].filter(Boolean).join(' ');
+  }
+
+  // ─── Selection / highlight / spotlight ──────────────────────────────────────
+  // They change far more often than the event data, so they don't go through
+  // the store and a refetch. Instead the class hooks read these snapshots and
+  // `calendar.render()` re-runs the hooks without remounting a single card.
+  //
+  // Not painted onto the DOM by hand: v7 (Preact) rewrites an element's whole
+  // `className` whenever its own classes change — a drag start, a resize —
+  // which silently wiped anything added with `classList`.
+  let paint = {
+    selected: new Set<ID>(),
+    highlighted: new Set<ID>(),
+    spotlight: null as ID | null,
+    owingLanes: new Set<ID>(),
+  };
+
+  function eventClasses(info: { isMirror: boolean; event: { extendedProps: Record<string, unknown> } }): string {
+    const id = info.event.extendedProps['eventId'] as ID | undefined;
+    const subjectId = info.event.extendedProps['subjectId'] as ID | undefined;
+    return [
+      'wk-fc-event',
+      info.isMirror && 'wk-fc-mirror',
+      id !== undefined && paint.selected.has(id) && 'wk-selected',
+      id !== undefined && paint.highlighted.has(id) && 'wk-flash',
+      paint.spotlight !== null && subjectId !== paint.spotlight && 'wk-dimmed',
     ].filter(Boolean).join(' ');
   }
 
@@ -285,14 +312,29 @@
     }
   }
 
-  // ─── Selection / highlight / spotlight are painted onto the DOM ─────────────
-  // They change far more often than the event data and never affect layout, so
-  // toggling classes beats rebuilding every event through the store.
+  /** Snapshot the UI states the class hooks read, and have FC re-run them. */
   function paintStates(): void {
-    if (!calendarEl) return;
-    const selected = new Set(getSelectedEventIds());
-    const highlighted = new Set(getHighlightedEventIds());
+    if (!calendarEl || !calendar) return;
     const spotlight = getSpotlightSubjectId();
+    // "Still owed" lane headers. Dimming can only show where a subject *is*;
+    // the question the sidebar chip is hovered to answer is where it is not,
+    // and there is no card there to highlight — so the header carries it.
+    // `missingLaneIdsForSubject` is the same computation behind the chip's
+    // tooltip and the report, resolved per phase.
+    paint = {
+      selected: new Set(getSelectedEventIds()),
+      highlighted: new Set(getHighlightedEventIds()),
+      spotlight,
+      owingLanes: spotlight === null
+        ? new Set<ID>()
+        : new Set(missingLaneIdsForSubject(getState(), spotlight, phase)),
+    };
+    calendar.render();
+    paintTabStop();
+  }
+
+  function paintTabStop(): void {
+    if (!calendarEl) return;
     const primary = getSelectedEventId();
 
     /**
@@ -314,10 +356,6 @@
     const cards = calendarEl.querySelectorAll<HTMLElement>('.wk-fc-event');
     for (const el of cards) {
       const id = el.dataset['wkEventId'];
-      const subjectId = el.dataset['wkSubjectId'];
-      el.classList.toggle('wk-selected', id !== undefined && selected.has(id));
-      el.classList.toggle('wk-flash', id !== undefined && highlighted.has(id));
-      el.classList.toggle('wk-dimmed', spotlight !== null && subjectId !== spotlight);
       el.tabIndex = -1;
       if (id !== undefined && id === primary) roving = el;
     }
@@ -333,26 +371,6 @@
       if (firstInDoc && calendarEl.contains(firstInDoc)) roving = firstInDoc;
     }
     roving?.setAttribute('tabindex', '0');
-
-    paintOwingLanes(spotlight);
-  }
-
-  /**
-   * Mark the lane headers that still owe the spotlighted Thema. Dimming can only
-   * show where a subject *is*; the question the sidebar chip is hovered to
-   * answer is where it is not, and there is no card there to highlight — so the
-   * header carries it. `missingLaneIdsForSubject` is the same computation behind
-   * the chip's tooltip and the report, resolved per phase.
-   */
-  function paintOwingLanes(subjectId: ID | null): void {
-    if (!calendarEl) return;
-    const owing = subjectId === null
-      ? new Set<ID>()
-      : new Set(missingLaneIdsForSubject(getState(), subjectId, phase));
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-lanehead')) {
-      const resourceId = el.getAttribute('data-resource-id');
-      el.classList.toggle('wk-lane-owes', resourceId !== null && owing.has(resourceId));
-    }
   }
 
   function eventElement(id: ID): HTMLElement | null {
@@ -698,19 +716,19 @@
       viewClass: 'wk-fc',
       dayHeaderClass: 'wk-fc-dayhead',
       dayHeaderInnerClass: 'wk-fc-head-inner',
-      resourceDayHeaderClass: (info) =>
-        dayBoundaryClasses('wk-fc-lanehead', info.date, info.resource.id),
+      resourceDayHeaderClass: (info) => [
+        dayBoundaryClasses('wk-fc-lanehead', info.date, info.isMajor),
+        paint.owingLanes.has(info.resource.id) && 'wk-lane-owes',
+      ].filter(Boolean).join(' '),
       resourceDayHeaderInnerClass: 'wk-fc-head-inner',
-      // A resource view's lanes carry their `resource` too (untyped extra prop).
-      dayLaneClass: (info) =>
-        dayBoundaryClasses('wk-fc-lane', info.date, (info['resource'] as { id: string } | undefined)?.id),
+      dayLaneClass: (info) => dayBoundaryClasses('wk-fc-lane', info.date, info.isMajor),
       slotHeaderClass: (info) => (info.isMinor ? 'wk-fc-slothead wk-fc-minor' : 'wk-fc-slothead'),
       slotHeaderInnerClass: 'wk-fc-slothead-inner',
       slotLaneClass: (info) => (info.isMinor ? 'wk-fc-slot wk-fc-minor' : 'wk-fc-slot'),
       // The 1px rule beside the time gutter; a phase without a gutter hides it.
       slotHeaderDividerClass: 'wk-fc-axis-divider',
       tableHeaderClass: 'wk-fc-thead',
-      eventClass: (info) => (info.isMirror ? 'wk-fc-event wk-fc-mirror' : 'wk-fc-event'),
+      eventClass: eventClasses,
       eventInnerClass: 'wk-fc-event-inner',
       datesSet() { tagSelectionHints(); },
       viewDidMount() { tagSelectionHints(); },
@@ -889,15 +907,17 @@
     // getState() fresh — no source teardown/rebuild needed.
     calendar.refetchEvents();
     calendar.gotoDate(dayDate(s.wkStartDate, phase.startDay));
-    // Cells are rebuilt by the refetch above; the tooltips and the painted
-    // states are re-applied after paint so new cells and cards pick them up.
+    // Cells are rebuilt by the refetch above, and every card is remounted with
+    // FC's own `tabindex="0"`; the tooltips and the single tab stop are
+    // re-applied after paint. The state classes need nothing: the hooks
+    // computed them during the refetch.
     requestAnimationFrame(() => {
       tagSelectionHints();
-      paintStates();
+      paintTabStop();
     });
   });
 
-  // Selection and hover states repaint on their own, without touching FC.
+  // Selection and hover states repaint on their own, without a refetch.
   $effect(() => {
     getSelectedEventId();
     getHighlightedEventIds();
