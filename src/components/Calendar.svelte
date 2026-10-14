@@ -642,10 +642,10 @@
 
   onMount(() => {
     calendar = new Calendar(calendarEl, {
-      // No @fullcalendar/adaptive: its print mode flattens the time grid into a
-      // list of cards — no axis, no hour lines, no proportional times — which is
-      // the opposite of what a timetable on paper is for. The print rules in
-      // calendar.css unclip the real grid instead.
+      // No adaptive plugin: its print mode flattens the time grid into a list
+      // of cards — no axis, no hour lines, no proportional times — which is the
+      // opposite of what a timetable on paper is for. Printing goes through the
+      // PDF (`calendarPdf.ts`), which draws the grid itself.
       plugins: [classicThemePlugin, resourceTimeGridPlugin, interactionPlugin],
       // v7 Premium is AGPLv3 for open-source use, frontend and backend alike —
       // the app is AGPL-3.0-or-later.
@@ -679,6 +679,9 @@
       slotHeaderInterval: '01:00:00',
       slotHeaderFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      // v7's German default drops the month ("Mi. 21"); a WK can cross a month
+      // boundary, so the header keeps it ("Mi. 21.10.") as it did under v6.
+      dayHeaderFormat: { weekday: 'short', day: 'numeric', month: 'numeric', omitCommas: true },
       editable: true,
       droppable: true,
       headerToolbar: false,

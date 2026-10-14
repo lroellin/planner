@@ -187,7 +187,8 @@
 }
 
 /* …and the day boundary one pixel heavier than v7's, so a five-day week reads
-   as five blocks at a glance. `.wk-day-start` comes from tagDayBoundaries();
+   as five blocks at a glance. `.wk-day-start` comes from the lane hooks in
+   Calendar.svelte (`dayBoundaryClasses`);
    the date row needs no JS because each of its cells is a day. */
 .wk-fc-lane.wk-day-start,
 .wk-fc-lanehead.wk-day-start,
@@ -600,7 +601,7 @@
    of information; labelling only the first lane lets the rest read as the single
    band across the day that they are. `visibility` rather than `display`, so the
    card keeps its box — the conflict ring and the hit area are per lane.
-   `.wk-day-first` is applied from tagDayBoundaries() in Calendar.svelte. */
+   `.wk-day-first` comes from `dayBoundaryClasses` in Calendar.svelte. */
 .wk-fc-lane:not(.wk-day-first) .wk-fc-event.wk-ev-multi .wk-ev-body {
   visibility: hidden;
 }
