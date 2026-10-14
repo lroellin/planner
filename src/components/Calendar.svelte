@@ -725,6 +725,9 @@
       tableHeaderClass: 'wk-fc-thead',
       eventClass: eventClasses,
       eventInnerClass: 'wk-fc-event-inner',
+      // The bottom resize grip of a time-grid card. Not in the docs' hook list,
+      // but it is what the classic theme itself styles the grip with.
+      columnEventAfterClass: (info) => (info.isEndResizable ? 'wk-fc-resizer' : ''),
       // Say out loud what a header click does, on the header it does it from.
       // Set at mount: FC remounts a cell whenever it rebuilds it, and leaves
       // attributes it does not own alone in between. Time labels: see

@@ -708,10 +708,10 @@
 }
 
 /* ── Resize grip ───────────────────────────────────────────────────────────── */
-/* v7 has no class hook for the resizer, but it is the only element in the card
-   besides the inner container — so it is found structurally. The theme shows it
-   as a small dot on hover; it is reshaped here into the bar the user knows. */
-.wk-fc-event.wk-ev > :not(.wk-fc-event-inner) {
+/* `.wk-fc-resizer` comes from `columnEventAfterClass`. The theme shows the
+   grip as a small dot on hover; it is reshaped here into the bar the user
+   knows. */
+.wk-fc-event.wk-ev > .wk-fc-resizer {
   display: flex;
   /* Sat on the bottom edge, where v6 drew it — centred in the 7px band it
      floated a few pixels up into the meta row. */
@@ -729,13 +729,13 @@
   border-radius: 0;
   background: none;
   transform: none;
-  cursor: ns-resize;
+  /* No cursor here: skeleton.css sets `s-resize` with !important. */
 }
 
 /* Hidden until asked for. At 22% alpha on every card at rest, thirty of these
    read as a smudge along the bottom of every block rather than as a control —
    and the grip is only ever wanted by a pointer that is already on the card. */
-.wk-fc-event.wk-ev > :not(.wk-fc-event-inner)::after {
+.wk-fc-event.wk-ev > .wk-fc-resizer::after {
   content: '';
   display: block;
   width: 18px;
@@ -746,15 +746,15 @@
   transition: opacity 0.12s;
 }
 
-.wk-fc-event.wk-ev:hover > :not(.wk-fc-event-inner)::after,
-.wk-fc-event.wk-ev:focus-within > :not(.wk-fc-event-inner)::after {
+.wk-fc-event.wk-ev:hover > .wk-fc-resizer::after,
+.wk-fc-event.wk-ev:focus-within > .wk-fc-resizer::after {
   opacity: 1;
 }
 
 /* v7 renders the drag mirror with a resizer of its own, which sits under the
    pointer for the whole drag and so would always show. Nothing can be resized
    mid-drag. */
-.wk-fc-event.wk-fc-mirror > :not(.wk-fc-event-inner) {
+.wk-fc-event.wk-fc-mirror > .wk-fc-resizer {
   display: none;
 }
 
