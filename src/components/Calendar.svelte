@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Calendar, type EventClickArg, type EventDropArg } from '@fullcalendar/core';
-  import deLocale from '@fullcalendar/core/locales/de';
-  import resourceTimeGridPlugin from '@fullcalendar/resource-timegrid';
-  import interactionPlugin, { type EventReceiveArg, type DateClickArg } from '@fullcalendar/interaction';
-  import type { EventResizeDoneArg } from '@fullcalendar/interaction';
+  import {
+    Calendar, type EventClickInfo, type EventDropInfo, type EventReceiveInfo,
+    type DateClickInfo, type EventResizeDoneInfo,
+  } from 'fullcalendar';
+  import deLocale from 'fullcalendar/locales/de';
+  import classicThemePlugin from 'fullcalendar/themes/classic';
+  import resourceTimeGridPlugin from 'fullcalendar-scheduler/resource-timegrid';
+  import interactionPlugin from 'fullcalendar/interaction';
   import { getState, updateEvent, updateEvents, placeSubject } from '../state/store.svelte';
   import {
     getSelectedEventId, getSelectedEventIds, selectEvent, toggleEventSelection, addToSelection,
@@ -354,7 +357,7 @@
     selectEvent(id);
   }
 
-  function handleEventClick(info: EventClickArg): void {
+  function handleEventClick(info: EventClickInfo): void {
     const id = info.event.extendedProps['eventId'] as ID;
 
     // Ctrl/Cmd toggles a card in or out, Shift only adds — the two gestures
@@ -378,7 +381,7 @@
     openQuickEdit(id, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
   }
 
-  function handleEventDrop(info: EventDropArg): void {
+  function handleEventDrop(info: EventDropInfo): void {
     const eventId = info.event.extendedProps['eventId'] as ID;
     const newStart = info.event.start!;
     const newEnd = info.event.end!;
@@ -434,7 +437,7 @@
     updateEvent(eventId, patch, `${info.event.title} verschieben`);
   }
 
-  function handleEventResize(info: EventResizeDoneArg): void {
+  function handleEventResize(info: EventResizeDoneInfo): void {
     const eventId = info.event.extendedProps['eventId'] as ID;
     const newStart = info.event.start!;
     const newEnd = info.event.end!;
@@ -446,7 +449,7 @@
     }, `Dauer von ${info.event.title} ändern`);
   }
 
-  function handleEventReceive(info: EventReceiveArg): void {
+  function handleEventReceive(info: EventReceiveInfo): void {
     const movedId = info.event.extendedProps['eventId'] as ID | undefined;
     const subjectId = info.event.extendedProps['subjectId'] as ID | undefined;
     const resource = info.event.getResources()[0];
@@ -481,7 +484,7 @@
     placeSubject(subjectId, extractDayIndex(start), formatTime(start), resource?.id ?? ALL_GROUPS);
   }
 
-  function handleDateClick(info: DateClickArg): void {
+  function handleDateClick(info: DateClickInfo): void {
     // A marquee ends on mouseup over an empty slot, which is also what opens the
     // placement picker. The marquee claims that one click.
     if (consumeDateClickGuard()) return;
@@ -615,10 +618,10 @@
       // list of cards — no axis, no hour lines, no proportional times — which is
       // the opposite of what a timetable on paper is for. The print rules in
       // calendar.css unclip the real grid instead.
-      plugins: [resourceTimeGridPlugin, interactionPlugin],
-      // v6 Premium is GPLv3; the app is AGPLv3, which may combine with it.
-      // On the v7 upgrade this becomes 'AGPL-My-Frontend-And-Backend-Are-Open-Source'.
-      schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
+      plugins: [classicThemePlugin, resourceTimeGridPlugin, interactionPlugin],
+      // v7 Premium is AGPLv3 for open-source use, frontend and backend alike —
+      // the app is AGPL-3.0-or-later.
+      schedulerLicenseKey: 'AGPL-My-Frontend-And-Backend-Are-Open-Source',
       // Generic resourceTimeGrid (not …Week) so each phase can span its own
       // number of days rather than the whole Mon–Fri week.
       initialView: 'resourceTimeGrid',
@@ -640,15 +643,14 @@
         endTime: GRID_BUSINESS_END,
       },
       // Starting the grid on the hour is what makes the labels read 08:00, 09:00
-      // rather than 07:30, 08:30 — slotLabelInterval counts from slotMinTime.
+      // rather than 07:30, 08:30 — slotHeaderInterval counts from slotMinTime.
       slotMinTime: `${gridHours.start}:00`,
       slotMaxTime: `${gridHours.end}:00`,
       slotDuration: '00:15:00',
       snapDuration: '00:15:00',
-      slotLabelInterval: '01:00:00',
-      slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
+      slotHeaderInterval: '01:00:00',
+      slotHeaderFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
       eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
-      defaultRangeSeparator: '–',
       editable: true,
       droppable: true,
       headerToolbar: false,
@@ -656,7 +658,7 @@
       // Natural height: the phases share one scroller in App.svelte, which keeps
       // their time rows locked together without syncing two scroll positions.
       height: 'auto',
-      stickyHeaderDates: true,
+      tableHeaderSticky: true,
       resources(_info, successCallback) {
         successCallback(groupsToResources(getState().groups, phase.groupIds));
       },
@@ -678,6 +680,23 @@
       // drop the target refuses can't leave a hole here.
       eventLeave() { calendar.refetchEvents(); },
       dateClick: handleDateClick,
+      // v7 renders hashed class names (`fc-Sd`, `fc-classic-vQz`) that change
+      // between releases, so nothing of ours may select on FC's own classes.
+      // These hooks put a stable `wk-fc-*` name on every part the CSS and the
+      // DOM code here reach for; `data-date`, `data-resource-id` and
+      // `data-time` are still FC's and still dependable.
+      viewClass: 'wk-fc',
+      dayHeaderClass: 'wk-fc-dayhead',
+      dayHeaderInnerClass: 'wk-fc-head-inner',
+      resourceDayHeaderClass: 'wk-fc-lanehead',
+      resourceDayHeaderInnerClass: 'wk-fc-head-inner',
+      dayLaneClass: 'wk-fc-lane',
+      slotHeaderClass: (info) => (info.isMinor ? 'wk-fc-slothead wk-fc-minor' : 'wk-fc-slothead'),
+      slotHeaderInnerClass: 'wk-fc-slothead-inner',
+      slotLaneClass: (info) => (info.isMinor ? 'wk-fc-slot wk-fc-minor' : 'wk-fc-slot'),
+      tableHeaderClass: 'wk-fc-thead',
+      eventClass: (info) => (info.isMirror ? 'wk-fc-event wk-fc-mirror' : 'wk-fc-event'),
+      eventInnerClass: 'wk-fc-event-inner',
       datesSet() { tagDayBoundaries(); tagSelectionHints(); },
       viewDidMount() { tagDayBoundaries(); tagSelectionHints(); },
       eventDidMount(arg) {
@@ -690,6 +709,12 @@
         // in CSS, which is what lets dark mode use a different recipe.
         if (color) arg.el.style.setProperty('--ev-color', color);
 
+        // v7 dropped `defaultRangeSeparator`, so FC's own `timeText` no longer
+        // reads 08:00–09:00; the range is built from our own props instead.
+        const start = arg.event.extendedProps['startTime'] as string | undefined;
+        const end = arg.event.extendedProps['endTime'] as string | undefined;
+        const timeText = start && end ? `${start}–${end}` : arg.timeText;
+
         // A clamped title still has to be readable in full somewhere.
         const teachers = (arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined) ?? [];
         const room = arg.event.extendedProps['room'] as FCEventRoom | null | undefined;
@@ -699,7 +724,7 @@
           : null;
         arg.el.title = [
           arg.event.title,
-          arg.timeText,
+          timeText,
           teachers.map(t => t.name).join(', '),
           room?.name,
           conflictNote,
@@ -718,7 +743,7 @@
         arg.el.setAttribute('role', 'button');
         arg.el.setAttribute('aria-label', [
           arg.event.title,
-          dayIndex !== undefined ? `${DAY_NAMES[dayIndex]} ${arg.timeText}` : arg.timeText,
+          dayIndex !== undefined ? `${DAY_NAMES[dayIndex]} ${timeText}` : timeText,
           laneLabels.length > 0 ? laneLabels.join(', ') : null,
           teachers.map(t => t.name).join(', '),
           room?.name,
@@ -806,11 +831,6 @@
     });
     calendar.render();
 
-    // FC only recalculates on window resize, so collapsing a side panel would
-    // otherwise leave the grid at its old width.
-    const ro = new ResizeObserver(() => calendar.updateSize());
-    ro.observe(calendarEl);
-
     // Delegated, because FC rebuilds its header on every refetch: a listener on
     // the cells themselves would have to be re-attached each time.
     calendarEl.addEventListener('click', handleHeaderClick);
@@ -822,7 +842,6 @@
     calendarEl.addEventListener('focusin', handleCardFocus);
 
     return () => {
-      ro.disconnect();
       calendarEl.removeEventListener('click', handleHeaderClick);
       calendarEl.removeEventListener('contextmenu', handleContextMenu);
       calendarEl.removeEventListener('focusin', handleCardFocus);
@@ -842,7 +861,6 @@
     if (!calendar) return;
     calendar.setOption('slotMinTime', `${start}:00`);
     calendar.setOption('slotMaxTime', `${end}:00`);
-    requestAnimationFrame(() => calendar.updateSize());
   });
 
   // Reactively push state changes into FC
@@ -863,7 +881,6 @@
       tagDayBoundaries();
       tagSelectionHints();
       paintStates();
-      calendar.updateSize();
     });
   });
 

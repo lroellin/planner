@@ -2,8 +2,8 @@ import { ALL_GROUPS, isHardConflict } from '../types';
 import type {
   AppState, CalendarEvent, ConflictKind, EventFilter, Group, ID, Phase, Subject,
 } from '../types';
-import type { EventInput } from '@fullcalendar/core';
-import type { ResourceInput } from '@fullcalendar/resource';
+import type { EventInput } from 'fullcalendar';
+import type { ResourceInput } from 'fullcalendar-scheduler';
 import { roomShort, subjectShort, teacherShort } from './format';
 
 // Weekday labels, 0=Mon … 4=Fri (matches CalendarEvent.dayIndex)
@@ -113,7 +113,7 @@ export function snapToSlot(time: string, slotMinutes = 15): string {
  *     block could not be dragged past the last slot and an empty cell before
  *     the first one could not be clicked, so an 07:30 Antreten could never be
  *     created at all;
- *   - the start is snapped **down to the hour**, because `slotLabelInterval`
+ *   - the start is snapped **down to the hour**, because `slotHeaderInterval`
  *     counts from `slotMinTime` and a window opening at 07:45 would label
  *     07:45, 08:45, 09:45. The end has no such constraint and keeps its half
  *     hour.
@@ -522,7 +522,7 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
     start: toISOLocal(state.wkStartDate, ev.dayIndex, ev.startTime),
     end: toISOLocal(state.wkStartDate, ev.dayIndex, ev.endTime),
     title: subject?.name ?? '?',
-    classNames,
+    className: classNames.join(' '),
     extendedProps: {
       eventId: ev.id,
       subjectId: ev.subjectId,

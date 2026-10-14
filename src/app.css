@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "./styles/config-ui.css";
+@import "fullcalendar/skeleton.css";
+@import "fullcalendar/themes/classic/theme.css";
+@import "fullcalendar/themes/classic/palette.css";
 @import "./styles/calendar.css";
 @plugin "daisyui" {
   themes: light, dark;

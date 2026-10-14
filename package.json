@@ -17,15 +17,15 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@fullcalendar/core": "^6.1.15",
-    "@fullcalendar/interaction": "^6.1.15",
-    "@fullcalendar/resource-timegrid": "^6.1.15",
     "@tailwindcss/vite": "^4.3.3",
     "daisyui": "^5.7.22",
+    "fullcalendar": "^7.1.2",
+    "fullcalendar-scheduler": "^7.1.2",
     "jspdf": "^4.2.1",
     "nanoid": "^5.0.7",
     "svelte": "^5.0.0",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "temporal-polyfill": "^1.0.6"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",

@@ -113,8 +113,8 @@ describe('buildFCEvents', () => {
     const [fc] = buildFCEvents(state, state.phases[1]!);
     // The card is a neutral surface tinted from --ev-color in CSS, so no inline
     // fill and no contrast-picked text colour reach FullCalendar any more.
-    expect(fc!.backgroundColor).toBeUndefined();
-    expect(fc!.textColor).toBeUndefined();
+    expect(fc!.color).toBeUndefined();
+    expect(fc!.contrastColor).toBeUndefined();
     expect(fc!.extendedProps!['color']).toBe('#a0aec0');
   });
 
@@ -123,8 +123,8 @@ describe('buildFCEvents', () => {
       events: [makeEvent({ id: 'short', groupId: 'g1', startTime: '08:00', endTime: '08:15' })],
     });
     const [fc] = buildFCEvents(state, state.phases[1]!);
-    expect(fc!.classNames).toContain('wk-dur-xs');
-    expect(fc!.classNames).toContain('wk-ev-lesson');
+    expect(fc!.className).toContain('wk-dur-xs');
+    expect(fc!.className).toContain('wk-ev-lesson');
   });
 
   it('separates hard clashes from advisory room clashes on the card', () => {
@@ -137,8 +137,8 @@ describe('buildFCEvents', () => {
       ...state,
       events: [{ ...state.events[0]!, conflicts: [{ kind: 'teacher' as const, resourceId: 't1', collidingEventIds: ['x'] }] }],
     };
-    expect(buildFCEvents(withRoom, state.phases[1]!)[0]!.classNames).toContain('wk-ev-soft');
-    expect(buildFCEvents(withTeacher, state.phases[1]!)[0]!.classNames).toContain('wk-ev-hard');
+    expect(buildFCEvents(withRoom, state.phases[1]!)[0]!.className).toContain('wk-ev-soft');
+    expect(buildFCEvents(withTeacher, state.phases[1]!)[0]!.className).toContain('wk-ev-hard');
   });
 });
 
@@ -270,7 +270,7 @@ describe('gridWindow', () => {
   });
 
   it('opens earlier for a Lektion before the training day, snapped to the hour', () => {
-    // The start must stay on the hour: slotLabelInterval counts from it, so a
+    // The start must stay on the hour: slotHeaderInterval counts from it, so a
     // window opening at 06:45 would label 06:45, 07:45, 08:45.
     const w = gridWindow(makeState({
       events: [makeEvent({ groupId: 'g1', dayIndex: 2, startTime: '06:45', endTime: '07:30' })],

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Draggable } from '@fullcalendar/interaction';
+  import { Draggable } from 'fullcalendar/interaction';
   import { getState } from '../state/store.svelte';
   import { spotlightSubject, requestPlacement, requestConfig } from '../state/ui.svelte';
   import {
@@ -142,8 +142,7 @@
         return {
           title: subject?.name ?? '',
           duration: { minutes: subject?.defaultDurationMinutes ?? 60 },
-          backgroundColor: subject?.color ?? '#888',
-          borderColor: subject?.color ?? '#888',
+          color: subject?.color ?? '#888',
           extendedProps: { subjectId },
         };
       },
