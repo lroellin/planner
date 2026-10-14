@@ -265,7 +265,7 @@
 
       {#if conflictNotes.length > 0}
         <div class="clashes">
-          {#each conflictNotes as note (note.kind + note.name)}
+          {#each conflictNotes as note (note.key)}
             <span class="clash" class:clash-hard={note.hard}>
               <Icon name="alert" size={11} />
               {conflictNote(note.kind, note.name)}

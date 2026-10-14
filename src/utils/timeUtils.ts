@@ -405,8 +405,24 @@ export function eventOverrides(
 export function describeConflicts(
   state: AppState,
   ev: CalendarEvent | null | undefined,
-): { kind: ConflictKind; name: string; hard: boolean; others: ID[] }[] {
-  return (ev?.conflicts ?? []).map(c => {
+): { key: string; kind: ConflictKind; name: string; hard: boolean; others: ID[] }[] {
+  // One chip per kind and resource. The detector reports each *cluster* of
+  // overlapping Lektionen separately, so a block that overlaps one Lektion
+  // before Mittag and another after it carries two `group` refs for the same
+  // lane. Two chips reading "Gruppe K" said the same thing twice — and their
+  // shared key crashed the keyed `{#each}` in both editors, so the block could
+  // not be opened at all. The counterparts are merged instead.
+  const merged = new Map<string, { kind: ConflictKind; resourceId: ID; others: ID[] }>();
+  for (const c of ev?.conflicts ?? []) {
+    const key = `${c.kind}:${c.resourceId}`;
+    const entry = merged.get(key);
+    if (entry) {
+      for (const id of c.collidingEventIds) if (!entry.others.includes(id)) entry.others.push(id);
+    } else {
+      merged.set(key, { kind: c.kind, resourceId: c.resourceId, others: [...c.collidingEventIds] });
+    }
+  }
+  return [...merged].map(([key, c]) => {
     const name =
       c.kind === 'teacher' || c.kind === 'teacher-absent'
         ? state.teachers.find(t => t.id === c.resourceId)?.name
@@ -414,10 +430,11 @@ export function describeConflicts(
         ? state.rooms.find(r => r.id === c.resourceId)?.name
         : state.groups.find(g => g.id === c.resourceId)?.label;
     return {
+      key,
       kind: c.kind,
       name: name ?? c.resourceId,
       hard: isHardConflict(c.kind),
-      others: c.collidingEventIds,
+      others: c.others,
     };
   });
 }

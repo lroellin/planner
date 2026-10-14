@@ -306,7 +306,7 @@
 
     {#if clashes.length > 0 && mode === 'main'}
       <div class="clashes">
-        {#each clashes as c (c.kind + c.name)}
+        {#each clashes as c (c.key)}
           {#if c.others.length > 0}
             <button
               type="button"

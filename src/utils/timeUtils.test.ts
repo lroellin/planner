@@ -343,6 +343,23 @@ describe('describeConflicts', () => {
     expect(others).toEqual([['e2'], ['e2'], ['e3'], [], []]);
   });
 
+  it('merges separate clashes on the same resource into one chip', () => {
+    // A block that overlaps one Lektion before Mittag and another after it:
+    // the detector reports two clusters on the same lane.
+    const twice = makeEvent({
+      id: 'e1', groupId: 'g1',
+      conflicts: [
+        { kind: 'group', resourceId: 'g1', collidingEventIds: ['e2'] },
+        { kind: 'teacher', resourceId: 't1', collidingEventIds: ['e2'] },
+        { kind: 'group', resourceId: 'g1', collidingEventIds: ['e3', 'e2'] },
+      ],
+    });
+    const chips = describeConflicts(state, twice);
+    expect(chips.map(c => c.key)).toEqual(['group:g1', 'teacher:t1']);
+    expect(chips[0]!.others).toEqual(['e2', 'e3']);
+    expect(new Set(chips.map(c => c.key)).size).toBe(chips.length);
+  });
+
   it('is empty for an unannotated or missing Lektion', () => {
     expect(describeConflicts(state, makeEvent({ groupId: 'g1' }))).toEqual([]);
     expect(describeConflicts(state, null)).toEqual([]);
