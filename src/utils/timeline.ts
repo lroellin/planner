@@ -171,6 +171,8 @@ export function buildTimelineEvents(
         start: toISOLocal(state.wkStartDate, ev.dayIndex, ev.startTime),
         end: toISOLocal(state.wkStartDate, ev.dayIndex, ev.endTime),
         title: subject.name,
+        // Reaches the bar only as FC's `--fc-event-color`, read as --ev-color.
+        color: subject.color,
         extendedProps: {
           eventId: ev.id,
           color: subject.color,
@@ -236,4 +238,53 @@ export function timelineTooltip(state: AppState, ev: CalendarEvent): string {
     room,
     kinds.length > 0 ? `⚠ Konflikt: ${kinds.map(k => CONFLICT_KIND_LABELS[k]).join(' + ')}` : null,
   ].filter(Boolean).join(' · ');
+}
+
+/** A bar as the keyboard sees it: which row it is in and where it sits in time. */
+export interface TimelineBarBox {
+  /** The FullCalendar event id, `<eventId>@<rowId>` — unique per bar. */
+  key: string;
+  /** Display index of the row, top to bottom. */
+  row: number;
+  /** Epoch milliseconds, or any other monotonic time scale. */
+  start: number;
+  end: number;
+}
+
+export type TimelineDirection = 'left' | 'right' | 'up' | 'down';
+
+/**
+ * Where an arrow key goes from `fromKey`. Left/Right step along time within
+ * the row; Up/Down go to the bar in the nearest row above or below that has
+ * any, picking the one closest in time to the current bar's middle — a bar
+ * that covers that moment wins outright. `null` at an edge: the focus stays.
+ */
+export function timelineNeighbour(
+  bars: TimelineBarBox[],
+  fromKey: string,
+  dir: TimelineDirection,
+): string | null {
+  const from = bars.find(b => b.key === fromKey);
+  if (!from) return null;
+  const byTime = (a: TimelineBarBox, b: TimelineBarBox): number =>
+    a.start - b.start || a.end - b.end || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+
+  if (dir === 'left' || dir === 'right') {
+    const row = bars.filter(b => b.row === from.row).sort(byTime);
+    const i = row.indexOf(from);
+    return row[dir === 'right' ? i + 1 : i - 1]?.key ?? null;
+  }
+
+  const candidates = bars.filter(b => (dir === 'down' ? b.row > from.row : b.row < from.row));
+  if (candidates.length === 0) return null;
+  const target = dir === 'down'
+    ? Math.min(...candidates.map(b => b.row))
+    : Math.max(...candidates.map(b => b.row));
+  const mid = (from.start + from.end) / 2;
+  const gap = (b: TimelineBarBox): number => Math.max(0, b.start - mid, mid - b.end);
+  const centre = (b: TimelineBarBox): number => Math.abs((b.start + b.end) / 2 - mid);
+  const best = candidates
+    .filter(b => b.row === target)
+    .sort((a, b) => gap(a) - gap(b) || centre(a) - centre(b) || byTime(a, b))[0];
+  return best?.key ?? null;
 }

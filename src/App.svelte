@@ -53,8 +53,8 @@
   /**
    * H2: a density change keeps the *hour*, not the pixel.
    *
-   * The calendars are keyed on the density and re-mount, but `.phase-scroll` is
-   * ours and survives — so its `scrollTop` was carried across unchanged while
+   * The calendars re-lay their rows out at the new height, but `.phase-scroll`
+   * is ours — so its `scrollTop` was carried across unchanged while
    * the content under it grew or shrank by a third. Scrolled to 10:00 at M and
    * switched to L, you landed at 09:20: the one thing being looked at was the
    * one thing not carried over. The grid's time axis is linear in its own
@@ -74,7 +74,7 @@
     if (!el || h === was || was === 0) return;
     const top = el.scrollTop;
     if (top === 0) return;
-    // After the re-mounted calendars have laid out at the new row height.
+    // After the calendars have laid out at the new row height.
     requestAnimationFrame(() => {
       requestAnimationFrame(() => { el.scrollTop = Math.round(top * (h / was)); });
     });
@@ -378,6 +378,11 @@
         // E3: Enter opens what a click opens. It used to reach for the full
         // modal while a click opened the popover — the same card and the same
         // intent, answered differently depending on the input device.
+        //
+        // On a focused card FullCalendar answers Enter itself: it calls
+        // `eventClick` and marks the event handled. Opening it again here would
+        // run the quick edit twice.
+        if (e.defaultPrevented) break;
         e.preventDefault();
         const primary = getSelectedEventId();
         if (!primary) break;
@@ -492,22 +497,32 @@
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
     apply(mq.matches);
     mq.addEventListener('change', e => apply(e.matches));
+  });
 
-    // The drawn hours leave room above the training day so the fringe stays
-    // reachable — open on 08:00 rather than on that empty margin. The offset is
-    // measured from the window rather than assumed: it used to be a hardcoded
-    // four slots, which was only right while the grid always began at 07:00.
+  /**
+   * The drawn hours leave room above the training day so the fringe stays
+   * reachable — open on 08:00 rather than on that empty margin. The offset is
+   * measured from the window rather than assumed: it used to be a hardcoded
+   * four slots, which was only right while the grid always began at 07:00.
+   *
+   * Once, the first time the grid is *shown* rather than on mount: a page that
+   * opens on the Belegung has the grid at `display: none`, where a `scrollTop`
+   * does not stick, and the first switch to Kalender then opened on 07:00.
+   */
+  let openedOnDayStart = false;
+  $effect(() => {
+    const el = scroller;
+    if (openedOnDayStart || !el || getMainView() !== 'plan') return;
+    openedOnDayStart = true;
     requestAnimationFrame(() => {
       setTimeout(() => {
-        if (!scroller) return;
         const slots = Math.max(
           0,
           (timeToMinutes(GRID_BUSINESS_START) - timeToMinutes(gridWindow(getState()).start)) / 15,
         );
-        scroller.scrollTop = slots * slotHeight();
+        el.scrollTop = slots * slotHeight();
       }, 60);
     });
-
   });
 </script>
 
@@ -568,15 +583,13 @@
 
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="phase-scroll" bind:this={scroller} onpointerdown={onScrollerPointerDown}>
-        <!-- Keyed on the density: FullCalendar v6 measured one slot row at
-             render and stretched the rows back out to that height, so a shrink
-             only took effect on a fresh instance. v7 sizes rows from the axis
-             label and likely re-measures live; the key stays until that is
-             verified here. -->
-        <!-- Keyed on the axis owner too: which grid draws the time gutter is a
+        <!-- Not keyed on the density: v7 sizes rows from the axis label and
+             re-measures when `--wk-slot-h` changes, rows, lanes and cards alike.
+             (v6 cached the height it measured at render and had to be rebuilt.)
+             Keyed on the axis owner: which grid draws the time gutter is a
              render-time measurement in FullCalendar, so handing it to another
              phase means building that calendar again. -->
-        {#key `${getDensity()}|${axisPhaseId}`}
+        {#key axisPhaseId}
           {#each phases as phase (phase.id)}
             {@const collapsed = isPhaseCollapsed(phase.id)}
             <div

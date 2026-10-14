@@ -17,6 +17,9 @@ export type Density = 'compact' | 'normal' | 'comfortable';
 /** The planning grid, or the read-only Belegung timeline beside it. */
 export type MainView = 'plan' | 'timeline';
 
+/** How wide an hour is drawn in the Belegung timeline. */
+export type TimelineZoom = 'compact' | 'normal' | 'wide';
+
 /** Pixel height of one 15-minute slot. */
 const SLOT_HEIGHT: Record<Density, number> = {
   compact: 17,
@@ -24,14 +27,29 @@ const SLOT_HEIGHT: Record<Density, number> = {
   comfortable: 32,
 };
 
+/**
+ * Pixel width of one hour in the Belegung timeline. Kompakt fits a five-day
+ * week beside the dock; the wider steps scroll sideways. Weit is sized so a
+ * 45-minute bar (105px) holds the lane, the ⚠ flag and a full ten-letter
+ * Kürzel — at 112 a flagged "Lagebericht" was still cut.
+ */
+const HOUR_WIDTH: Record<TimelineZoom, number> = {
+  compact: 20,
+  normal: 48,
+  wide: 140,
+};
+
 interface Prefs {
   density: Density;
   /** Phase ids drawn as a rail instead of a grid — see the collapse section. */
   collapsedPhases: ID[];
   mainView: MainView;
+  timelineZoom: TimelineZoom;
 }
 
-const DEFAULT_PREFS: Prefs = { density: 'normal', collapsedPhases: [], mainView: 'plan' };
+const DEFAULT_PREFS: Prefs = {
+  density: 'normal', collapsedPhases: [], mainView: 'plan', timelineZoom: 'compact',
+};
 
 function loadPrefs(): Prefs {
   try {
@@ -46,6 +64,9 @@ function loadPrefs(): Prefs {
         ? collapsed.filter((id): id is ID => typeof id === 'string')
         : [],
       mainView: parsed.mainView === 'timeline' ? 'timeline' : 'plan',
+      timelineZoom: parsed.timelineZoom && parsed.timelineZoom in HOUR_WIDTH
+        ? parsed.timelineZoom
+        : 'compact',
     };
   } catch {
     return DEFAULT_PREFS;
@@ -58,6 +79,7 @@ function savePrefs(): void {
       PREFS_KEY,
       JSON.stringify({
         density: _density, collapsedPhases: _collapsedPhases, mainView: _mainView,
+        timelineZoom: _timelineZoom,
       } satisfies Prefs),
     );
   } catch {
@@ -359,6 +381,20 @@ export function setMainView(view: MainView): void {
   // re-reads it whenever a calendar mounts. Leaving the grid drops it, so
   // coming back by the toggle does not re-scroll to a card shown long ago.
   if (view === 'timeline') _reveal = null;
+  savePrefs();
+}
+
+/**
+ * The timeline's counterpart to the density: the grid's time runs down, so it
+ * is zoomed by row height; the timeline's runs across, so by hour width.
+ */
+let _timelineZoom: TimelineZoom = $state(prefs.timelineZoom);
+
+export function getTimelineZoom(): TimelineZoom { return _timelineZoom; }
+export function timelineHourWidth(): number { return HOUR_WIDTH[_timelineZoom]; }
+
+export function setTimelineZoom(zoom: TimelineZoom): void {
+  _timelineZoom = zoom;
   savePrefs();
 }
 

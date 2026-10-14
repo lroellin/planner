@@ -24,9 +24,7 @@
     type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { missingLaneIdsForSubject } from '../reports/reports';
-  import { getContrastColor } from '../utils/colorUtils';
-  import { escapeHtml } from '../utils/format';
-  import { iconSvg } from '../utils/icons';
+  import { eventCard } from '../utils/eventCard';
   import Icon from './Icon.svelte';
   import ProgrammpunktDialog from './ProgrammpunktDialog.svelte';
   import {
@@ -273,9 +271,10 @@
 
   /**
    * "HH:MM" of a time-axis cell. v7 writes `data-time` only on the labelled
-   * (major) cells; the minor ones are bare. Each view draws exactly one axis
-   * cell per slot row, in the same order, and every row does carry its time —
-   * so a bare cell borrows it from its row.
+   * (major) cells; the minor ones are bare, and `slotHeaderDidMount` gets no
+   * time for them either. Each view draws exactly one axis cell per slot row,
+   * in the same order, and every row does carry its time — so a bare cell
+   * borrows it from its row.
    */
   function slotHeadTime(head: HTMLElement): string {
     const own = head.getAttribute('data-time');
@@ -287,29 +286,22 @@
     return (row?.getAttribute('data-time') ?? '').slice(0, 5);
   }
 
+  /**
+   * A time label's tooltip, written the moment the pointer reaches it. The
+   * minor cells cannot be labelled at mount (see `slotHeadTime`), and a pass
+   * over every cell after each refetch was the thing this replaces.
+   */
+  function handleSlotHover(e: MouseEvent): void {
+    const head = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('.wk-fc-slothead');
+    if (!head || head.title) return;
+    const time = slotHeadTime(head);
+    if (time !== '') head.title = `Alle Lektionen um ${time} auswählen`;
+  }
+
   function drawnSomewhere(state: ReturnType<typeof getState>, ev: CalendarEvent): boolean {
     if (!eventMatchesFilter(ev, state, filter)) return false;
     const owner = state.phases.find(p => eventInPhase(state, ev, p));
     return owner !== undefined && !isPhaseCollapsed(owner.id);
-  }
-
-  /** Says out loud what a header click does, on the header it does it from. */
-  function tagSelectionHints(): void {
-    if (!calendarEl) return;
-    // The visible label, not the cell's whole text: a v7 day header also holds
-    // the full date in a visually hidden node for screen readers.
-    const label = (el: HTMLElement): string =>
-      el.querySelector('.wk-fc-head-inner')?.textContent?.trim() ?? '';
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-lanehead')) {
-      el.title = `Alle Lektionen von ${label(el)} an diesem Tag auswählen`;
-    }
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-dayhead')) {
-      el.title = `Alle Lektionen am ${label(el)} auswählen`;
-    }
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-slothead')) {
-      const time = slotHeadTime(el);
-      if (time !== '') el.title = `Alle Lektionen um ${time} auswählen`;
-    }
   }
 
   /** Snapshot the UI states the class hooks read, and have FC re-run them. */
@@ -733,17 +725,21 @@
       tableHeaderClass: 'wk-fc-thead',
       eventClass: eventClasses,
       eventInnerClass: 'wk-fc-event-inner',
-      datesSet() { tagSelectionHints(); },
-      viewDidMount() { tagSelectionHints(); },
+      // Say out loud what a header click does, on the header it does it from.
+      // Set at mount: FC remounts a cell whenever it rebuilds it, and leaves
+      // attributes it does not own alone in between. Time labels: see
+      // `handleSlotHover`.
+      dayHeaderDidMount({ el, text }) {
+        el.title = `Alle Lektionen am ${text} auswählen`;
+      },
+      resourceDayHeaderDidMount({ el, resource }) {
+        el.title = `Alle Lektionen von ${resource.title} an diesem Tag auswählen`;
+      },
       eventDidMount(arg) {
         const id = arg.event.extendedProps['eventId'] as ID | undefined;
-        const color = arg.event.extendedProps['color'] as string | undefined;
         if (id) arg.el.dataset['wkEventId'] = id;
         const subjectId = arg.event.extendedProps['subjectId'] as ID | undefined;
         if (subjectId) arg.el.dataset['wkSubjectId'] = subjectId;
-        // The tint, the border and the spine are all mixed from this one value
-        // in CSS, which is what lets dark mode use a different recipe.
-        if (color) arg.el.style.setProperty('--ev-color', color);
 
         // v7 dropped `defaultRangeSeparator`, so FC's own `timeText` no longer
         // reads 08:00–09:00; the range is built from our own props instead.
@@ -786,82 +782,18 @@
         ].filter(Boolean).join(' · '));
       },
       eventContent(arg) {
-        const teachers = arg.event.extendedProps['teachers'] as FCEventTeacher[] | undefined;
-        const room = arg.event.extendedProps['room'] as FCEventRoom | null | undefined;
-
-        // Every value below comes from user-entered config, and FC takes an HTML
-        // string, so each one is escaped on the way in.
-        const title = escapeHtml(arg.event.title);
-
-        // During sidebar drag, the mirror event only has { subjectId } — render title-only preview
-        if (teachers === undefined) {
-          return {
-            html: `<div class="wk-ev-body"><div class="wk-ev-top"><div class="wk-ev-title">${title}</div></div></div>`,
-          };
-        }
-
-        const hard = (arg.event.extendedProps['hardConflict'] as boolean | undefined) ?? false;
-        const hasConflict = (arg.event.extendedProps['hasConflict'] as boolean | undefined) ?? false;
-        const overrides = (arg.event.extendedProps['overrides'] as string[] | undefined) ?? [];
-
-        // No layers icon for a multi-group block: it is drawn once per lane, so
-        // the icon was repeated across the whole day to say what the unbroken
-        // band already says. Only the first lane carries any text at all —
-        // see `.wk-day-first` in calendar.css.
-        //
-        // Soft covers both `room` and `room-blocked`, so the tooltip cannot
-        // name the double-booking: a Lektion inside a Sperrzeit is soft too.
-        // "Weicher Konflikt" is what the Legende calls it; the element's own
-        // title above spells out which kinds actually fired.
-        const flags = [
-          overrides.length > 0
-            ? `<span class="wk-ev-flag" title="Weicht von der Themenvorgabe ab: ${escapeHtml(overrides.join(', '))}">${iconSvg('pencil', 11)}</span>`
-            : '',
-          hasConflict
-            ? `<span class="wk-ev-flag ${hard ? 'wk-ev-flag-hard' : 'wk-ev-flag-soft'}" title="${hard ? 'Harter Konflikt' : 'Weicher Konflikt'}">${iconSvg('alert', 12)}</span>`
-            : '',
-        ].join('');
-
-        const teacherHtml = teachers.length > 0
-          ? `<div class="wk-ev-teachers">${
-              teachers.map(t =>
-                `<span class="wk-ev-av" style="background:${escapeHtml(t.color)};color:${getContrastColor(t.color)}" title="${escapeHtml(t.name)}">${escapeHtml(t.shortName)}</span>`
-              ).join('')
-            }</div>`
-          : '';
-
-        // A pill carrying the room's own code, not a colour swatch beside a name
-        // that gets dropped. The swatch could only be decoded against the
-        // Legende; four characters name the place outright, and they fit in
-        // every lane the app draws — which the full name never did.
-        const roomHtml = room
-          ? `<span class="wk-ev-room" style="--room:${escapeHtml(room.color)}"><span class="wk-ev-room-code">${escapeHtml(room.shortName)}</span><span class="wk-ev-room-name">${escapeHtml(room.name)}</span></span>`
-          : '';
-
-        // Both names ship on every card and CSS picks one, because the choice is
-        // made per *lane width* — a container query — and nothing here knows how
-        // wide this card will land. Same for the two halves of the time range.
-        const shortName = escapeHtml(
-          (arg.event.extendedProps['shortName'] as string | undefined) ?? arg.event.title,
-        );
-        const startTime = escapeHtml((arg.event.extendedProps['startTime'] as string | undefined) ?? '');
-        const endTime = escapeHtml((arg.event.extendedProps['endTime'] as string | undefined) ?? '');
-
-        return {
-          html: `
-            <div class="wk-ev-body">
-              <div class="wk-ev-top">
-                <div class="wk-ev-title"><span class="wk-ev-name-full">${title}</span><span class="wk-ev-name-short">${shortName}</span></div>
-                <div class="wk-ev-flags">${flags}</div>
-              </div>
-              <div class="wk-ev-meta">
-                <span class="wk-ev-time"><span class="wk-ev-t-start">${startTime}</span><span class="wk-ev-t-end">–${endTime}</span></span>
-                ${teacherHtml}
-                ${roomHtml}
-              </div>
-            </div>
-          `,
-        };
+        const props = arg.event.extendedProps;
+        return eventCard({
+          title: arg.event.title,
+          teachers: props['teachers'] as FCEventTeacher[] | undefined,
+          room: props['room'] as FCEventRoom | null | undefined,
+          shortName: props['shortName'] as string | undefined,
+          startTime: props['startTime'] as string | undefined,
+          endTime: props['endTime'] as string | undefined,
+          hardConflict: props['hardConflict'] as boolean | undefined,
+          hasConflict: props['hasConflict'] as boolean | undefined,
+          overrides: props['overrides'] as string[] | undefined,
+        });
       },
     });
     calendar.render();
@@ -870,6 +802,7 @@
     // the cells themselves would have to be re-attached each time.
     calendarEl.addEventListener('click', handleHeaderClick);
     calendarEl.addEventListener('contextmenu', handleContextMenu);
+    calendarEl.addEventListener('mouseover', handleSlotHover);
 
     // K2: focus and selection agree. Tabbing into the grid lands on a card and
     // selects it, so ↑↓ / ←→ / Enter / Ctrl+D / Delete act on the thing that is
@@ -879,6 +812,7 @@
     return () => {
       calendarEl.removeEventListener('click', handleHeaderClick);
       calendarEl.removeEventListener('contextmenu', handleContextMenu);
+      calendarEl.removeEventListener('mouseover', handleSlotHover);
       calendarEl.removeEventListener('focusin', handleCardFocus);
       calendar.destroy();
     };
@@ -910,14 +844,12 @@
     // getState() fresh — no source teardown/rebuild needed.
     calendar.refetchEvents();
     calendar.gotoDate(dayDate(s.wkStartDate, phase.startDay));
-    // Cells are rebuilt by the refetch above, and every card is remounted with
-    // FC's own `tabindex="0"`; the tooltips and the single tab stop are
-    // re-applied after paint. The state classes need nothing: the hooks
-    // computed them during the refetch.
-    requestAnimationFrame(() => {
-      tagSelectionHints();
-      paintTabStop();
-    });
+    // Every card is remounted by the refetch above with FC's own
+    // `tabindex="0"`, so the single tab stop is re-applied after paint. Not in
+    // `eventDidMount`: a tabindex written there makes FC replace the card on
+    // its next render, which throws away keyboard focus on the card being
+    // selected. State classes and header tooltips need nothing: hooks set them.
+    requestAnimationFrame(paintTabStop);
   });
 
   // Selection and hover states repaint on their own, without a refetch.

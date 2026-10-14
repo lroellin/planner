@@ -6,7 +6,6 @@ import {
   gridWindow,
 } from './timeUtils';
 import { getContrastColor } from './colorUtils';
-import { escapeHtml } from './format';
 import { ALL, makeEvent, makeState, makeSubject } from '../test/fixtures';
 
 describe('eventGroupIds', () => {
@@ -111,11 +110,11 @@ describe('buildFCEvents', () => {
       events: [makeEvent({ groupId: 'g1' })],
     };
     const [fc] = buildFCEvents(state, state.phases[1]!);
-    // The card is a neutral surface tinted from --ev-color in CSS, so no inline
-    // fill and no contrast-picked text colour reach FullCalendar any more.
-    expect(fc!.color).toBeUndefined();
+    // FC v7 turns `color` into the `--fc-event-color` variable only; the card
+    // is a neutral surface tinted from it in CSS, and no contrast-picked text
+    // colour reaches FullCalendar.
+    expect(fc!.color).toBe('#a0aec0');
     expect(fc!.contrastColor).toBeUndefined();
-    expect(fc!.extendedProps!['color']).toBe('#a0aec0');
   });
 
   it('classifies the card by how much room it has', () => {
@@ -179,10 +178,6 @@ describe('presentation helpers', () => {
     expect(getContrastColor('#2b6cb0')).toBe('#ffffff'); // saturated blue: white wins
     expect(getContrastColor('#ffffff')).toBe('#000000');
     expect(getContrastColor('#000000')).toBe('#ffffff');
-  });
-
-  it('escapes user text before it reaches an event card', () => {
-    expect(escapeHtml('Karten <b>"x"</b>')).toBe('Karten &lt;b&gt;&quot;x&quot;&lt;/b&gt;');
   });
 });
 

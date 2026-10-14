@@ -502,10 +502,12 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
       }
     : { resourceId: ev.groupId };
 
-  // No inline colours: the card is a neutral surface tinted from the subject
-  // hue in CSS (which can mix against the current theme's background and give
-  // dark mode a different recipe). Saturation is reserved for state — conflict,
+  // No inline fill: the card is a neutral surface tinted from the subject hue
+  // in CSS (which can mix against the current theme's background and give dark
+  // mode a different recipe). Saturation is reserved for state — conflict,
   // selection, spotlight — so those can still be seen on a full week's grid.
+  // `color` only reaches the card as FC's `--fc-event-color` variable, which
+  // calendar.css reads as `--ev-color`.
 
   const classNames = [
     'wk-ev',
@@ -523,10 +525,10 @@ export function buildFCEvent(ev: CalendarEvent, state: AppState, phase: Phase | 
     end: toISOLocal(state.wkStartDate, ev.dayIndex, ev.endTime),
     title: subject?.name ?? '?',
     className: classNames.join(' '),
+    color,
     extendedProps: {
       eventId: ev.id,
       subjectId: ev.subjectId,
-      color,
       // What the card falls back to in a narrow lane. Resolved here rather than
       // in eventContent so the renderer never reaches back into the store.
       shortName: subjectShort(subject),

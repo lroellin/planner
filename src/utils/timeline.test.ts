@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildAvailabilityBackground, buildTimelineEvents, rowConflict, timelineDays, timelineResources,
-  timelineRowId, timelineTooltip, type TimelineBarProps, type TimelineRowProps,
+  timelineNeighbour, timelineRowId, timelineTooltip, type TimelineBarProps, type TimelineRowProps,
 } from './timeline';
 import { attachConflicts, detectConflicts } from '../conflicts/detector';
 import { ALL, makeEvent, makeState, makeWindow } from '../test/fixtures';
@@ -172,5 +172,47 @@ describe('timelineTooltip', () => {
 
   it('builds row ids that keep Ausbildner and Räume apart', () => {
     expect(timelineRowId('teacher', 'x')).not.toBe(timelineRowId('room', 'x'));
+  });
+});
+
+describe('timelineNeighbour', () => {
+  const box = (key: string, row: number, start: number, end: number) => ({ key, row, start, end });
+  // Row 0: a 8–9, b 10–11, c 13–14. Row 1 empty. Row 2: d 9–10, e 12–13.
+  // Row 3: f 8–12 (long).
+  const bars = [
+    box('c', 0, 13, 14), box('a', 0, 8, 9), box('b', 0, 10, 11),
+    box('e', 2, 12, 13), box('d', 2, 9, 10),
+    box('f', 3, 8, 12),
+  ];
+
+  it('steps along time within the row, whatever order the bars come in', () => {
+    expect(timelineNeighbour(bars, 'a', 'right')).toBe('b');
+    expect(timelineNeighbour(bars, 'b', 'right')).toBe('c');
+    expect(timelineNeighbour(bars, 'c', 'left')).toBe('b');
+  });
+
+  it('stops at the ends of a row', () => {
+    expect(timelineNeighbour(bars, 'a', 'left')).toBeNull();
+    expect(timelineNeighbour(bars, 'c', 'right')).toBeNull();
+  });
+
+  it('skips empty rows and lands on the bar nearest in time', () => {
+    // b's middle is 10:30: d ends at 10 (gap 0.5), e starts at 12 (gap 1.5).
+    expect(timelineNeighbour(bars, 'b', 'down')).toBe('d');
+    // c's middle is 13:30: e ends at 13.
+    expect(timelineNeighbour(bars, 'c', 'down')).toBe('e');
+    expect(timelineNeighbour(bars, 'e', 'up')).toBe('c');
+  });
+
+  it('prefers a bar that covers the current moment', () => {
+    expect(timelineNeighbour(bars, 'd', 'down')).toBe('f');
+    // f's middle is 10:00, the moment d ends; e is two hours off.
+    expect(timelineNeighbour(bars, 'f', 'up')).toBe('d');
+  });
+
+  it('stops at the top and bottom, and on an unknown bar', () => {
+    expect(timelineNeighbour(bars, 'a', 'up')).toBeNull();
+    expect(timelineNeighbour(bars, 'f', 'down')).toBeNull();
+    expect(timelineNeighbour(bars, 'zz', 'right')).toBeNull();
   });
 });

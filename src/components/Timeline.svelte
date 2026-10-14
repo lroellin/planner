@@ -7,25 +7,25 @@
    * *there*, to the card, rather than growing a second set of editing gestures
    * on a view whose rows are people and rooms instead of lanes.
    */
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Calendar, type EventClickInfo } from 'fullcalendar';
   import deLocale from 'fullcalendar/locales/de';
   import classicThemePlugin from 'fullcalendar/themes/classic';
   import resourceTimelinePlugin from 'fullcalendar-scheduler/resource-timeline';
   import { getState } from '../state/store.svelte';
   import {
-    getHighlightedEventIds, getSelectedEventIds, revealEvent, setMainView,
+    getHighlightedEventIds, getSelectedEventId, getSelectedEventIds, revealEvent, setMainView,
+    timelineHourWidth,
   } from '../state/ui.svelte';
   import {
     DAY_NAMES, GRID_BUSINESS_END, GRID_BUSINESS_START, dayDate, extractDayIndex, gridWindow,
   } from '../utils/timeUtils';
   import {
-    buildAvailabilityBackground, buildTimelineEvents, timelineDays, timelineResources,
-    timelineTooltip, type TimelineBarProps, type TimelineRowProps,
+    buildAvailabilityBackground, buildTimelineEvents, timelineDays, timelineNeighbour,
+    timelineResources, timelineTooltip, type TimelineBarBox, type TimelineBarProps,
+    type TimelineDirection, type TimelineRowProps,
   } from '../utils/timeline';
-  import { escapeHtml } from '../utils/format';
-  import { getContrastColor } from '../utils/colorUtils';
-  import { iconSvg } from '../utils/icons';
+  import { timelineBar, timelineRowLabel } from '../utils/timelineContent';
   import type { EventFilter, ID } from '../types';
   import '../styles/timeline.css';
 
@@ -62,16 +62,101 @@
     revealEvent(id);
   }
 
-  /** Selection and the Probleme panel's hover pulse, mirrored onto the bars. */
+  /**
+   * Selection and the Probleme panel's hover pulse, mirrored onto the bars.
+   * Snapshotted for `eventClass` to read rather than toggled with `classList`:
+   * v7 rewrites a bar's whole `className` whenever its own classes change, so
+   * a class added from outside is gone on the next render.
+   */
+  let paint: { selected: Set<ID>; highlighted: Set<ID> } = {
+    selected: new Set(), highlighted: new Set(),
+  };
+
   function paintStates(): void {
-    if (!calendarEl) return;
-    const selected = new Set(getSelectedEventIds());
-    const highlighted = new Set(getHighlightedEventIds());
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-tl-ev')) {
-      const id = el.dataset['wkEventId'];
-      el.classList.toggle('wk-tl-selected', id !== undefined && selected.has(id));
-      el.classList.toggle('wk-tl-flash', id !== undefined && highlighted.has(id));
+    if (!calendar) return;
+    paint = {
+      selected: new Set(getSelectedEventIds()),
+      highlighted: new Set(getHighlightedEventIds()),
+    };
+    calendar.render();
+    paintTabStop();
+  }
+
+  // ─── One tab stop ───────────────────────────────────────────────────────────
+
+  /**
+   * The bar that holds the timeline's single tab stop, by FC event id
+   * (`<eventId>@<rowId>`): the last one focused, so Tab comes back to it.
+   */
+  let rovingKey: string | null = null;
+
+  function barElement(key: string): HTMLElement | null {
+    return calendarEl?.querySelector<HTMLElement>(
+      `.wk-tl-ev[data-wk-bar-key="${CSS.escape(key)}"]`,
+    ) ?? null;
+  }
+
+  /** Every bar with its row and time, in the order the rows are drawn. */
+  function barBoxes(): TimelineBarBox[] {
+    if (!calendar) return [];
+    const rowIndex = new Map(timelineResources(getState()).map((r, i) => [r.id, i]));
+    const out: TimelineBarBox[] = [];
+    for (const ev of calendar.getEvents()) {
+      if (ev.display === 'background' || !ev.start || !ev.end) continue;
+      const row = rowIndex.get(ev.getResources()[0]?.id ?? '');
+      if (row === undefined) continue;
+      out.push({ key: ev.id, row, start: ev.start.getTime(), end: ev.end.getTime() });
     }
+    return out.sort((a, b) => a.row - b.row || a.start - b.start);
+  }
+
+  /**
+   * The grid's K2, here too: FullCalendar gives every bar `tabindex="0"`, and
+   * a week of Lektionen in four rows each put a few hundred stops between the
+   * toolbar and the dock. One bar is tabbable — the last one focused, else the
+   * selected Lektion's first bar, else the first bar of the top row — and the
+   * arrow keys move between them. Re-applied after every refetch, because each
+   * remounted bar comes back with FC's own `tabindex="0"`.
+   */
+  function paintTabStop(): void {
+    if (!calendarEl) return;
+    const bars = calendarEl.querySelectorAll<HTMLElement>('.wk-tl-ev');
+    for (const el of bars) el.tabIndex = -1;
+    let roving = rovingKey !== null ? barElement(rovingKey) : null;
+    if (!roving) {
+      const primary = getSelectedEventId();
+      const boxes = barBoxes();
+      const pick = boxes.find(b => primary !== null && b.key.startsWith(`${primary}@`)) ?? boxes[0];
+      roving = pick ? barElement(pick.key) : null;
+    }
+    roving?.setAttribute('tabindex', '0');
+  }
+
+  const ARROWS: Record<string, TimelineDirection> = {
+    ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+  };
+
+  function handleKeydown(e: KeyboardEvent): void {
+    const dir = ARROWS[e.key];
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.wk-tl-ev');
+    const key = el?.dataset['wkBarKey'];
+    if (!dir || !key || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    // Also keeps the arrows from scrolling the timeline under the focus.
+    e.preventDefault();
+    const next = timelineNeighbour(barBoxes(), key, dir);
+    const target = next !== null ? barElement(next) : null;
+    if (!target) return;
+    el.tabIndex = -1;
+    target.tabIndex = 0;
+    rovingKey = next;
+    target.focus();
+  }
+
+  function handleFocusIn(e: FocusEvent): void {
+    const key = (e.target as HTMLElement).closest<HTMLElement>('.wk-tl-ev')?.dataset['wkBarKey'];
+    if (!key || key === rovingKey) return;
+    rovingKey = key;
+    paintTabStop();
   }
 
   onMount(() => {
@@ -92,9 +177,10 @@
       slotMaxTime: `${gridHours.end}:00`,
       slotDuration: '01:00:00',
       slotHeaderInterval: '01:00:00',
-      // About 1300px for a five-day week at hourly slots, so it fits beside the
-      // dock without a horizontal scrollbar; wider screens stretch the slots.
-      slotMinWidth: 20,
+      // Kompakt is about 1300px for a five-day week, so it fits beside the dock
+      // without a horizontal scrollbar; wider screens stretch the slots. The
+      // wider zoom steps scroll inside FC's own time area, the row labels fixed.
+      slotMinWidth: timelineHourWidth(),
       // FC widens a short event to a minimum width, and in a row of people that
       // reads as a clash: a 15-minute Pause pushed into the next Lektion stacks
       // the two as if they overlapped. Here the geometry *is* the information.
@@ -124,17 +210,7 @@
         cellContent(info) {
           const props = info.resource?.extendedProps as TimelineRowProps | undefined;
           if (!info.resource || !props) return '';
-          const name = escapeHtml(info.resource.title);
-          const color = escapeHtml(props.color);
-          // An Ausbildner gets the avatar the cards carry; a Raum the room-code
-          // pill. Same two marks as everywhere else in the app.
-          const mark = props.kind === 'teacher'
-            ? `<span class="wk-tl-av" style="background:${color};color:${getContrastColor(props.color)}">${escapeHtml(props.short)}</span>`
-            : `<span class="wk-tl-room" style="--room:${color}">${escapeHtml(props.short)}</span>`;
-          const shared = props.shared
-            ? `<span class="wk-tl-shared" title="Vom Konfliktcheck ausgenommen — mehrere Lektionen gleichzeitig sind hier in Ordnung">geteilt</span>`
-            : '';
-          return { html: `${mark}<span class="wk-tl-name" title="${name}">${name}</span>${shared}` };
+          return timelineRowLabel(info.resource.title, props);
         },
       }],
 
@@ -175,21 +251,14 @@
           'wk-tl-ev',
           props.conflictHere === 'hard' && 'wk-tl-ev-hard',
           props.conflictHere === 'soft' && 'wk-tl-ev-soft',
+          paint.selected.has(props.eventId) && 'wk-tl-selected',
+          paint.highlighted.has(props.eventId) && 'wk-tl-flash',
         ].filter(Boolean).join(' ');
       },
       eventInnerClass: 'wk-tl-ev-inner',
       eventContent(info) {
         if (info.event.display === 'background') return '';
-        const props = info.event.extendedProps as TimelineBarProps;
-        // A clash in *another* row of the same Lektion, still flagged here so a
-        // bar never reads cleaner than the card it stands for.
-        const flagLevel = props.conflictHere ?? props.conflictElsewhere;
-        const flag = flagLevel
-          ? `<span class="wk-tl-flag wk-tl-flag-${flagLevel}">${iconSvg('alert', 10)}</span>`
-          : '';
-        return {
-          html: `${flag}<span class="wk-tl-lanes">${escapeHtml(props.lanes)}</span><span class="wk-tl-subj">${escapeHtml(props.subjectShort)}</span>`,
-        };
+        return timelineBar(info.event.extendedProps as TimelineBarProps);
       },
       eventDidMount(info) {
         if (info.event.display === 'background') {
@@ -200,7 +269,9 @@
         }
         const props = info.event.extendedProps as TimelineBarProps;
         info.el.dataset['wkEventId'] = props.eventId;
-        info.el.style.setProperty('--ev-color', props.color);
+        info.el.dataset['wkBarKey'] = info.event.id;
+        // Mounted with FC's `tabindex="0"`; only the roving bar keeps it.
+        info.el.tabIndex = info.event.id === rovingKey ? 0 : -1;
         const ev = getState().events.find(e => e.id === props.eventId);
         const text = ev ? timelineTooltip(getState(), ev) : info.event.title;
         info.el.title = `${text} — im Kalender zeigen`;
@@ -211,7 +282,12 @@
     calendar = cal;
     requestAnimationFrame(paintStates);
 
+    calendarEl.addEventListener('keydown', handleKeydown);
+    calendarEl.addEventListener('focusin', handleFocusIn);
+
     return () => {
+      calendarEl.removeEventListener('keydown', handleKeydown);
+      calendarEl.removeEventListener('focusin', handleFocusIn);
       cal.destroy();
       calendar = undefined;
     };
@@ -225,19 +301,61 @@
     const { startDay, dayCount } = days;
     filter; // tracked so changing the filter re-runs the event source
     if (!calendar) return;
+    // The refetch remounts every bar, and the focused one goes with it: an
+    // undo pressed on a bar dropped the focus to <body>. Put it back on the
+    // tab stop, which `rovingKey` has kept on the same bar if it still exists.
+    const hadFocus = calendarEl.contains(document.activeElement);
     calendar.setOption('slotMinTime', `${start}:00`);
     calendar.setOption('slotMaxTime', `${end}:00`);
     calendar.setOption('duration', { days: dayCount });
     calendar.gotoDate(dayDate(state.wkStartDate, startDay));
     calendar.refetchResources();
     calendar.refetchEvents();
-    requestAnimationFrame(paintStates);
+    requestAnimationFrame(() => {
+      paintStates();
+      if (hadFocus && !calendarEl.contains(document.activeElement)) refocusTabStop();
+    });
   });
+
+  /**
+   * v7 mounts a bar `visibility: hidden` until it has measured where it goes,
+   * and a hidden element refuses focus — so the refocus after a refetch waits
+   * a few frames for the bar to be shown.
+   */
+  function refocusTabStop(frames = 10): void {
+    const el = calendarEl?.querySelector<HTMLElement>('.wk-tl-ev[tabindex="0"]');
+    // Never pull the focus back from somewhere the user has since gone.
+    if (!el || (document.activeElement !== document.body && document.activeElement !== null)) return;
+    el.focus({ preventScroll: true });
+    if (document.activeElement !== el && frames > 0) {
+      requestAnimationFrame(() => refocusTabStop(frames - 1));
+    }
+  }
 
   $effect(() => {
     getSelectedEventIds();
     getHighlightedEventIds();
-    paintStates();
+    // Only the two lists above are what this repaints for; the tab stop reads
+    // the store too, and must not make every edit run it twice.
+    untrack(paintStates);
+  });
+
+  /**
+   * Zoom keeps the time at the left edge, the timeline's H2: the time area's
+   * scroll offset is carried over as a fraction of its width, which is linear
+   * in the hour width.
+   */
+  $effect(() => {
+    const width = timelineHourWidth();
+    if (!calendar || !calendarEl) return;
+    const scrolled = [...calendarEl.querySelectorAll<HTMLElement>('*')]
+      .filter(el => el.scrollLeft > 0)
+      .map(el => ({ el, frac: el.scrollLeft / el.scrollWidth }));
+    calendar.setOption('slotMinWidth', width);
+    requestAnimationFrame(() => {
+      for (const { el, frac } of scrolled) el.scrollLeft = Math.round(frac * el.scrollWidth);
+      paintTabStop();
+    });
   });
 </script>
 

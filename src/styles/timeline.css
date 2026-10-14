@@ -156,6 +156,8 @@
 /* Same recipe as the grid's card: a tint of the Thema colour on the surface,
    an edge mixed from it, and a solid spine. Saturation stays for state. */
 .wk-tl-ev.wk-tl-ev {
+  /* FC writes the event's `color` inline as --fc-event-color. */
+  --ev-color: var(--fc-event-color);
   position: relative;
   background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
   border: 1px solid color-mix(in oklab, var(--ev-color, gray) var(--wk-edge), var(--wk-surface));
@@ -234,6 +236,13 @@
 .wk-tl-ev.wk-tl-selected {
   box-shadow: 0 0 0 2px var(--wk-surface), 0 0 0 4px var(--color-primary);
   z-index: 4;
+}
+
+/* The one tab stop, and where the arrow keys have moved it. */
+.wk-tl-ev.wk-tl-ev:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+  z-index: 5;
 }
 
 /* Hovering a Probleme card pulses its Lektionen here too. */

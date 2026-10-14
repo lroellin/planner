@@ -5,6 +5,7 @@
   } from "../state/store.svelte";
   import {
     getDensity, setDensity, requestConfig, getMainView, setMainView, type Density, type MainView,
+    getTimelineZoom, setTimelineZoom, type TimelineZoom,
   } from "../state/ui.svelte";
   import { setupSteps } from "../state/setup";
   import { sortSubjects } from "../utils/timeUtils";
@@ -147,6 +148,19 @@
     { key: 'comfortable', label: 'Weit', short: 'L' },
   ];
 
+  /**
+   * The Belegung's zoom takes the density control's place and shape while that
+   * view is up. Row height does nothing to the timeline, and the timeline's own
+   * question — how wide is an hour — is the same S/M/L choice turned on its
+   * side, so one slot on the bar answers "how big" for whichever view is shown,
+   * and switching views does not shift the buttons beside it.
+   */
+  const ZOOMS: { key: TimelineZoom; label: string; short: string }[] = [
+    { key: 'compact', label: 'Kompakt — die ganze Woche auf einen Blick', short: 'S' },
+    { key: 'normal', label: 'Normal', short: 'M' },
+    { key: 'wide', label: 'Weit — mit Thema-Kürzel auch auf kurzen Lektionen', short: 'L' },
+  ];
+
   function handleKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape') menu = null;
     if (!(e.ctrlKey || e.metaKey)) return;
@@ -247,18 +261,33 @@
 {/snippet}
 
 {#snippet densityControl()}
-  <div class="density" role="group" aria-label="Zeilenhöhe">
-    <Icon name="rows" size={13} class="density-icon" />
-    {#each DENSITIES as d (d.key)}
-      <button
-        class="density-btn"
-        class:density-btn-on={getDensity() === d.key}
-        onclick={() => setDensity(d.key)}
-        title="Zeilenhöhe: {d.label}"
-        aria-pressed={getDensity() === d.key}
-      >{d.short}</button>
-    {/each}
-  </div>
+  {#if getMainView() === 'timeline'}
+    <div class="density" role="group" aria-label="Stundenbreite">
+      <Icon name="clock" size={13} class="density-icon" />
+      {#each ZOOMS as z (z.key)}
+        <button
+          class="density-btn"
+          class:density-btn-on={getTimelineZoom() === z.key}
+          onclick={() => setTimelineZoom(z.key)}
+          title="Stundenbreite: {z.label}"
+          aria-pressed={getTimelineZoom() === z.key}
+        >{z.short}</button>
+      {/each}
+    </div>
+  {:else}
+    <div class="density" role="group" aria-label="Zeilenhöhe">
+      <Icon name="rows" size={13} class="density-icon" />
+      {#each DENSITIES as d (d.key)}
+        <button
+          class="density-btn"
+          class:density-btn-on={getDensity() === d.key}
+          onclick={() => setDensity(d.key)}
+          title="Zeilenhöhe: {d.label}"
+          aria-pressed={getDensity() === d.key}
+        >{d.short}</button>
+      {/each}
+    </div>
+  {/if}
 {/snippet}
 
 <div class="bar">

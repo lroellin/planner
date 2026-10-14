@@ -4,7 +4,7 @@
  * Typographic glyphs (⚙ ▤ ⎙ ↩ ⠿ ⊞) were sitting on different baselines and
  * different weights on every platform, and a few rendered as tofu. These are
  * plain strings so the same source can serve both `Icon.svelte` and the
- * FullCalendar `eventContent` renderer, which has to return HTML.
+ * Preact elements FullCalendar renders (`icon` in `eventCard.ts`).
  */
 
 export const ICON_PATHS = {
@@ -50,12 +50,3 @@ export const ICON_PATHS = {
 } as const;
 
 export type IconName = keyof typeof ICON_PATHS;
-
-/** Icon markup for contexts that build raw HTML strings (FullCalendar cards). */
-export function iconSvg(name: IconName, size = 14, extraClass = ''): string {
-  return (
-    `<svg class="wk-icon ${extraClass}" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
-    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
-    `stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[name]}</svg>`
-  );
-}

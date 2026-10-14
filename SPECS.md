@@ -219,7 +219,7 @@ A placed instance of a subject:
 
 Dark mode rebuilds the lines rather than re-tinting them: daisyUI's base-300 is darker than base-100 in a dark theme, so a border painted with it reads as nothing. Applied by setting `data-theme` on `<html>` from a `prefers-color-scheme` listener in App.svelte.
 
-**Icons** (`src/utils/icons.ts`, `Icon.svelte`): a small inline-SVG set with Lucide geometry. `iconSvg(name, size)` returns markup for the contexts that build HTML strings (FullCalendar's `eventContent`); `<Icon name=… />` is the component form. The previous typographic glyphs (⚙ ▤ ⎙ ↩ ⠿ ⊞) sat on different baselines per platform and some rendered as tofu.
+**Icons** (`src/utils/icons.ts`, `Icon.svelte`): a small inline-SVG set with Lucide geometry. `icon(name, size)` in `eventCard.ts` wraps the same paths as a Preact element for FullCalendar's content hooks; `<Icon name=… />` is the component form. The previous typographic glyphs (⚙ ▤ ⎙ ↩ ⠿ ⊞) sat on different baselines per platform and some rendered as tofu.
 
 **Utility classes:** `.wk-eyebrow` (the one section-label style), `.wk-num` (tabular figures — on every time, count and duration).
 
@@ -237,9 +237,10 @@ Deliberately separate from `store.svelte.ts`: none of it belongs in the saved sc
 | `density` | `compact` / `normal` / `comfortable` → `--wk-slot-h` (17/24/32 px), persisted under `wk-planner-ui` |
 | `collapsedPhases` | Phase ids folded to a rail, persisted under `wk-planner-ui`. Purely visual — see [Folding a phase](#folding-a-phase) |
 | `mainView` | `plan` / `timeline` — the planning grid or the [Belegung](#belegung-timelinesvelte) view, persisted under `wk-planner-ui`. Switching to the timeline drops a pending `reveal` |
+| `timelineZoom` | `compact` / `normal` / `wide` — the Belegung's hour width (20 / 48 / 140 px, `timelineHourWidth()`), persisted under `wk-planner-ui` |
 | `toasts` | One-at-a-time transient messages, with an optional inline action |
 
-`applyDensity()` runs in `main.ts` **before** the app mounts — FullCalendar measures one slot row at first render and sizes the grid from it.
+`applyDensity()` runs in `main.ts` **before** the app mounts, so the grid's first layout is already at the saved density (v7 would otherwise re-measure a frame later).
 
 ### State Management (`src/state/store.svelte.ts`)
 
@@ -422,7 +423,7 @@ Key settings:
 - `duration: { days: phaseDayCount(phase) }` — how many day columns (clamped to ≥1)
 - `resources`: `groupsToResources(groups, phase.groupIds)` — only the enabled groups in this phase, sorted by `order`
 - `datesAboveResources: true` — date headers above group (resource) headers
-- `slotMinTime` / `slotMaxTime` come from **`gridWindow(state)`** (`timeUtils`), not from constants — see [The hours the grid draws](#the-hours-the-grid-draws). `slotDuration: '00:15:00'`, `snapDuration: '00:15:00'`. The window's start is always **on the hour** so `slotHeaderInterval` produces 08:00, 09:00 … instead of 07:45, 08:45 …; the outer scroller opens at 08:00 on load, at an offset measured from the window rather than a hardcoded four slots
+- `slotMinTime` / `slotMaxTime` come from **`gridWindow(state)`** (`timeUtils`), not from constants — see [The hours the grid draws](#the-hours-the-grid-draws). `slotDuration: '00:15:00'`, `snapDuration: '00:15:00'`. The window's start is always **on the hour** so `slotHeaderInterval` produces 08:00, 09:00 … instead of 07:45, 08:45 …; the outer scroller opens at 08:00 the first time the grid is shown — on load, or on the first switch to Kalender when the page opened on the Belegung (a `scrollTop` does not stick while the grid is `display: none`) — at an offset measured from the window rather than a hardcoded four slots
 - `businessHours: { startTime: '08:00', endTime: '17:00' }`
 - `locale: deLocale` — German date formatting; `dayHeaderFormat` adds the month back ("Mi. 21.10."), which v7's German default drops
 - `editable: true`, `droppable: true` (accepts chips from sidebar)
@@ -442,7 +443,7 @@ The rules come from `previewClash(state, candidate)` in the **detector**, not fr
 
 **Marquee.** Implemented in `App.svelte` over `.phase-scroll`, so one rectangle spans every phase without either calendar knowing about it. It starts only on a `pointerdown` outside `.wk-fc-event` and only once the pointer has travelled 6 px — below that it is still a click on an empty slot, which is how a subject gets placed without dragging. FullCalendar fires `dateClick` on the *mouseup* that ends the marquee, so the marquee claims that click via `suppressNextDateClick()` / `consumeDateClickGuard()` in `ui.svelte`.
 
-**Row height.** v7 sizes every time row from the tallest axis label (its inner box plus the row's 1px rule) and ignores the lane's own height, so the pitch is set on the label: `.wk-fc-slothead-inner { height: calc(var(--wk-slot-h) - 1px) }`. The density control reaches the whole grid through that one rule. The calendars are still keyed on the density in App.svelte, so a change re-mounts them; v6 needed that because it cached the slot height it measured at render. v7 resizes itself (there is no `updateSize()` any more) and probably re-measures live, but that is untested in the app.
+**Row height.** v7 sizes every time row from the tallest axis label (its inner box plus the row's 1px rule) and ignores the lane's own height, so the pitch is set on the label: `.wk-fc-slothead-inner { height: calc(var(--wk-slot-h) - 1px) }`. The density control reaches the whole grid through that one rule. A density change needs no re-mount: v7 re-measures when `--wk-slot-h` changes and re-lays out rows, lanes and cards (verified at S/M/L). v6 cached the height it measured at render, so the calendars used to be keyed on the density.
 
 ### The hours the grid draws
 
@@ -512,11 +513,11 @@ on screen, and folding a phase away takes it out of the selection too.
 `handleEventClick` sets `selectedEventId` → opens `EventModal`.
 
 ### Event rendering (`eventContent`)
-`eventContent` returns an HTML string, so **every interpolated value is run through `escapeHtml`** (`src/utils/format.ts`) — subject, room and teacher names are user-entered config.
+`eventContent` returns **Preact elements** built by `eventCard` (`src/utils/eventCard.ts`), using the Preact FullCalendar bundles (`fullcalendar/preact`; elements from any other copy cannot be rendered by FC). Subject, room and teacher names are user-entered config and travel as text, so nothing is escaped by hand; only the icon set's own SVG paths are injected as markup. FC can diff a card across `calendar.render()` instead of re-parsing it.
 
-**The card is a neutral surface, not a fill.** `buildFCEvent` sends *no* inline colours; it puts the subject colour in `extendedProps.color`, and `eventDidMount` writes it to the element as `--ev-color`. `src/styles/calendar.css` mixes the tint (13% in light, 24% in dark), the border and the 3px left spine from that one value. Twelve lanes of full-strength colour had no hierarchy and left nothing louder for a conflict to be drawn in; this also lets dark mode use a different recipe instead of glowing.
+**The card is a neutral surface, not a fill.** `buildFCEvent` passes the subject colour as the event's `color`, which v7 writes onto the element as the `--fc-event-color` variable *only*; `calendar.css` reads it as `--ev-color` on `.wk-fc-event.wk-ev` and overrides every fill the classic theme would paint from it. `src/styles/calendar.css` mixes the tint (13% in light, 24% in dark), the border and the 3px left spine from that one value. Twelve lanes of full-strength colour had no hierarchy and left nothing louder for a conflict to be drawn in; this also lets dark mode use a different recipe instead of glowing.
 
-`classNames` carry everything the CSS needs to key off:
+The event's `className` carries everything the CSS needs to key off:
 
 | Class | Meaning |
 |---|---|
@@ -609,12 +610,20 @@ this answers "is Anna booked twice" and "when is the Turnhalle free". It is
   **hidden, not unmounted**, while the timeline is up, so it keeps its scroll,
   its folded phases and its two FullCalendar instances. Grid keys (arrows,
   Delete, Ctrl+D, Ctrl+A) do nothing in the timeline; undo/redo and Ctrl+P work.
+  While the Belegung is up, the toolbar's S/M/L density control is replaced in
+  the same slot and shape by the **Stundenbreite** zoom (clock icon, S/M/L):
+  row height does nothing here, and swapping rather than hiding keeps the
+  buttons beside it from shifting. Below 1000px both live in the "⋯" menu.
 - **FullCalendar.** `resourceTimeline` from `fullcalendar-scheduler/resource-timeline`,
   AGPL key, classic theme. Days from the first Phase's `startDay` to the last
   Phase's `endDay` (`timelineDays`); each day is drawn over `gridWindow`, so the
   night is not drawn at all, and 08:00–17:00 is the shaded business band. Hourly
-  slots at `slotMinWidth: 20` fit a five-day week beside the dock without a
-  horizontal scrollbar. `eventMinWidth: 1`: FC's default minimum widened short
+  slots at `slotMinWidth: timelineHourWidth()`: Kompakt (20px) fits a five-day
+  week beside the dock without a horizontal scrollbar; Normal (48) and Weit
+  (140) scroll sideways inside FC's time area while the row labels stay put.
+  Weit is sized so a 45-minute bar shows lanes, ⚠ flag and a ten-letter Kürzel.
+  A zoom change carries the scroll offset over as a fraction, so the time at
+  the left edge stays. `eventMinWidth: 1`: FC's default minimum widened short
   bars into their neighbours and stacked them as if they clashed.
 - **Rows** (`timelineResources`). Row ids are `t:<id>` / `r:<id>`; grouped by
   `resourceGroupField: 'section'` under *Ausbildner* and *Räume*, each in
@@ -626,7 +635,9 @@ this answers "is Anna booked twice" and "when is the Turnhalle free". It is
   one bar per row, labelled with all its lanes (`G1 G2 G3`). Lektionen with
   neither Ausbildner nor Raum (a bare Pause) and those on disabled lanes are left
   out; the toolbar filter applies. Label: lanes first (they always fit), then the
-  Thema's Kürzel. The tint is the card's `--ev-color` recipe.
+  Thema's Kürzel. The tint is the card's `--ev-color` recipe, fed by the event's
+  `color` (`--fc-event-color`). Row labels and bars are Preact elements
+  (`timelineContent.ts`), like the grid's cards: names travel as text.
 - **Conflicts** come from the store's attached `ConflictRef`s, never a second
   detector. `rowConflict` decides per row: the double-edged ring (solid red hard,
   dashed amber soft) is drawn only in the row the clash is *about* — Anna's row
@@ -638,7 +649,16 @@ this answers "is Anna booked twice" and "when is the Turnhalle free". It is
   "im Kalender zeigen". Click or Enter: `setMainView('plan')` + `revealEvent`,
   which selects, scrolls to and flashes the card. Any `reveal` — a Probleme row
   clicked while the timeline is up, too — switches back to the grid (App.svelte).
-  Selection and the Probleme hover pulse are mirrored onto the bars.
+  Selection and the Probleme hover pulse are mirrored onto the bars, as classes
+  from `eventClass` (a snapshot plus `calendar.render()`, never `classList`).
+- **Keyboard.** One tab stop, the grid's K2: every bar gets `tabindex="-1"`
+  except the roving one — the last bar focused, else the selected Lektion's
+  first bar, else the top row's first. ←/→ step along time in the row, ↑/↓ go
+  to the nearest bar in time in the next row that has any (`timelineNeighbour`,
+  pure). Every refetch remounts the bars with FC's `tabindex="0"`, so
+  `eventDidMount` and a post-refetch pass re-apply the stop, and a bar that had
+  the focus gets it back (after an undo, say) once v7 shows it — it mounts
+  bars `visibility: hidden` until measured, and a hidden element refuses focus.
 - **Styling** lives in `src/styles/timeline.css`, imported by the component, on
   `wk-tl-*` class hooks only (v7's own class names are hashed).
 
@@ -979,8 +999,8 @@ pick `scrollIntoView`'s `behavior` — the one motion CSS cannot reach.
 | Clash outline | Calendar | Not an animation: while dragging, `previewClashDetail` returns the ids it collided with and they are outlined. The mirror's red tint said a price would be paid without saying to whom. |
 
 **Deliberately not animated:** grid layout (row heights, lane widths, density —
-the calendars re-mount on a density change and a tween would fight
-FullCalendar's own measurement); card position on drop (the drop *is* the
+FullCalendar re-lays the grid out on a density change and a tween would
+fight its own measurement); card position on drop (the drop *is* the
 feedback); dialog open/close beyond the scrim; the sidebar chip list. The
 `.side-panel` width transition was removed for the same reason it existed: the
 panel eased over 0.15s while the calendars inside re-laid out in a single frame.
@@ -1261,7 +1281,6 @@ The adaptive plugin (`fullcalendar-scheduler/adaptive`) stays out, for the origi
 
 ## Format Utilities (`src/utils/format.ts`)
 
-- `escapeHtml(value)` — mandatory on every value interpolated into the `eventContent` HTML string
 - `roomShort(room)` — the card's room code. An explicit `shortName` wins; otherwise one word → first five characters ("Werkhof" → "Werkh"), two tokens → 3 + 1 ("Theoriesaal 1" → "The1"), three or more → initials ("Schutzanlage Bern-West" → "SBW"). A numeric token is kept whole, because it is usually the only thing telling two rooms apart
 - `teacherShort(teacher)` — `shortName`, falling back to the first two letters of the name
 - `isEditingTarget(target)` — is the user typing? Both window-level key handlers (the toolbar's Ctrl+Z and the grid's arrow keys) must leave a focused field alone, and each used to carry its own copy of this test
@@ -1352,8 +1371,9 @@ npm run check        # svelte-check --threshold error
 Vitest covers the pure logic where the rules are subtle and have been reworked repeatedly:
 
 - `src/conflicts/detector.test.ts` — teacher/room/group conflicts, excluded rooms, disabled lanes, breaks vs. lessons, multi-group self-collision, annotation, availability (absent teacher, blocked room, half-day windows, touching-but-not-overlapping), and `previewClash` — one case per way the calendar's old private copy of the rules was wrong
-- `src/utils/timeUtils.test.ts` — `ALL_GROUPS` resolution, phase membership, orphans, FC event building, filters, contrast and escaping
-- `src/utils/timeline.test.ts` — Belegung rows and order, one bar per (Lektion × row), multi-group lanes, per-row conflict rings, availability shading, the tooltip
+- `src/utils/timeUtils.test.ts` — `ALL_GROUPS` resolution, phase membership, orphans, FC event building, filters, contrast
+- `src/utils/eventCard.test.ts` — the grid card carries user-entered names as text, and the title-only drag-mirror preview
+- `src/utils/timeline.test.ts` — Belegung rows and order, one bar per (Lektion × row), multi-group lanes, per-row conflict rings, availability shading, the tooltip, arrow-key neighbours (`timelineNeighbour`)
 - `src/reports/reports.test.ts` — phase affinity, coverage counts, uneven rows agreeing between the report and the sidebar chip, minute-measured coverage against a target, teaching/covering/handed-over classification
 - `src/state/migrations.test.ts` — each hop adds its fields without touching the schedule; `migrateState` chains, is a no-op on current state, and refuses a version with no path
 - `src/test/fixtures.ts` — a two-phase week (Kader Mon–Tue, Gruppen Wed–Fri) with readable string ids, plus `makeWindow`
@@ -1404,7 +1424,7 @@ Modal move across phases:
 - **Multi-group lanes are resolved on read**, never stored — see the Events section. This is why `eventGroupIds` needs `state` and why so many helpers take it.
 - **Conflicts are detected once per mutation** in the store; components must read `getConflicts()`/`getOrphans()` rather than calling `detectConflicts` again.
 - **One rule, one place.** The things that had quietly grown second copies, and where the single definition now lives: the clash rules (`previewClash` in `detector.ts`), the conflict-kind labels (`CONFLICT_KIND_LABELS` in `types.ts` — the panel, the modal and the card tooltip each had their own), "done" for a coverage row (`coverageStatus` in `reports.ts`), a teacher's or room's week (`teacherLoad`/`roomLoad`), "the user is typing" (`isEditingTarget`), phase display order (`orderedPhases`), the legal split points (`splitRange`), and duplicating an event (`duplicateEvents` in the store).
-- **`eventContent` is an HTML string**, so anything user-entered that reaches it must go through `escapeHtml`.
+- **`eventContent` returns Preact elements from `fullcalendar/preact`** (`eventCard.ts`): user text travels as text; never build card markup as an HTML string.
 - **No `<input type="time">`**: it renders in the *browser's* locale, so an en-US Chrome shows an AM/PM spinner however Swiss the app is. `components/TimeField.svelte` is a select over the 15-minute grid — always 24h, and it enforces the slot size the app snaps to anyway. A stored value outside the offered range is added to the list so opening an odd event cannot silently retime it.
 - **localStorage only**: No backend. A backend is a future consideration.
 - **Desktop only**: No mobile layout designed.
@@ -1418,6 +1438,6 @@ Modal move across phases:
 - **Event cards carry no inline colour**: the subject colour reaches the card as `--ev-color` (set in `eventDidMount`) and CSS mixes tint, border and spine from it. Saturation is reserved for *state* — conflict, selection, spotlight — which is what makes those readable on a full week.
 - **Never select on FullCalendar's own classes** — they are hashed in v7. Use the `wk-fc-*` hook classes and FC's `data-*` attributes.
 - **The row pitch is set on `.wk-fc-slothead-inner`**: v7 sizes every time row from the axis label, not from the lane.
-- **The calendars are keyed on the density**, a v6-era requirement (FC would not shrink below the slot height it measured at render time) that v7 may no longer have.
-- **`applyDensity()` runs in `main.ts`**, before mount, for the same reason.
+- **The calendars are not keyed on the density**: v7 re-measures rows live. They are still keyed on the axis owner.
+- **`applyDensity()` runs in `main.ts`**, before mount, so the first layout is already at the saved density.
 - **No adaptive plugin** (`fullcalendar-scheduler/adaptive`) — see Printing.

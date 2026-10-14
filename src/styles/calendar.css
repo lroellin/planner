@@ -252,6 +252,10 @@
    1px border, rounded corners and inner padding. Every one of those is
    restated here, so none of it leaks through. */
 .wk-fc-event.wk-ev {
+  /* FC writes the event's `color` inline as --fc-event-color. The tint, the
+     border and the spine are all mixed from this one value, which is what
+     lets dark mode use a different recipe. */
+  --ev-color: var(--fc-event-color);
   /* --wk-tint / --wk-edge come from :root now, so the sidebar chip mixes from
      the same two numbers — the chip is a preview of this card. */
   background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
