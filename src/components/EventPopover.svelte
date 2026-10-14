@@ -268,7 +268,7 @@
     if (el && target && !el.contains(target)) {
       // A click on another card re-opens the popover for that one, so only close
       // when the click landed outside both this popover and the grid's events.
-      const onCard = (target as HTMLElement).closest?.('.fc-event');
+      const onCard = (target as HTMLElement).closest?.('.wk-fc-event');
       if (!onCard) closeQuickEdit();
     }
   }

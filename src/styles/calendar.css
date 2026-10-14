@@ -1,115 +1,147 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    The grid and its cards.
 
-   Lives outside Calendar.svelte because nearly all of it has to be :global
-   anyway — FullCalendar owns the DOM — and because the event card is built as
-   an HTML string in `eventContent`, which Svelte's scoped styles never reach.
+   Lives outside Calendar.svelte because FullCalendar owns the DOM — and
+   because the event card is built as an HTML string in `eventContent`, which
+   Svelte's scoped styles never reach.
+
+   FullCalendar v7 renders flexbox divs with hashed class names (`fc-Sd`,
+   `fc-classic-vQz`) that change from release to release, so nothing here
+   selects on FC's own classes. Every part we style gets a stable `wk-fc-*`
+   class from the `*Class` hooks in Calendar.svelte; `data-date`,
+   `data-resource-id` and `data-time` are still FC's and still dependable.
+
+   The classic theme's utility classes are all single-class selectors, so a
+   rule here needs two classes (or a class plus an attribute) to win a tie —
+   which is why so many of them are written `.wk-fc-event.wk-ev` rather than
+   just `.wk-ev`.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-.fc {
+/* ── Theme tokens ───────────────────────────────────────────────────────────
+   The classic theme reads everything from --fc-classic-* variables. They are
+   pointed at the app's own tokens here rather than restated, so the grid can
+   never drift from the rest of the UI.
+
+   Declared on the calendar mount rather than :root on purpose: the --wk-*
+   tokens they read flip under `[data-theme='dark']`, and a custom property
+   resolves its var() where it is declared. Declared here, below the element
+   that carries data-theme, each one resolves against whichever theme is
+   active — so there is no separate dark block to keep in step. FC's own dark
+   switch, `[data-color-scheme=dark]` in palette.css, is never set by this
+   app and is overridden by these anyway. */
+.wk-cal {
+  --fc-classic-background: var(--wk-surface);
+  /* `faint` is the out-of-hours shading (before 08:00, after 17:00) as well as
+     FC's own hover tint; the fringe token is what was tuned for the former on a
+     populated week. */
+  --fc-classic-faint: var(--wk-grid-fringe);
+  --fc-classic-muted: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  --fc-classic-strong: color-mix(in oklab, var(--color-base-content) 16%, transparent);
+  --fc-classic-foreground: var(--wk-text);
+  --fc-classic-muted-foreground: var(--wk-text-mute);
+  --fc-classic-faint-foreground: var(--wk-text-faint);
+  --fc-classic-border: var(--wk-line);
+  --fc-classic-strong-border: var(--wk-line-strong);
+  /* There is no "today" in a plan for a course that has not happened yet. */
+  --fc-classic-today: transparent;
+  --fc-classic-now: var(--color-error);
+  --fc-classic-primary: var(--color-primary);
+  --fc-classic-primary-foreground: var(--color-primary-content);
+  --fc-classic-highlight: color-mix(in oklab, var(--color-primary) 14%, transparent);
+  /* Only ever seen on something that slipped past buildFCEvent without a
+     colour; our cards paint their own ground from --ev-color. */
+  --fc-classic-event: var(--wk-surface-alt);
+  --fc-classic-event-contrast: var(--wk-text);
+}
+
+.wk-fc {
   height: 100%;
   font-family: inherit;
-  --fc-border-color: var(--wk-line);
-  --fc-page-bg-color: var(--wk-surface);
-  --fc-neutral-bg-color: var(--wk-surface-alt);
-  --fc-today-bg-color: transparent;
-  --fc-non-business-color: var(--wk-grid-fringe);
-  --fc-now-indicator-color: var(--color-error);
-  --fc-small-font-size: var(--wk-fs-xs);
-  --fc-event-bg-color: transparent;
-  --fc-event-border-color: transparent;
+  /* The theme sets 16px on its root; the app's type scale is rem-based and
+     every piece of text in the grid sets its own size, so this only decides
+     what an unstyled stray (an empty header, a placeholder) falls back to. */
+  font-size: var(--wk-fs-sm);
 }
 
 /* ── Time axis ─────────────────────────────────────────────────────────────── */
 
-.fc-timegrid-slot {
-  height: var(--wk-slot-h) !important;
+/* FC sizes the time rows from the hour labels: it measures the tallest label
+   (the inner text box, plus the row's 1px rule) and gives every row, label side
+   and lane side, that height; the lane's own height is ignored. So the pitch is
+   set on the label — the density control reaches the whole grid through it.
+   v6 had the opposite problem, a table row that could not get *under* its
+   label's line box; here the label is the row. Minor rows carry no label. */
+.wk-fc-slothead.wk-fc-slothead {
+  box-sizing: border-box;
+  /* A minor cell has no label, so left alone it is just its 1px rule — and a
+     row that selects everything at 08:15 on click needs something to click.
+     Filling the row restores the v6 hit area. */
+  height: 100%;
+  padding: 0;
+  line-height: 1;
 }
 
-/* Even an empty table cell inherits a line-height strut, and that strut (16px ×
-   1.5 from the preflight) was a ~25px floor under every row — the compact
-   density asked for 17px and silently got nothing. The cells carry no text of
-   their own; the hour label restores its own line box below. */
-.fc-timegrid-slots table {
-  line-height: 0;
-}
-
-.fc-timegrid-axis,
-.fc-timegrid-slot-label {
-  width: var(--wk-axis-w) !important;
-}
-
-/* The hour label is the only content in a slot row, and a table row is as tall
-   as its tallest cell — so the label's line box (18px text + 6px frame padding)
-   set a 24.5px floor that the compact density could not get under. Collapsing
-   the line box is what lets --wk-slot-h actually shrink the grid. */
-/* !important throughout: FullCalendar injects its stylesheet from JS at runtime,
-   so it lands after this file and wins every tie on specificity. */
-.fc .fc-timegrid-slot-label-frame {
-  line-height: 1 !important;
-  padding: 0 !important;
-}
-
-.fc .fc-timegrid-slot-label-cushion {
+/* The gutter is FC-measured too: its width is whatever the widest label asks
+   for. .phase-seg reserves --wk-axis-w for it (App.svelte), which is what
+   keeps lanes the same width in a 1-lane phase as in a 4-lane one. v7 draws
+   the rule beside the gutter as a separate 1px divider rather than as the
+   cell's own border, so the label gives that pixel back. */
+.wk-fc-slothead-inner.wk-fc-slothead-inner {
+  box-sizing: border-box;
+  width: calc(var(--wk-axis-w) - 1px);
+  height: calc(var(--wk-slot-h) - 1px);
+  margin: 0;
+  padding: 0 0.5rem 0 0;
+  /* Centred in its row, where the v6 table cell put it — top-aligned it hugged
+     the hour rule and read as belonging to the row above. */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   font-size: var(--wk-fs-xs);
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   color: var(--wk-text-faint);
-  line-height: 1 !important;
-  padding: 0 0.5rem 0 0 !important;
 }
 
-/* Every phase keeps its axis *cell* — removing it drops a column from FC's
-   table, which collapsed a lane to 0px and left the header a row shorter, so
-   the two grids stopped lining up. Only the first phase shows its contents;
-   the rest collapse to zero width, which is what kills the duplicate gutter. */
-.phase-seg--noaxis .fc-timegrid-axis,
-.phase-seg--noaxis .fc-timegrid-slot-label {
-  width: 0 !important;
-  min-width: 0 !important;
-  padding: 0 !important;
-  border-left-width: 0 !important;
-  border-right-width: 0 !important;
+/* Only the first phase shows the gutter; the rest ask for zero width, which
+   is what FC then hands to every axis column of that phase — header spacer
+   included, so the header and body grids stay aligned. The divider beside it
+   has to go too, or it is a 1px stub before the first lane. */
+.phase-seg--noaxis .wk-fc-slothead-inner.wk-fc-slothead-inner {
+  width: 0;
+  padding: 0;
   overflow: hidden;
 }
 
-.phase-seg--noaxis .fc-timegrid-slot-label-frame,
-.phase-seg--noaxis .fc-timegrid-axis-frame {
+.phase-seg--noaxis .wk-fc-axis-divider {
   display: none;
-}
-
-/* Every one of these tables is `table-layout: fixed` and FullCalendar writes an
-   inline `<col style="width: 4px">` from what it measured for the collapsed
-   axis cell — which then wins over the rule above and leaves a 4px stub before
-   the first lane. The axis is the only shrink column in this view, so it is the
-   only <col> FC emits here. */
-.phase-seg--noaxis colgroup col {
-  width: 0 !important;
 }
 
 /* ── Column headers: day is the structure, lane is the detail ──────────────── */
 
-.fc-col-header-cell {
+.wk-fc-thead {
   background: var(--wk-surface);
 }
 
-/* Tighter than it was by ~6px in total across the two header rows. With the
-   week nav gone from the toolbar this is the only place the date is printed, so
-   the size stays; only the air around it goes. */
-.fc-col-header-cell.fc-day .fc-col-header-cell-cushion {
-  display: block;
+/* With the week nav gone from the toolbar this is the only place the date is
+   printed, so it keeps its size; only the air around it is trimmed. */
+.wk-fc-dayhead .wk-fc-head-inner.wk-fc-head-inner {
+  margin: 0;
   padding: 0.28rem 0.25rem 0.24rem;
   font-size: var(--wk-fs-md);
   font-weight: 700;
+  line-height: 1.25;
   letter-spacing: 0.01em;
   color: var(--wk-text);
   text-decoration: none;
 }
 
-.fc-col-header-cell.fc-resource .fc-col-header-cell-cushion {
-  display: block;
+.wk-fc-lanehead .wk-fc-head-inner.wk-fc-head-inner {
+  margin: 0;
   padding: 0.16rem 0.2rem;
   font-size: var(--wk-fs-2xs);
   font-weight: 600;
+  line-height: 1.25;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--wk-text-mute);
@@ -118,69 +150,72 @@
 /* A one-lane phase gives each day a narrow header; letting "Mo. 31.8." wrap
    there made its header a line taller than the wide phase's, offsetting every
    time row between the two grids. */
-.fc-col-header-cell.fc-day {
+.wk-fc-dayhead {
   white-space: nowrap;
 }
 
 /* Headers select what stands under them (see handleHeaderClick), so they have
    to look touchable. The tint is the same one a hovered row gets everywhere
    else — a header is a control here, not a second kind of button. */
-.fc-col-header-cell,
-.fc-timegrid-slot-label {
+.wk-fc-dayhead,
+.wk-fc-lanehead,
+.wk-fc-slothead {
   cursor: pointer;
 }
 
-.fc-col-header-cell:hover,
-.fc-timegrid-slot-label:hover {
+.wk-fc-dayhead:hover,
+.wk-fc-lanehead:hover,
+.wk-fc-slothead:hover {
   background: var(--wk-surface-alt);
 }
 
 /* The gutter of a phase that does not draw it is 0px wide and reachable by
    nothing — no reason to promise a click there. */
-.phase-seg--noaxis .fc-timegrid-slot-label {
+.phase-seg--noaxis .wk-fc-slothead {
   cursor: default;
 }
 
-.fc-scrollgrid-section-sticky > * {
-  background: var(--wk-surface);
-}
-
 /* ── Vertical rules: faint between lanes, firm between days ────────────────── */
-
-.fc-timegrid-col.fc-resource,
-.fc-col-header-cell.fc-resource {
-  border-left: 1px solid var(--wk-line-faint);
-  border-right: 0;
+/* v7 already draws the first lane of each day with the strong border colour
+   and every other lane with the plain one, in header and body alike. So the
+   lane rule only needs its colour turned down — done through the variable
+   rather than `border-color`, which leaves the day boundary, drawn from
+   --fc-classic-strong-border, alone. No JS needed for the colour. */
+.wk-fc-lane,
+.wk-fc-lanehead {
+  --fc-classic-border: var(--wk-line-faint);
 }
 
-/* `.wk-day-start` is applied from tagDayBoundaries() — FC gives resource header
-   cells no fc-day-* class, so this boundary cannot be expressed in CSS alone. */
-.fc-timegrid-col.wk-day-start,
-.fc-col-header-cell.wk-day-start,
-.fc-col-header-cell.fc-day + .fc-col-header-cell.fc-day {
-  border-left: 2px solid var(--wk-line-strong);
+/* …and the day boundary one pixel heavier than v7's, so a five-day week reads
+   as five blocks at a glance. `.wk-day-start` comes from tagDayBoundaries();
+   the date row needs no JS because each of its cells is a day. */
+.wk-fc-lane.wk-day-start,
+.wk-fc-lanehead.wk-day-start,
+.wk-fc-dayhead + .wk-fc-dayhead {
+  border-inline-start-width: 2px;
 }
 
 /* Alternate days get a whisper of background so the eye chunks the week into
    days without having to read the headers. */
-.fc-timegrid-col.wk-day-alt {
+.wk-fc-lane.wk-day-alt {
   background: var(--wk-day-band);
 }
 
 /* ── Horizontal time lines, three levels deep ──────────────────────────────── */
-/* FC zeroes the slot border-bottom and draws lines via each cell's border-top.
-   Quarter hours keep FC's own faint dotted default; these two rules add the
-   hour and half-hour emphasis on top of it. Both need two classes to outrank
-   FC's `.fc-theme-standard td`. */
-.fc-timegrid-slot-lane:not(.fc-timegrid-slot-minor),
-.fc-timegrid-slot-label:not(.fc-timegrid-slot-minor) {
-  border-top: 1px solid var(--wk-line-strong);
+/* Each slot row draws its line with border-top: solid for the hour, dotted for
+   the quarters. Only the colour and style are touched here, never the width —
+   FC leaves the first row's width at 0 so it does not double the header's
+   bottom rule. `data-time` names the half hours directly, so this no longer
+   depends on slotMinTime landing on the hour the way the old nth-child count
+   did. */
+.wk-fc-slot:not(.wk-fc-minor),
+.wk-fc-slothead:not(.wk-fc-minor) {
+  border-top-color: var(--wk-line-strong);
 }
 
-/* slotMinTime is 07:00 and slots are 15 min, so rows 1, 5, 9 … are full hours
-   (never minor) and rows 3, 7, 11 … are the half hours. */
-.fc-timegrid-slots tr:nth-child(odd) .fc-timegrid-slot-minor {
-  border-top: 1px solid var(--wk-line);
+.wk-fc-slot.wk-fc-minor[data-time$=':30:00'] {
+  border-top-style: solid;
+  border-top-color: var(--wk-line);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -200,16 +235,22 @@
    at layout time.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* The harness is FC's per-card box: absolutely positioned with left/right, so
-   its inline size never depends on its contents and inline-size containment is
-   free. Querying it rather than the card itself keeps the query out of the way
-   of the card's own borders and padding. */
-.fc-timegrid-event-harness {
+/* The card's width is set by its harness (absolutely positioned with insets),
+   never by its contents, so inline-size containment on the card is free. v6
+   queried the harness instead, but in v7 the harness has no stable class to
+   hook. Containment measures the content box, which is the harness width less
+   the 3px spine and 1px right border — so every threshold below is the old
+   harness-relative one minus 4px, and cards drop fields at exactly the widths
+   they used to. */
+.wk-fc-event.wk-ev {
   container-type: inline-size;
   container-name: wk-ev;
 }
 
-.fc-timegrid-event.wk-ev {
+/* The theme paints an event as a solid --fc-event-color block with white text,
+   1px border, rounded corners and inner padding. Every one of those is
+   restated here, so none of it leaks through. */
+.wk-fc-event.wk-ev {
   /* --wk-tint / --wk-edge come from :root now, so the sidebar chip mixes from
      the same two numbers — the chip is a preview of this card. */
   background: color-mix(in oklab, var(--ev-color, gray) var(--wk-tint), var(--wk-surface));
@@ -231,19 +272,22 @@
 
 /* A tint has to be stronger against a dark ground to read as the same colour,
    and the spine of an already-dark subject colour needs lifting off it. */
-[data-theme='dark'] .fc-timegrid-event.wk-ev {
+[data-theme='dark'] .wk-fc-event.wk-ev {
   border-left-color: color-mix(in oklab, var(--ev-color, gray) 85%, white);
 }
 
 /* Selected cards are excluded: they already carry a larger lift and their own
    stacking order, and letting hover win here shrank the shadow of the very card
    the pointer was on. */
-.fc-timegrid-event.wk-ev:hover:not(.wk-selected) {
+.wk-fc-event.wk-ev:hover:not(.wk-selected) {
   --wk-lift: 0 2px 10px color-mix(in oklab, var(--color-base-content) 18%, transparent);
   z-index: 3;
 }
 
-.fc-timegrid-event .fc-event-main {
+/* eventContent lands in this inner container, which the theme pads and
+   colours with the event's contrast colour (white on the theme's blue). The
+   card's own body does the padding, and the text is the card's. */
+.wk-fc-event .wk-fc-event-inner.wk-fc-event-inner {
   padding: 0;
   color: inherit;
 }
@@ -429,8 +473,9 @@
 .wk-dur-lg .wk-ev-body { justify-content: space-between; }
 
 /* ── Width: how wide the lane is ───────────────────────────────────────────── */
-/* Measured against the harness (see the container rule above). The thresholds
-   are where things actually stop fitting rather than round numbers. */
+/* Measured against the card's content box (see the container rule above). The
+   thresholds are where things actually stop fitting rather than round numbers;
+   each sits 4px under the harness width it was tuned at in v6. */
 
 /* Where a lane of a four-lane phase lands on a 1500px viewport. The end time and
    the room's full name go; the pill and the initials stay.
@@ -440,7 +485,7 @@
    thing that can say when it starts — a real piece of information, but it cost
    a field on the one row that also has to carry the people and the place, and
    the minute is one click away in the quick-edit popover. */
-@container wk-ev (max-width: 132px) {
+@container wk-ev (max-width: 128px) {
   .wk-ev-t-end { display: none; }
   .wk-ev-room-name { display: none; }
   .wk-ev-meta { flex-wrap: nowrap; gap: 3px 5px; overflow: hidden; }
@@ -469,7 +514,7 @@
    initials and the room code. The row has space for two things and neither the
    people nor the place is recoverable from anywhere else on screen. The full
    name of everything stays in the tooltip. */
-@container wk-ev (max-width: 92px) {
+@container wk-ev (max-width: 88px) {
   .wk-ev-name-full { display: none; }
   .wk-ev-name-short { display: inline; }
   .wk-ev-time { display: none; }
@@ -494,7 +539,7 @@
 /* The narrowest lanes the app draws — five lanes in a three-day phase on a
    1280px screen. The initials and the room code are the last two things left,
    and they are the two the card exists to carry. */
-@container wk-ev (max-width: 62px) {
+@container wk-ev (max-width: 58px) {
   .wk-ev-meta { gap: 2px 3px; }
   .wk-ev-av { width: 16px; height: 16px; }
   .wk-ev-room-code { padding: 0 3px; line-height: 14px; }
@@ -505,7 +550,7 @@
    off the edge, the pill falls all the way back to a colour tag; the room is
    then only in the tooltip, but nothing on the card is a fragment. This is the
    floor, not a band anyone should be reading a plan at. */
-@container wk-ev (max-width: 48px) {
+@container wk-ev (max-width: 44px) {
   .wk-ev-room-code {
     padding: 0;
     width: 10px;
@@ -525,7 +570,7 @@
    object in the week. It has to sit under the lessons, not compete with them.
    Both the ground and the hatch alpha are per-theme tokens — see --wk-break-ground
    in app.css for why "recede" points in opposite directions. */
-.fc-timegrid-event.wk-ev-break {
+.wk-fc-event.wk-ev-break {
   background:
     repeating-linear-gradient(
       135deg,
@@ -546,7 +591,7 @@
 
 /* A multi-group block is drawn once per lane; keeping it quiet stops three
    identical lunch cards from being the loudest thing on the day. */
-.fc-timegrid-event.wk-ev-multi {
+.wk-fc-event.wk-ev-multi {
   box-shadow: none;
 }
 
@@ -556,7 +601,7 @@
    band across the day that they are. `visibility` rather than `display`, so the
    card keeps its box — the conflict ring and the hit area are per lane.
    `.wk-day-first` is applied from tagDayBoundaries() in Calendar.svelte. */
-.fc-timegrid-col.fc-resource:not(.wk-day-first) .fc-timegrid-event.wk-ev-multi .wk-ev-body {
+.wk-fc-lane:not(.wk-day-first) .wk-fc-event.wk-ev-multi .wk-ev-body {
   visibility: hidden;
 }
 
@@ -577,8 +622,8 @@
    The corner notch that used to carry this never rendered — `overflow: hidden`
    plus a rounded corner plus `.wk-ev-flags` occupying that exact spot — and the
    ring plus the alert icon in the flags row now say it twice over. */
-.fc-timegrid-event.wk-ev-hard::before,
-.fc-timegrid-event.wk-ev-soft::before {
+.wk-fc-event.wk-ev-hard::before,
+.wk-fc-event.wk-ev-soft::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -590,17 +635,17 @@
 
 /* Solid against dashed is the second, redundant channel — the one that reads at
    a glance without resolving red from amber. */
-.fc-timegrid-event.wk-ev-hard::before {
+.wk-fc-event.wk-ev-hard::before {
   border: 2px solid var(--color-error);
 }
 
-.fc-timegrid-event.wk-ev-soft::before {
+.wk-fc-event.wk-ev-soft::before {
   border: 2px dashed var(--color-warning);
 }
 
 /* ── Selection, highlight, spotlight ───────────────────────────────────────── */
 
-.fc-timegrid-event.wk-selected {
+.wk-fc-event.wk-selected {
   --wk-ring: 0 0 0 2px var(--wk-surface), 0 0 0 4px var(--color-primary);
   --wk-lift: var(--wk-shadow-2);
   z-index: 6;
@@ -610,7 +655,7 @@
    reads as an alarm rather than as a pointer — and now that undo, duplicate,
    teilen and copy-to-lanes all use it, four cards can pulse at once. A single
    sharper peak says "here" and gets out of the way. */
-.fc-timegrid-event.wk-flash {
+.wk-fc-event.wk-flash {
   animation: wk-flash 0.7s ease-out 1;
   z-index: 5;
 }
@@ -625,19 +670,19 @@
    `previewClashDetail` walks the colliding events to decide the level, so the
    identities cost nothing extra. Outline rather than fill — the card underneath
    still has to be readable while it is being pointed at. */
-.fc-timegrid-event.wk-clash-target {
+.wk-fc-event.wk-clash-target {
   outline: 2px dashed var(--color-error);
   outline-offset: 1px;
   z-index: 4;
 }
 
-.wk-cal[data-clash='soft'] .fc-timegrid-event.wk-clash-target {
+.wk-cal[data-clash='soft'] .wk-fc-event.wk-clash-target {
   outline-color: var(--color-warning);
 }
 
 /* Hovering a sidebar chip answers "where is this one still missing?" by
    pushing everything else back. */
-.fc-timegrid-event.wk-dimmed {
+.wk-fc-event.wk-dimmed {
   opacity: 0.16;
   filter: saturate(0.4);
 }
@@ -647,31 +692,45 @@
    it instead: while a chip is spotlighted, the lanes that still owe it are
    marked. Applied from paintStates() in Calendar.svelte, which resolves the
    lanes per phase. */
-.fc-col-header-cell.fc-resource.wk-lane-owes .fc-col-header-cell-cushion {
+.wk-fc-lanehead.wk-lane-owes .wk-fc-head-inner.wk-fc-head-inner {
   color: color-mix(in oklab, var(--color-warning) 80%, var(--wk-text));
   font-weight: 700;
 }
 
-.fc-col-header-cell.fc-resource.wk-lane-owes {
+.wk-fc-lanehead.wk-lane-owes {
   background: color-mix(in oklab, var(--color-warning) 16%, transparent);
   box-shadow: inset 0 -2px 0 var(--color-warning);
 }
 
 /* ── Resize grip ───────────────────────────────────────────────────────────── */
-
-.fc-timegrid-event .fc-event-resizer-end {
-  height: 7px;
-  bottom: 0;
-  cursor: ns-resize;
-  display: flex !important;
-  align-items: center;
+/* v7 has no class hook for the resizer, but it is the only element in the card
+   besides the inner container — so it is found structurally. The theme shows it
+   as a small dot on hover; it is reshaped here into the bar the user knows. */
+.wk-fc-event.wk-ev > :not(.wk-fc-event-inner) {
+  display: flex;
+  /* Sat on the bottom edge, where v6 drew it — centred in the 7px band it
+     floated a few pixels up into the meta row. */
+  align-items: flex-end;
+  padding-bottom: 2px;
+  box-sizing: border-box;
   justify-content: center;
+  inset-inline: 0;
+  top: auto;
+  bottom: 0;
+  height: 7px;
+  width: auto;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  transform: none;
+  cursor: ns-resize;
 }
 
 /* Hidden until asked for. At 22% alpha on every card at rest, thirty of these
    read as a smudge along the bottom of every block rather than as a control —
    and the grip is only ever wanted by a pointer that is already on the card. */
-.fc-timegrid-event .fc-event-resizer-end::after {
+.wk-fc-event.wk-ev > :not(.wk-fc-event-inner)::after {
   content: '';
   display: block;
   width: 18px;
@@ -682,27 +741,34 @@
   transition: opacity 0.12s;
 }
 
-.fc-timegrid-event:hover .fc-event-resizer-end::after,
-.fc-timegrid-event:focus-within .fc-event-resizer-end::after {
+.wk-fc-event.wk-ev:hover > :not(.wk-fc-event-inner)::after,
+.wk-fc-event.wk-ev:focus-within > :not(.wk-fc-event-inner)::after {
   opacity: 1;
+}
+
+/* v7 renders the drag mirror with a resizer of its own, which sits under the
+   pointer for the whole drag and so would always show. Nothing can be resized
+   mid-drag. */
+.wk-fc-event.wk-fc-mirror > :not(.wk-fc-event-inner) {
+  display: none;
 }
 
 /* ── Drag feedback ─────────────────────────────────────────────────────────── */
 
-.fc-event-mirror {
-  z-index: 9999 !important;
-  opacity: 0.9 !important;
+.wk-fc-event.wk-fc-mirror {
+  z-index: 9999;
+  opacity: 0.9;
 }
 
 /* The drop would double-book a teacher, a group or a room: say so before the
    drop, not after it. Set from eventAllow, which FC calls as the drag moves. */
-.wk-cal[data-clash='hard'] .fc-event-mirror {
+.wk-cal[data-clash='hard'] .wk-fc-event.wk-fc-mirror {
   outline: 2px solid var(--color-error);
   outline-offset: -2px;
-  background: color-mix(in oklab, var(--color-error) 22%, var(--wk-surface)) !important;
+  background: color-mix(in oklab, var(--color-error) 22%, var(--wk-surface));
 }
 
-.wk-cal[data-clash='soft'] .fc-event-mirror {
+.wk-cal[data-clash='soft'] .wk-fc-event.wk-fc-mirror {
   outline: 2px dashed var(--color-warning);
   outline-offset: -2px;
 }

@@ -397,7 +397,7 @@
   /** Everything the grid is currently drawing — the filter narrows this too. */
   function selectAllVisible(): void {
     if (!scroller) return;
-    const ids = [...scroller.querySelectorAll<HTMLElement>('.fc-event[data-wk-event-id]')]
+    const ids = [...scroller.querySelectorAll<HTMLElement>('.wk-fc-event[data-wk-event-id]')]
       .map(el => el.dataset['wkEventId'])
       .filter((id): id is ID => Boolean(id));
     closeQuickEdit();
@@ -431,7 +431,7 @@
     const right = rect.left + rect.width;
     const bottom = rect.top + rect.height;
     const hit = new Set<ID>();
-    for (const el of scroller.querySelectorAll<HTMLElement>('.fc-event[data-wk-event-id]')) {
+    for (const el of scroller.querySelectorAll<HTMLElement>('.wk-fc-event[data-wk-event-id]')) {
       const r = el.getBoundingClientRect();
       if (r.right < rect.left || r.left > right || r.bottom < rect.top || r.top > bottom) continue;
       const id = el.dataset['wkEventId'];
@@ -444,7 +444,7 @@
     if (e.button !== 0 || !scroller) return;
     const target = e.target as HTMLElement | null;
     // Cards own their own drag and resize gestures.
-    if (!target || target.closest('.fc-event')) return;
+    if (!target || target.closest('.wk-fc-event')) return;
 
     const origin = { x: e.clientX, y: e.clientY };
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;

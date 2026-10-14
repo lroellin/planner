@@ -20,7 +20,7 @@
     groupsToResources, buildFCEvents, extractDayIndex, phaseDayCount, dayDate,
     formatTime, isMultiGroupEvent, addMinutesToTime, clampGroupDelta, DAY_NAMES,
     gridWindow, timeToMinutes, GRID_BUSINESS_START, GRID_BUSINESS_END,
-    sortSubjects, eventInPhase, eventGroupIds, eventMatchesFilter,
+    sortSubjects, eventInPhase, eventGroupIds, eventMatchesFilter, phaseGroups,
     type FCEventTeacher, type FCEventRoom,
   } from '../utils/timeUtils';
   import { missingLaneIdsForSubject } from '../reports/reports';
@@ -62,31 +62,26 @@
   interface PlacePending { date: Date; groupId: ID; x: number; y: number; }
   let placePending: PlacePending | null = $state(null);
 
-  // FC labels body columns with fc-day-mon/tue/… but leaves resource header cells
-  // (G1/G2/G3) with only `fc-col-header-cell fc-resource`. Both carry data-date,
-  // so the first column of each day is tagged here for the CSS to hook onto —
-  // and every column learns whether its day is an odd one, which drives the
-  // alternating day band.
+  // Every lane header (G1/G2/G3) and body lane learns where its day begins and
+  // whether its day is an odd one, which drives the alternating day band. The
+  // classes come straight out of FC's `resourceDayHeaderClass` / `dayLaneClass`
+  // hooks, which hand over the cell's date and resource — so they are part of
+  // the render itself and cannot go stale when FC re-creates a cell.
   //
-  // `wk-day-first` marks that first column too, but including the very first day
-  // (`wk-day-start` deliberately skips it — there is no rule to draw there).
-  // It is what lets a multi-group block print its title once per day instead of
-  // once per lane.
-  function tagDayBoundaries(): void {
-    if (!calendarEl) return;
-    for (const sel of ['.fc-col-header-cell.fc-resource', '.fc-timegrid-col.fc-resource']) {
-      let prevDate: string | null = null;
-      let dayIdx = -1;
-      for (const el of calendarEl.querySelectorAll<HTMLElement>(sel)) {
-        const date = el.getAttribute('data-date');
-        const isNewDay = date !== prevDate;
-        if (isNewDay) dayIdx++;
-        el.classList.toggle('wk-day-start', prevDate !== null && isNewDay);
-        el.classList.toggle('wk-day-first', isNewDay);
-        el.classList.toggle('wk-day-alt', dayIdx % 2 === 1);
-        prevDate = date;
-      }
-    }
+  // `wk-day-start` marks the first lane of every day but the first (there is no
+  // rule to draw there); `wk-day-first` marks it on every day, which is what
+  // lets a multi-group block print its title once per day instead of once per
+  // lane.
+  function dayBoundaryClasses(base: string, date: Date | undefined, resourceId: string | undefined): string {
+    if (!date || resourceId === undefined) return base;
+    const dayIdx = extractDayIndex(date) - phase.startDay;
+    const first = phaseGroups(getState(), phase)[0]?.id === resourceId;
+    return [
+      base,
+      first && 'wk-day-first',
+      first && dayIdx > 0 && 'wk-day-start',
+      dayIdx % 2 === 1 && 'wk-day-alt',
+    ].filter(Boolean).join(' ');
   }
 
   /**
@@ -120,7 +115,7 @@
     const here = (ev: CalendarEvent): boolean =>
       eventInPhase(state, ev, phase) && eventMatchesFilter(ev, state, filter);
 
-    const lane = target.closest<HTMLElement>('.fc-col-header-cell.fc-resource');
+    const lane = target.closest<HTMLElement>('.wk-fc-lanehead');
     if (lane) {
       const dayIndex = dayIndexOf(lane);
       const groupId = lane.getAttribute('data-resource-id');
@@ -137,7 +132,7 @@
       return;
     }
 
-    const day = target.closest<HTMLElement>('.fc-col-header-cell');
+    const day = target.closest<HTMLElement>('.wk-fc-dayhead');
     if (day) {
       const dayIndex = dayIndexOf(day);
       if (dayIndex === null) return;
@@ -149,9 +144,9 @@
       return;
     }
 
-    const slot = target.closest<HTMLElement>('.fc-timegrid-slot-label');
+    const slot = target.closest<HTMLElement>('.wk-fc-slothead');
     if (slot) {
-      const time = (slot.getAttribute('data-time') ?? '').slice(0, 5);
+      const time = slotHeadTime(slot);
       if (time === '') return;
       e.preventDefault();
       // The time gutter is drawn once for the *week*, not once per phase — only
@@ -195,7 +190,7 @@
     const target = e.target as HTMLElement | null;
     if (!target) return;
 
-    const card = target.closest<HTMLElement>('.fc-event');
+    const card = target.closest<HTMLElement>('.wk-fc-event');
     if (card) {
       const id = card.dataset['wkEventId'];
       if (id === undefined) return;
@@ -208,20 +203,15 @@
       return;
     }
 
-    if (target.closest('.fc-col-header-cell') || target.closest('.fc-timegrid-slot-label')) {
+    if (target.closest('.wk-fc-lanehead, .wk-fc-dayhead, .wk-fc-slothead')) {
       e.preventDefault();
       handleHeaderClick(e);
       return;
     }
 
-    // Not `closest`: the slat rows are drawn as a layer *over* the columns, so
-    // what is under the pointer on empty grid is a slot cell whose ancestors
-    // include no column at all. The lane has to be picked out of the whole
-    // stack under the point instead.
-    const cell = document
-      .elementsFromPoint(e.clientX, e.clientY)
-      .find((el): el is HTMLElement =>
-        el instanceof HTMLElement && el.matches('.fc-timegrid-col.fc-resource') && calendarEl.contains(el));
+    // The lanes are drawn *over* the slot rows (which sit in a layer of their
+    // own underneath), so empty grid under the pointer is inside a lane.
+    const cell = target.closest<HTMLElement>('.wk-fc-lane');
     const groupId = cell?.getAttribute('data-resource-id') ?? null;
     if (!cell || groupId === null) return;
     const spot = cellSpot(cell, e.clientY);
@@ -236,14 +226,14 @@
    * The day and slot a point in a lane column falls on.
    *
    * FullCalendar resolves this itself for `dateClick`, but that only fires on a
-   * left button, so a right-click has to ask the DOM. The slat rows are drawn
-   * once across the whole grid and each lane cell carries its own `data-time`,
-   * so the y hit test is a walk over them; the column carries the date.
+   * left button, so a right-click has to ask the DOM. The slot rows are drawn
+   * once across the whole grid, each carrying its own `data-time`, so the y hit
+   * test is a walk over them; the lane carries the date.
    */
   function cellSpot(cell: HTMLElement, clientY: number): Date | null {
     const [y, m, d] = (cell.getAttribute('data-date') ?? '').split('-').map(Number);
     if (!y || !m || !d) return null;
-    const slats = calendarEl.querySelectorAll<HTMLElement>('.fc-timegrid-slots td.fc-timegrid-slot-lane[data-time]');
+    const slats = calendarEl.querySelectorAll<HTMLElement>('.wk-fc-slot[data-time]');
     for (const slat of slats) {
       const box = slat.getBoundingClientRect();
       if (clientY < box.top || clientY >= box.bottom) continue;
@@ -252,6 +242,22 @@
       return clampToDay(new Date(y, m - 1, d, hh, mm));
     }
     return null;
+  }
+
+  /**
+   * "HH:MM" of a time-axis cell. v7 writes `data-time` only on the labelled
+   * (major) cells; the minor ones are bare. Each view draws exactly one axis
+   * cell per slot row, in the same order, and every row does carry its time —
+   * so a bare cell borrows it from its row.
+   */
+  function slotHeadTime(head: HTMLElement): string {
+    const own = head.getAttribute('data-time');
+    if (own) return own.slice(0, 5);
+    const view = head.closest('.wk-fc');
+    if (!view) return '';
+    const index = [...view.querySelectorAll('.wk-fc-slothead')].indexOf(head);
+    const row = view.querySelectorAll('.wk-fc-slot')[index];
+    return (row?.getAttribute('data-time') ?? '').slice(0, 5);
   }
 
   function drawnSomewhere(state: ReturnType<typeof getState>, ev: CalendarEvent): boolean {
@@ -263,14 +269,18 @@
   /** Says out loud what a header click does, on the header it does it from. */
   function tagSelectionHints(): void {
     if (!calendarEl) return;
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-col-header-cell')) {
-      const label = el.textContent?.trim() ?? '';
-      el.title = el.classList.contains('fc-resource')
-        ? `Alle Lektionen von ${label} an diesem Tag auswählen`
-        : `Alle Lektionen am ${label} auswählen`;
+    // The visible label, not the cell's whole text: a v7 day header also holds
+    // the full date in a visually hidden node for screen readers.
+    const label = (el: HTMLElement): string =>
+      el.querySelector('.wk-fc-head-inner')?.textContent?.trim() ?? '';
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-lanehead')) {
+      el.title = `Alle Lektionen von ${label(el)} an diesem Tag auswählen`;
     }
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-timegrid-slot-label')) {
-      const time = (el.getAttribute('data-time') ?? '').slice(0, 5);
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-dayhead')) {
+      el.title = `Alle Lektionen am ${label(el)} auswählen`;
+    }
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-slothead')) {
+      const time = slotHeadTime(el);
       if (time !== '') el.title = `Alle Lektionen um ${time} auswählen`;
     }
   }
@@ -288,10 +298,10 @@
     /**
      * K2: the grid is **one** tab stop.
      *
-     * FullCalendar gives every event `tabindex="0"`, so a 56-Lektion week put 56
-     * stops between the phase labels and everything after them — a keyboard user
-     * could not get past the grid without pressing Tab through all of it. A
-     * roving tabindex leaves exactly one card tabbable: the selected one, or the
+     * FullCalendar gives every clickable event `tabindex="0"`, so a 56-Lektion
+     * week put 56 stops between the phase labels and everything after them — a
+     * keyboard user could not get past the grid without pressing Tab through all
+     * of it. A roving tabindex leaves exactly one card tabbable: the selected one, or the
      * first card drawn when nothing is selected. Tab enters the grid once and
      * the next Tab leaves it.
      *
@@ -301,7 +311,7 @@
      * it (below), so those shortcuts apply to whatever Tab just landed on.
      */
     let roving: HTMLElement | null = null;
-    const cards = calendarEl.querySelectorAll<HTMLElement>('.fc-event');
+    const cards = calendarEl.querySelectorAll<HTMLElement>('.wk-fc-event');
     for (const el of cards) {
       const id = el.dataset['wkEventId'];
       const subjectId = el.dataset['wkSubjectId'];
@@ -319,7 +329,7 @@
     // rather than from painted classes, so it does not depend on which Phase
     // repaints first.
     if (!roving && primary === null) {
-      const firstInDoc = document.querySelector<HTMLElement>('.fc-event');
+      const firstInDoc = document.querySelector<HTMLElement>('.wk-fc-event');
       if (firstInDoc && calendarEl.contains(firstInDoc)) roving = firstInDoc;
     }
     roving?.setAttribute('tabindex', '0');
@@ -339,19 +349,19 @@
     const owing = subjectId === null
       ? new Set<ID>()
       : new Set(missingLaneIdsForSubject(getState(), subjectId, phase));
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-col-header-cell.fc-resource')) {
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-lanehead')) {
       const resourceId = el.getAttribute('data-resource-id');
       el.classList.toggle('wk-lane-owes', resourceId !== null && owing.has(resourceId));
     }
   }
 
   function eventElement(id: ID): HTMLElement | null {
-    return calendarEl?.querySelector<HTMLElement>(`.fc-event[data-wk-event-id="${CSS.escape(id)}"]`) ?? null;
+    return calendarEl?.querySelector<HTMLElement>(`.wk-fc-event[data-wk-event-id="${CSS.escape(id)}"]`) ?? null;
   }
 
   /** Tab landed on a card: select it, without opening the popover a click does. */
   function handleCardFocus(e: FocusEvent): void {
-    const card = (e.target as HTMLElement | null)?.closest?.('.fc-event') as HTMLElement | null;
+    const card = (e.target as HTMLElement | null)?.closest?.('.wk-fc-event') as HTMLElement | null;
     const id = card?.dataset['wkEventId'];
     if (!id || getSelectedEventId() === id) return;
     selectEvent(id);
@@ -598,7 +608,7 @@
     // four cards sit within a few pixels of the pointer and the mirror alone
     // never named which of them the drop would land on.
     const targets = new Set(eventIds);
-    for (const el of calendarEl.querySelectorAll<HTMLElement>('.fc-event')) {
+    for (const el of calendarEl.querySelectorAll<HTMLElement>('.wk-fc-event')) {
       const id = el.dataset['wkEventId'];
       el.classList.toggle('wk-clash-target', id !== undefined && targets.has(id));
     }
@@ -688,17 +698,22 @@
       viewClass: 'wk-fc',
       dayHeaderClass: 'wk-fc-dayhead',
       dayHeaderInnerClass: 'wk-fc-head-inner',
-      resourceDayHeaderClass: 'wk-fc-lanehead',
+      resourceDayHeaderClass: (info) =>
+        dayBoundaryClasses('wk-fc-lanehead', info.date, info.resource.id),
       resourceDayHeaderInnerClass: 'wk-fc-head-inner',
-      dayLaneClass: 'wk-fc-lane',
+      // A resource view's lanes carry their `resource` too (untyped extra prop).
+      dayLaneClass: (info) =>
+        dayBoundaryClasses('wk-fc-lane', info.date, (info['resource'] as { id: string } | undefined)?.id),
       slotHeaderClass: (info) => (info.isMinor ? 'wk-fc-slothead wk-fc-minor' : 'wk-fc-slothead'),
       slotHeaderInnerClass: 'wk-fc-slothead-inner',
       slotLaneClass: (info) => (info.isMinor ? 'wk-fc-slot wk-fc-minor' : 'wk-fc-slot'),
+      // The 1px rule beside the time gutter; a phase without a gutter hides it.
+      slotHeaderDividerClass: 'wk-fc-axis-divider',
       tableHeaderClass: 'wk-fc-thead',
       eventClass: (info) => (info.isMirror ? 'wk-fc-event wk-fc-mirror' : 'wk-fc-event'),
       eventInnerClass: 'wk-fc-event-inner',
-      datesSet() { tagDayBoundaries(); tagSelectionHints(); },
-      viewDidMount() { tagDayBoundaries(); tagSelectionHints(); },
+      datesSet() { tagSelectionHints(); },
+      viewDidMount() { tagSelectionHints(); },
       eventDidMount(arg) {
         const id = arg.event.extendedProps['eventId'] as ID | undefined;
         const color = arg.event.extendedProps['color'] as string | undefined;
@@ -732,15 +747,14 @@
 
         // K1: the same sentence, as the card's *accessible name*.
         //
-        // FullCalendar renders an event as an `<a tabindex="0">` with no href,
-        // so it is focusable and announces nothing about being interactive, and
-        // everything the card means — the time, the lane, and above all whether
-        // it is in a Konflikt — is carried by colour and geometry alone. A card
-        // in a hard conflict produced the same node as a clean one. The string
-        // was already being built here for the tooltip and thrown away.
+        // FullCalendar renders a clickable event as a `<div role="button"
+        // tabindex="0">`, so it is focusable and announced as interactive — but
+        // with nothing to say, and everything the card means — the time, the
+        // lane, and above all whether it is in a Konflikt — is carried by colour
+        // and geometry alone. A card in a hard conflict produced the same node as
+        // a clean one. The string was already being built here for the tooltip.
         const dayIndex = arg.event.extendedProps['dayIndex'] as number | undefined;
         const laneLabels = (arg.event.extendedProps['laneLabels'] as string[] | undefined) ?? [];
-        arg.el.setAttribute('role', 'button');
         arg.el.setAttribute('aria-label', [
           arg.event.title,
           dayIndex !== undefined ? `${DAY_NAMES[dayIndex]} ${timeText}` : timeText,
@@ -875,10 +889,9 @@
     // getState() fresh — no source teardown/rebuild needed.
     calendar.refetchEvents();
     calendar.gotoDate(dayDate(s.wkStartDate, phase.startDay));
-    // Columns are rebuilt synchronously by the refetch above, but the class tags
-    // are re-applied after paint so enabling/disabling a group can't leave stale ones.
+    // Cells are rebuilt by the refetch above; the tooltips and the painted
+    // states are re-applied after paint so new cells and cards pick them up.
     requestAnimationFrame(() => {
-      tagDayBoundaries();
       tagSelectionHints();
       paintStates();
     });
